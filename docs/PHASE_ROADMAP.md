@@ -97,6 +97,14 @@ Possible features:
 
 ---
 
+## Side Investigations (Unscheduled)
+
+Ideas worth exploring opportunistically — not tied to any phase, no commitment to ship.
+
+- **VR / stereoscopic output.** The whole point of the simulator is that stacked spins produce volumetric, depth-rich motion; a flat monitor flattens that out. Worth a spike to see whether Godot's OpenXR / stereoscopic rendering can give a more honest view of the spirograph paths and tier shells, especially during deep zooms across tier scales.
+
+---
+
 ## Development Approach
 
 This project has no deadline. Quality and accuracy take precedence over speed. Each milestone should be thoroughly tested before moving to the next. The field simulation predictions (30° emission, H2 orientation, alpha particle stability) are the ultimate validation criteria — if they don't emerge, the model needs adjustment, not shortcuts.

@@ -1,0 +1,16 @@
+[package]
+name = "charge_field_modeler"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = "0.5"
+glam = "0.32"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
