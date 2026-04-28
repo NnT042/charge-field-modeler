@@ -38,10 +38,14 @@ impl SpinType {
     /// Initial orbital offset direction (perpendicular to rotation_axis) in
     /// the level's local frame. The center traces a circle in the plane
     /// perpendicular to the rotation axis. Axial has no offset.
+    ///
+    /// X starts along Z (depth/blue axis): at angle=0 the particle is at
+    /// (0, 0, amplitude) — on the ghost sphere's equatorial ring, along the
+    /// depth axis, matching Wheeler's side-view convention.
     pub fn orbital_start(self) -> DVec3 {
         match self {
             SpinType::Axial => DVec3::ZERO,
-            SpinType::X => DVec3::Y,
+            SpinType::X => DVec3::Z,
             SpinType::Y => DVec3::Z,
             SpinType::Z => DVec3::X,
         }

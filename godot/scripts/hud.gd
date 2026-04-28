@@ -127,11 +127,13 @@ func _set_paused(p: bool) -> void:
 func _on_reset_pressed() -> void:
 	if _focus == null:
 		return
+	# Deactivate all spin levels and clear the path trace.
+	_focus.call("reset_stack")
 	for level: int in range(1, PHASE_MAX_LEVEL + 1):
 		_sliders[level - 1].set_value_no_signal(0.0)
-		_focus.call("set_level_velocity", level, 0.0)
 	%TimeScaleSlider.set_value_no_signal(0.0)
 	_apply_time_scale(0.0)
+	_refresh_row_states()
 
 
 func _apply_time_scale(slider_log: float) -> void:

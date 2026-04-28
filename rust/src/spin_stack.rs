@@ -87,13 +87,18 @@ impl SpinStack {
 
     /// Push the next level onto the stack if the topmost is saturated and
     /// we're not already at level 12. Returns the new level index, or None.
+    /// The new level inherits the top's velocity so the 2:1 frequency ratio
+    /// between adjacent levels is established immediately.
     pub fn activate_next(&mut self) -> Option<u8> {
         let top = self.levels.last()?;
         if !top.is_at_c() || top.level >= 12 {
             return None;
         }
+        let inherited_v = top.angular_velocity;
         let next = top.level + 1;
-        self.levels.push(SpinLevel::new(next));
+        let mut new_level = SpinLevel::new(next);
+        new_level.angular_velocity = inherited_v;
+        self.levels.push(new_level);
         Some(next)
     }
 
@@ -103,12 +108,44 @@ impl SpinStack {
             .map_or(false, |l| l.is_at_c() && l.level < 12)
     }
 
-    /// Advance every active level's angle by `velocity * dt * time_scale`.
-    /// `time_scale` is in (natural radians) per (real second) at v=c.
+    /// World-position of the outermost level's orbit center in natural units.
+    /// This is the sum of orbital contributions from all levels except the
+    /// outermost, and represents where the ghost sphere should be centered.
+    /// The particle always lies on the ghost sphere's equatorial circle at
+    /// distance `effective_radius()` from this center.
+    pub fn outer_orbit_center(&self) -> DVec3 {
+        if self.levels.len() <= 1 {
+            return DVec3::ZERO;
+        }
+        let mut center = DVec3::ZERO;
+        for l in &self.levels[..self.levels.len() - 1] {
+            let lab_rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
+            let start = l.spin_type.orbital_start();
+            if start.length_squared() > 0.0 {
+                center += lab_rot * (start * l.amplitude);
+            }
+        }
+        center
+    }
+
+    /// Reset to a single idle axial level — equivalent to a fresh stack.
+    pub fn reset(&mut self) {
+        self.levels.truncate(1);
+        if let Some(l) = self.levels.first_mut() {
+            l.angular_velocity = 0.0;
+            l.current_angle = 0.0;
+        }
+    }
+
+    /// Advance every active level's angle by `velocity * dt * time_scale / amplitude`.
+    /// `time_scale` is in (natural radians) per (real second) at v=c for the
+    /// axial level (amplitude = 1). Each orbital level's angular velocity is
+    /// ω = v/r = angular_velocity / amplitude, so outer levels rotate slower —
+    /// this is what produces spirograph patterns instead of ellipses.
     pub fn advance(&mut self, dt: f64, time_scale: f64) {
         let scaled = dt * time_scale;
         for l in &mut self.levels {
-            l.current_angle += l.angular_velocity * scaled;
+            l.current_angle += l.angular_velocity * scaled / l.amplitude;
         }
     }
 
@@ -258,6 +295,50 @@ mod tests {
             assert!(approx_eq(pos.length(), 2.0),
                 "k={}: |pos|={} (expected 2)", k, pos.length());
         }
+    }
+
+    /// Regression for the same-frequency ellipse bug: when X (amp=2) and Y
+    /// (amp=4) are both at v=c but advancing at the same angular rate, their
+    /// sum is an ellipse. With ω = v/r, after dt=1/TAU seconds at time_scale=TAU,
+    /// X advances π radians and Y advances π/2 radians.
+    /// X orbital_start=Z: R_X(π)*Z*2 = (0,0,-2); R_Y(π/2)*Z*4 = (4,0,0) → total (4,0,-2).
+    #[test]
+    fn orbital_angular_rate_scales_with_inverse_amplitude() {
+        let mut s = stack_with_levels(3);
+        s.set_velocity(1, 0.0);
+        s.set_velocity(2, 1.0);
+        s.set_velocity(3, 1.0);
+        // dt=1, time_scale=TAU → θ_X = TAU/2 = π, θ_Y = TAU/4 = π/2
+        s.advance(1.0, TAU);
+        let (pos, _) = s.compose();
+        assert!(approx_eq(pos.x, 4.0),  "pos.x={} (expected 4)",  pos.x);
+        assert!(approx_zero(pos.y),     "pos.y={} (expected 0)",  pos.y);
+        assert!(approx_eq(pos.z, -2.0), "pos.z={} (expected -2)", pos.z);
+    }
+
+    /// Verify that X+Y at saturation produces a spirograph rather than an ellipse.
+    /// With θ_X = 2*θ_Y (ω ratio 2:1), dist² = 20 + 32*sin(θ_Y)*cos²(θ_Y),
+    /// which ranges from ≈7.68 (dist≈2.77) to ≈32.32 (dist≈5.69).
+    /// The same-frequency bug produces dist² = 20 + 8*sin(2θ), ranging only
+    /// from ≈3.46 to ≈5.29 — a distinct, tighter band.
+    #[test]
+    fn x_y_combined_path_is_spirograph_not_ellipse() {
+        let mut s = stack_with_levels(3);
+        s.set_velocity(1, 0.0);
+        s.set_velocity(2, 1.0);
+        s.set_velocity(3, 1.0);
+        let (mut min_d, mut max_d) = (f64::INFINITY, f64::NEG_INFINITY);
+        for _ in 0..400 {
+            s.advance(0.02, TAU);
+            let (pos, _) = s.compose();
+            let d = pos.length();
+            if d < min_d { min_d = d; }
+            if d > max_d { max_d = d; }
+        }
+        // Fixed (ω_X=2*ω_Y): max≈5.69, min≈2.77.
+        // Buggy (same rate):  max≈5.29, min≈3.46 — both bounds would fail.
+        assert!(max_d > 5.5, "max distance {} should approach 5.69", max_d);
+        assert!(min_d < 3.2, "min distance {} should approach 2.77", min_d);
     }
 
     /// Regression for the orientation-wobble bug observed 2026-04-27:

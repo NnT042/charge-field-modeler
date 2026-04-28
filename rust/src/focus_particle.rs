@@ -14,6 +14,10 @@ const PATH_TRACE_CAPACITY: usize = 2048;
 /// Default minimum movement (natural units) between consecutive recorded
 /// samples. The base photon has radius 1, so 0.005 r is fine but not absurd.
 const PATH_TRACE_MIN_STEP: f64 = 0.005;
+/// Natural-to-world-unit scale factor. The photon mesh has Godot radius 0.5,
+/// representing a photon of natural radius 1 — so 1 natural unit = 0.5 world
+/// units. All positions returned to GDScript are multiplied by this factor.
+const WORLD_SCALE: f32 = 0.5;
 
 /// The focus particle. Owns a `SpinStack` and applies its composed position +
 /// orientation to the underlying Node3D each physics tick.
@@ -46,7 +50,11 @@ impl INode3D for FocusParticle {
         let (pos, rot) = self.stack.compose();
         self.path.record(pos);
 
-        let g_pos = Vector3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let g_pos = Vector3::new(
+            pos.x as f32 * WORLD_SCALE,
+            pos.y as f32 * WORLD_SCALE,
+            pos.z as f32 * WORLD_SCALE,
+        );
         let g_rot = Quaternion::new(
             rot.x as f32,
             rot.y as f32,
@@ -156,15 +164,19 @@ impl FocusParticle {
     }
 
     /// Path-trace samples in chronological order (oldest -> newest), in world
-    /// space natural units. Returned as `PackedVector3Array` so the GDScript
-    /// renderer can feed it straight to `ImmediateMesh`.
+    /// space (natural units × WORLD_SCALE). Returned as `PackedVector3Array`
+    /// so the GDScript renderer can feed it straight to `ImmediateMesh`.
     #[func]
     fn get_path_points(&self) -> PackedVector3Array {
         let pts = self.path.points_chronological();
         let mut arr = PackedVector3Array::new();
         arr.resize(pts.len());
         for (i, p) in pts.iter().enumerate() {
-            arr[i] = Vector3::new(p.x as f32, p.y as f32, p.z as f32);
+            arr[i] = Vector3::new(
+                p.x as f32 * WORLD_SCALE,
+                p.y as f32 * WORLD_SCALE,
+                p.z as f32 * WORLD_SCALE,
+            );
         }
         arr
     }
@@ -185,5 +197,25 @@ impl FocusParticle {
     #[func]
     fn is_path_enabled(&self) -> bool {
         self.path.enabled()
+    }
+
+    /// World-space center of the outermost level's orbit (inner levels'
+    /// accumulated position × WORLD_SCALE). Place the ghost sphere here so
+    /// the particle always lies on the ghost sphere's equatorial circle.
+    #[func]
+    fn outer_orbit_center(&self) -> Vector3 {
+        let c = self.stack.outer_orbit_center();
+        Vector3::new(
+            c.x as f32 * WORLD_SCALE,
+            c.y as f32 * WORLD_SCALE,
+            c.z as f32 * WORLD_SCALE,
+        )
+    }
+
+    /// Reset the spin stack to a single idle axial level and clear the path.
+    #[func]
+    fn reset_stack(&mut self) {
+        self.stack.reset();
+        self.path.clear();
     }
 }
