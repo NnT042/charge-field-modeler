@@ -1,17 +1,19 @@
 //! Spin stack engine: stores the active SpinLevels for the focus particle and
-//! composes their nested rotations into a world position + orientation each
-//! tick.
+//! composes their rotations into a world position + orientation each tick.
 //!
-//! The core algorithm (per `skills/cfm-dev/SKILL.md`):
+//! Per PROJECT_DESIGN §"Spin Stack Engine" and PHYSICS_REFERENCE §2:
 //!
-//! - For each level top-down, accumulate the level's rotation into a running
-//!   quaternion.
-//! - For non-axial levels, the orbital offset starts perpendicular to the
-//!   rotation axis (per `SpinType::orbital_start`), is scaled by the level's
-//!   amplitude, then rotated by the accumulated frame and added to position.
-//! - The result: position is the focus particle's center, accumulated quat is
-//!   its orientation. The visible sphere mesh always represents the base
-//!   photon (radius 1) — the higher tiers manifest as the path it traces.
+//! - Each level's orbit plane is intrinsic to its spin type and FIXED in the
+//!   lab frame. Inner levels move the orbit's center (via additive sum) but
+//!   do not re-orient its plane — this is the "outside the gyroscopic
+//!   influence" property: each spin's amplitude doubles precisely so its
+//!   plane is decoupled from the inner level.
+//! - Position offset for level k is therefore `lab_rot_k * orbital_start_k *
+//!   amp_k`, summed across levels. Only the moving center accumulates.
+//! - Orientation is the composition of all levels' rotations — that's how
+//!   the visible sphere's pose evolves.
+//! - The visible sphere mesh always represents the base photon (radius 1);
+//!   higher tiers manifest as the path it traces.
 
 use glam::{DQuat, DVec3};
 
@@ -113,20 +115,28 @@ impl SpinStack {
     /// Compose the stack into (world position of base particle, orientation).
     pub fn compose(&self) -> (DVec3, DQuat) {
         let mut position = DVec3::ZERO;
-        let mut accumulated = DQuat::IDENTITY;
+        let mut orientation = DQuat::IDENTITY;
 
         for l in &self.levels {
-            let rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
-            accumulated *= rot;
+            let lab_rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
 
+            // Position: each level's orbit plane is fixed in the lab frame,
+            // so the offset uses this level's rotation alone. Inner levels
+            // only contribute the moving center (via the running sum).
             let start = l.spin_type.orbital_start();
             if start.length_squared() > 0.0 {
-                let offset = accumulated * (start * l.amplitude);
-                position += offset;
+                position += lab_rot * (start * l.amplitude);
             }
+
+            // Orientation: pre-multiply so inner spins (added first) apply
+            // first to a body vector and outer spins ride on top. Iterating
+            // [axial, X, Y, Z] this builds q = R_z * R_y * R_x * R_a, so the
+            // visible body's pole only depends on the outer spins above it —
+            // axial alone never moves the pole, X tilts it in YZ, etc.
+            orientation = lab_rot * orientation;
         }
 
-        (position, accumulated)
+        (position, orientation)
     }
 
     /// Effective radius = amplitude of the outermost active level.
@@ -176,6 +186,100 @@ impl SpinStack {
             9..=11 => "Sub-baryon",
             12 => "Baryon",
             _ => "(unknown)",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::TAU;
+
+    const EPS: f64 = 1e-9;
+
+    fn approx_zero(v: f64) -> bool {
+        v.abs() < EPS
+    }
+
+    fn approx_eq(a: f64, b: f64) -> bool {
+        (a - b).abs() < EPS
+    }
+
+    /// Build a stack with `level` rungs activated. Saturates each rung at +1
+    /// in turn so `activate_next` succeeds.
+    fn stack_with_levels(level: u8) -> SpinStack {
+        let mut s = SpinStack::new();
+        while (s.level_count() as u8) < level {
+            let top = s.level_count() as u8;
+            s.set_velocity(top, 1.0);
+            s.activate_next();
+        }
+        s
+    }
+
+    #[test]
+    fn axial_only_does_not_translate() {
+        let mut s = SpinStack::new();
+        s.set_velocity(1, 1.0);
+        s.advance(1.0, TAU);
+        let (pos, _) = s.compose();
+        assert!(approx_zero(pos.x) && approx_zero(pos.y) && approx_zero(pos.z),
+            "axial spin must not translate the particle, got {:?}", pos);
+    }
+
+    #[test]
+    fn x_spin_alone_orbits_in_yz_plane() {
+        for k in 0..16u32 {
+            let mut s = stack_with_levels(2);
+            s.set_velocity(1, 0.0);
+            s.set_velocity(2, 1.0);
+            s.advance(0.13 * k as f64, TAU);
+            let (pos, _) = s.compose();
+            assert!(approx_zero(pos.x), "k={}: x={} (expected 0)", k, pos.x);
+            assert!(approx_eq(pos.length(), 2.0),
+                "k={}: |pos|={} (expected 2)", k, pos.length());
+        }
+    }
+
+    /// Regression for the "balloon yo-yo" bug: an active axial spin must
+    /// NOT re-orient the X-spin's orbit plane. Pre-fix, position composition
+    /// used the accumulated quaternion, so axial Y-rotation precessed the
+    /// YZ-plane orbit around Y, producing 3D motion. Lab-frame composition
+    /// keeps the orbit plane intrinsic to the spin type.
+    #[test]
+    fn x_spin_with_active_axial_still_orbits_in_yz_plane() {
+        for k in 0..16u32 {
+            let mut s = stack_with_levels(2);
+            s.set_velocity(1, 1.0);
+            s.set_velocity(2, 1.0);
+            s.advance(0.13 * k as f64, TAU);
+            let (pos, _) = s.compose();
+            assert!(approx_zero(pos.x), "k={}: x={} (expected 0)", k, pos.x);
+            assert!(approx_eq(pos.length(), 2.0),
+                "k={}: |pos|={} (expected 2)", k, pos.length());
+        }
+    }
+
+    /// Regression for the orientation-wobble bug observed 2026-04-27:
+    /// with both axial and X-spin running, the visible body's Y pole was
+    /// precessing around the lab Y axis instead of staying in the YZ plane.
+    /// Root cause was orientation composition order: `orientation * lab_rot`
+    /// applied X first then axial-around-lab-Y to a body vector, dragging
+    /// the X-tilted pole around lab Y. Inner spins must apply first to the
+    /// body so outer spins ride on top — pre-multiply (`lab_rot * orientation`).
+    #[test]
+    fn body_pole_stays_in_yz_plane_under_axial_plus_x() {
+        for k in 0..32u32 {
+            let mut s = stack_with_levels(2);
+            s.set_velocity(1, 1.0);
+            s.set_velocity(2, 1.0);
+            s.advance(0.07 * k as f64, TAU);
+            let (_, orient) = s.compose();
+            let pole = orient * DVec3::Y;
+            assert!(approx_zero(pole.x),
+                "k={}: pole.x={} (expected 0; pole={:?})", k, pole.x, pole);
+            assert!(approx_eq(pole.length(), 1.0),
+                "k={}: pole not unit length: |pole|={}", k, pole.length());
         }
     }
 }

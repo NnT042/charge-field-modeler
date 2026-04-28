@@ -3,8 +3,17 @@ use std::f64::consts::TAU;
 use godot::classes::{INode3D, Node3D};
 use godot::prelude::*;
 
+use crate::path_trace::PathTrace;
 use crate::spin_stack::SpinStack;
 use crate::types::{level_amplitude, level_spec};
+
+/// Default trace ring-buffer capacity. At 60Hz physics tick with `min_step`
+/// filtering, this gives several seconds of history at modest spin rates and
+/// caps GPU work for the line-strip rebuild.
+const PATH_TRACE_CAPACITY: usize = 2048;
+/// Default minimum movement (natural units) between consecutive recorded
+/// samples. The base photon has radius 1, so 0.005 r is fine but not absurd.
+const PATH_TRACE_MIN_STEP: f64 = 0.005;
 
 /// The focus particle. Owns a `SpinStack` and applies its composed position +
 /// orientation to the underlying Node3D each physics tick.
@@ -18,6 +27,7 @@ pub struct FocusParticle {
     base: Base<Node3D>,
     stack: SpinStack,
     time_scale: f64,
+    path: PathTrace,
 }
 
 #[godot_api]
@@ -27,12 +37,14 @@ impl INode3D for FocusParticle {
             base,
             stack: SpinStack::new(),
             time_scale: TAU,
+            path: PathTrace::new(PATH_TRACE_CAPACITY, PATH_TRACE_MIN_STEP),
         }
     }
 
     fn physics_process(&mut self, delta: f64) {
         self.stack.advance(delta, self.time_scale);
         let (pos, rot) = self.stack.compose();
+        self.path.record(pos);
 
         let g_pos = Vector3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let g_rot = Quaternion::new(
@@ -141,5 +153,37 @@ impl FocusParticle {
             return 0.0;
         }
         level_amplitude(level as u8)
+    }
+
+    /// Path-trace samples in chronological order (oldest -> newest), in world
+    /// space natural units. Returned as `PackedVector3Array` so the GDScript
+    /// renderer can feed it straight to `ImmediateMesh`.
+    #[func]
+    fn get_path_points(&self) -> PackedVector3Array {
+        let pts = self.path.points_chronological();
+        let mut arr = PackedVector3Array::new();
+        arr.resize(pts.len());
+        for (i, p) in pts.iter().enumerate() {
+            arr[i] = Vector3::new(p.x as f32, p.y as f32, p.z as f32);
+        }
+        arr
+    }
+
+    #[func]
+    fn clear_path(&mut self) {
+        self.path.clear();
+    }
+
+    #[func]
+    fn set_path_enabled(&mut self, e: bool) {
+        self.path.set_enabled(e);
+        if !e {
+            self.path.clear();
+        }
+    }
+
+    #[func]
+    fn is_path_enabled(&self) -> bool {
+        self.path.enabled()
     }
 }

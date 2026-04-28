@@ -19,6 +19,7 @@ var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
 var _activate_buttons: Array[Button] = []
+var _paused: bool = false
 
 
 func _ready() -> void:
@@ -39,6 +40,7 @@ func _ready() -> void:
 		_activate_buttons[i].pressed.connect(_on_activate_pressed.bind(level))
 
 	%TimeScaleSlider.value_changed.connect(_on_time_scale_changed)
+	%ResetButton.pressed.connect(_on_reset_pressed)
 	_apply_time_scale(%TimeScaleSlider.value)
 	_refresh_row_states()
 
@@ -72,6 +74,10 @@ func _process(_delta: float) -> void:
 
 
 func _on_slider_changed(value: float, level: int) -> void:
+	var snapped: float = _snap_to_targets(value, [-1.0, 0.0, 1.0], 0.02)
+	if snapped != value:
+		_sliders[level - 1].set_value_no_signal(snapped)
+		value = snapped
 	if _focus == null:
 		return
 	_focus.call("set_level_velocity", level, value)
@@ -90,7 +96,42 @@ func _on_activate_pressed(level: int) -> void:
 
 
 func _on_time_scale_changed(slider_log: float) -> void:
+	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0], 0.02)
+	if snapped != slider_log:
+		%TimeScaleSlider.set_value_no_signal(snapped)
+		slider_log = snapped
 	_apply_time_scale(slider_log)
+
+
+func _snap_to_targets(value: float, targets: Array, deadzone: float) -> float:
+	for target: float in targets:
+		if abs(value - target) <= deadzone:
+			return target
+	return value
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if event.keycode == KEY_SPACE:
+		_set_paused(not _paused)
+
+
+func _set_paused(p: bool) -> void:
+	_paused = p
+	if _focus != null:
+		_focus.process_mode = Node.PROCESS_MODE_DISABLED if _paused else Node.PROCESS_MODE_INHERIT
+	%PauseLabel.text = "PAUSED" if _paused else ""
+
+
+func _on_reset_pressed() -> void:
+	if _focus == null:
+		return
+	for level: int in range(1, PHASE_MAX_LEVEL + 1):
+		_sliders[level - 1].set_value_no_signal(0.0)
+		_focus.call("set_level_velocity", level, 0.0)
+	%TimeScaleSlider.set_value_no_signal(0.0)
+	_apply_time_scale(0.0)
 
 
 func _apply_time_scale(slider_log: float) -> void:

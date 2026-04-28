@@ -176,16 +176,16 @@ struct CollisionRecord {
 
 ### Quaternion Composition
 
-Each frame, the focus particle's position is computed by composing all active spin levels:
+Each frame, the focus particle's position is computed by summing every active spin level's lab-frame orbital offset:
 
-1. Start at origin (center of innermost spin)
+1. Start at origin.
 2. For each active spin level (1 to N):
-   a. Update the level's `current_angle` by `angular_velocity * dt`
-   b. Update the level's `quaternion` from the new angle and its spin axis
-   c. Compute the position offset: rotate a vector of length `amplitude` by the composed quaternion of all levels up to this point
-3. The final position is the sum of all offset vectors
+   a. Update the level's `current_angle` by `angular_velocity * dt`.
+   b. Build this level's lab-frame quaternion from `current_angle` and its spin axis.
+   c. Add `lab_quat * orbital_start * amplitude` to the running position. (Axial levels have a zero `orbital_start` and contribute no offset.)
+3. The orientation output is the composition of every level's lab-frame quaternion (separate from the position sum).
 
-This is equivalent to: for each level, the particle orbits at radius `amplitude` around the center defined by all inner levels, with the orbit plane determined by the spin type (axial = rotation in place, X = end-over-end in x-plane, Y = end-over-end in y-plane, Z = end-over-end in z-plane).
+Each level's orbit plane is intrinsic to its spin type and **fixed in the lab frame** — inner levels move the orbit's center (via the running sum) but do NOT re-orient its plane. This is the "outside the gyroscopic influence" property from PHYSICS_REFERENCE §2: amplitudes double precisely so each level is decoupled from the inner one. So: axial = rotation in place, X = end-over-end in YZ plane, Y = end-over-end in XZ plane, Z = end-over-end in XY plane — regardless of what inner levels are doing.
 
 ### Spin Activation Rules
 
@@ -196,7 +196,7 @@ This is equivalent to: for each level, the particle orbits at radius `amplitude`
 
 ### Path Tracing
 
-The path trace records the focus particle's world position each frame into a ring buffer. At slow playback speeds, this renders as a visible spirograph-like curve. At high speeds, the positions fill in densely enough to approximate the effective volume — visually demonstrating why a spinning particle "looks like" a larger sphere.
+The path trace records the focus particle's world position into a fixed-capacity ring buffer (default 2048 samples) each physics tick. Sampling is distance-thresholded — a new sample is recorded only when the particle has moved at least `min_step` (default 0.005 r) from the last one — so vertex density stays roughly uniform across time scales. When the buffer fills, the oldest sample is overwritten. The Rust side (`path_trace.rs`) owns the buffer; the Godot side (`path_trace_line.gd`) reads `get_path_points()` each frame and rebuilds an unshaded line strip with per-vertex alpha fade (oldest = transparent, newest = opaque). At slow playback the trace is a visible spirograph curve; at high speeds the strip fills in densely enough to approximate the swept volume — visually demonstrating why a spinning particle "looks like" a larger sphere. Hotkeys: `T` toggles, `C` clears.
 
 The ghost sphere overlay renders a transparent sphere at the current effective radius (= amplitude of the outermost active spin level), giving the user the "from the outside" view simultaneously with the detailed internal motion.
 
@@ -352,12 +352,12 @@ A running display shows: total impulse magnitude, net impulse direction, collisi
 - [ ] Basic orbit camera
 
 ### M2: Spin Stacking (Levels 1-4, Photon Tier)
-- [ ] Quaternion-based spin composition for 4 levels
-- [ ] Level activation rules (previous must be at c)
-- [ ] Path trace visualization
+- [x] Quaternion-based spin composition for 4 levels
+- [x] Level activation rules (previous must be at c)
+- [x] Path trace visualization
 - [ ] Ghost sphere overlay
-- [ ] Speed control (time scale slider)
-- [ ] Readout panel: radius, wavelength, classification
+- [x] Speed control (time scale slider)
+- [x] Readout panel: radius, wavelength, classification (wavelength deferred to SI units module)
 
 ### M3: Full Spin Stack (Levels 5-12)
 - [ ] Extend spin stack to 12 levels
