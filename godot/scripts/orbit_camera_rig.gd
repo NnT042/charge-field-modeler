@@ -13,6 +13,7 @@ extends Node3D
 ##   5 = Iso   (yaw=-45°, pitch=30°)
 ##   0 = Reset to defaults (also resets zoom distance)
 
+@export var focus_particle_path: NodePath
 @export var min_zoom: float = 0.5
 @export var max_zoom: float = 200.0
 @export var zoom_step: float = 1.1
@@ -20,11 +21,13 @@ extends Node3D
 @export var pan_sensitivity: float = 0.0025
 @export var pitch_limit: float = deg_to_rad(89.0)
 @export var snap_duration: float = 0.25
+@export var fit_padding: float = 1.3
 
 const _DEFAULT_YAW: float = 0.0
 const _DEFAULT_PITCH_DEG: float = 20.0
 const _DEFAULT_DISTANCE: float = 5.0
 
+var _focus: Node3D
 var _camera: Camera3D
 var _yaw: float = _DEFAULT_YAW
 var _pitch: float = deg_to_rad(_DEFAULT_PITCH_DEG)
@@ -40,6 +43,7 @@ func _ready() -> void:
 	if _camera == null:
 		push_error("OrbitCameraRig: no Camera3D child found")
 		return
+	_focus = get_node_or_null(focus_particle_path) as Node3D
 	_distance = _camera.position.z
 	_apply_transform()
 
@@ -107,6 +111,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_snap_to(-PI * 0.25, deg_to_rad(30.0))
 		KEY_0, KEY_KP_0:
 			_snap_to(_DEFAULT_YAW, deg_to_rad(_DEFAULT_PITCH_DEG), _DEFAULT_DISTANCE)
+		KEY_EQUAL, KEY_KP_ADD:
+			_kill_snap()
+			_zoom(1.0 / zoom_step)
+		KEY_MINUS, KEY_KP_SUBTRACT:
+			_kill_snap()
+			_zoom(zoom_step)
+		KEY_F:
+			_auto_fit()
 		_:
 			handled = false
 	if handled:
@@ -143,6 +155,16 @@ func _set_orbit_state(state: Vector3) -> void:
 	_pitch = clamp(state.y, -pitch_limit, pitch_limit)
 	_distance = clamp(state.z, min_zoom, max_zoom)
 	_apply_transform()
+
+
+func _auto_fit() -> void:
+	if _focus == null or _camera == null:
+		return
+	var world_radius: float = float(_focus.call("effective_radius")) * 0.5
+	var half_fov: float = deg_to_rad(_camera.fov * 0.5)
+	var target_dist: float = clamp(world_radius * fit_padding / tan(half_fov), min_zoom, max_zoom)
+	position = Vector3.ZERO
+	_snap_to(_yaw, _pitch, target_dist)
 
 
 func _kill_snap() -> void:

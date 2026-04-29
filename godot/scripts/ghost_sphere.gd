@@ -1,26 +1,25 @@
 extends Node3D
-## Transparent orbital-shell reference for the focus particle.
+## Renders one transparent ghost sphere per active orbital level.
 ##
-## Center: tracks the outermost level's orbit center (the inner levels'
-## accumulated position) so the particle always lies on the ghost sphere's
-## equatorial ring. This matches Wheeler's wireframe-ball visualization.
+## In the hierarchical nesting model the outermost ghost sits at origin;
+## inner ghosts orbit inside it, carried by the outer levels' rotations.
+## Each ghost is color-coded to its spin axis: X=red, Y=green, Z=blue.
 ##
-## Radius: effective_radius × WORLD_SCALE (0.5). At axial level the ghost
-## sphere is the same size as the photon mesh (both radius 0.5 world units).
-##
-## Orientation: the ghost sphere's +Y pole aligns with the outermost spin's
-## rotation axis, so the equatorial ring marks the orbital plane and the
-## poles mark the rotation axis — readable at a glance without labels.
-##
-## Hotkey: G toggles visibility.
-
-const WORLD_SCALE: float = 0.5
+## Hotkey: G toggles visibility of all ghosts.
 
 @export var focus_particle_path: NodePath
 @export var visible_by_default: bool = true
 
 var _focus: Node3D
-var _mesh_instance: MeshInstance3D
+var _meshes: Array[MeshInstance3D] = []
+var _shader: Shader
+var _materials: Dictionary = {}
+
+const AXIS_COLORS: Dictionary = {
+	"x": Color(1.0, 0.35, 0.35),
+	"y": Color(0.35, 1.0, 0.35),
+	"z": Color(0.4, 0.6, 1.0),
+}
 
 
 func _ready() -> void:
@@ -29,38 +28,53 @@ func _ready() -> void:
 		push_error("GhostSphere: focus_particle_path does not resolve to a Node3D")
 		return
 
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://shaders/visual/ghost_sphere.gdshader")
+	_shader = load("res://shaders/visual/ghost_sphere.gdshader")
 
-	var mesh := SphereMesh.new()
-	mesh.radius = 1.0
-	mesh.height = 2.0
-	mesh.radial_segments = 64
-	mesh.rings = 32
-
-	_mesh_instance = MeshInstance3D.new()
-	_mesh_instance.mesh = mesh
-	_mesh_instance.material_override = mat
-	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_mesh_instance)
+	for label in AXIS_COLORS:
+		var mat := ShaderMaterial.new()
+		mat.shader = _shader
+		mat.set_shader_parameter("ghost_color", AXIS_COLORS[label])
+		_materials[label] = mat
 
 	visible = visible_by_default
 
 
 func _process(_delta: float) -> void:
-	if _focus == null or _mesh_instance == null:
+	if _focus == null:
 		return
 
-	# Ghost sphere is fixed at world origin — it marks the outermost level's
-	# orbital shell, not the particle's current position. Only scale and
-	# orientation change.
-	var r: float = float(_focus.call("effective_radius")) * WORLD_SCALE
-	scale = Vector3(r, r, r)
+	var count: int = int(_focus.call("ghost_sphere_count"))
+	_sync_mesh_count(count)
 
-	# Orient so +Y pole aligns with the outermost spin's rotation axis.
-	var count: int = int(_focus.call("level_count"))
-	var label: String = String(_focus.call("spin_type_label", count))
-	_align_pole_to(_label_to_axis(label))
+	for i in range(count):
+		var mi: MeshInstance3D = _meshes[i]
+		var center: Vector3 = Vector3(_focus.call("ghost_sphere_center", i))
+		var r: float = float(_focus.call("ghost_sphere_radius", i))
+		var label: String = String(_focus.call("ghost_sphere_spin_label", i))
+
+		mi.position = center
+		mi.scale = Vector3(r, r, r)
+		mi.material_override = _materials.get(label, _materials["x"])
+		_align_mesh_to(mi, _label_to_axis(label))
+
+
+func _sync_mesh_count(target: int) -> void:
+	while _meshes.size() < target:
+		var mesh := SphereMesh.new()
+		mesh.radius = 1.0
+		mesh.height = 2.0
+		mesh.radial_segments = 64
+		mesh.rings = 32
+
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+		_meshes.append(mi)
+
+	while _meshes.size() > target:
+		var mi: MeshInstance3D = _meshes.pop_back()
+		mi.queue_free()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -70,20 +84,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		visible = not visible
 
 
-# Rotate this node so its local +Y axis points to `axis` in world space.
-func _align_pole_to(axis: Vector3) -> void:
+func _align_mesh_to(mi: MeshInstance3D, axis: Vector3) -> void:
 	var up := Vector3.UP
 	if axis.is_equal_approx(up):
-		quaternion = Quaternion.IDENTITY
+		mi.quaternion = Quaternion.IDENTITY
 	elif axis.is_equal_approx(-up):
-		quaternion = Quaternion(Vector3.RIGHT, PI)
+		mi.quaternion = Quaternion(Vector3.RIGHT, PI)
 	else:
-		quaternion = Quaternion(up.cross(axis).normalized(), up.angle_to(axis))
+		mi.quaternion = Quaternion(up.cross(axis).normalized(), up.angle_to(axis))
 
 
-# Map the Rust spin-type label to the rotation axis in world space.
 func _label_to_axis(label: String) -> Vector3:
 	match label:
 		"x": return Vector3.RIGHT
 		"z": return Vector3(0.0, 0.0, 1.0)
-		_:   return Vector3.UP  # "axial" and "y" both rotate around world Y
+		_:   return Vector3.UP

@@ -78,6 +78,7 @@ focus_particle_path = NodePath("../FocusParticle")
 
 [node name="OrbitCameraRig" type="Node3D" parent="."]
 script = ExtResource("1_orbit")
+focus_particle_path = NodePath("../FocusParticle")
 
 [node name="Camera3D" type="Camera3D" parent="OrbitCameraRig"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)

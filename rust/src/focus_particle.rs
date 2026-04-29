@@ -199,9 +199,7 @@ impl FocusParticle {
         self.path.enabled()
     }
 
-    /// World-space center of the outermost level's orbit (inner levels'
-    /// accumulated position × WORLD_SCALE). Place the ghost sphere here so
-    /// the particle always lies on the ghost sphere's equatorial circle.
+    /// World-space center of the outermost level's orbit.
     #[func]
     fn outer_orbit_center(&self) -> Vector3 {
         let c = self.stack.outer_orbit_center();
@@ -210,6 +208,41 @@ impl FocusParticle {
             c.y as f32 * WORLD_SCALE,
             c.z as f32 * WORLD_SCALE,
         )
+    }
+
+    #[func]
+    fn ghost_sphere_count(&self) -> i32 {
+        self.stack.ghost_spheres().len() as i32
+    }
+
+    #[func]
+    fn ghost_sphere_center(&self, index: i32) -> Vector3 {
+        let ghosts = self.stack.ghost_spheres();
+        if let Some((c, _, _)) = ghosts.get(index as usize) {
+            Vector3::new(
+                c.x as f32 * WORLD_SCALE,
+                c.y as f32 * WORLD_SCALE,
+                c.z as f32 * WORLD_SCALE,
+            )
+        } else {
+            Vector3::ZERO
+        }
+    }
+
+    #[func]
+    fn ghost_sphere_radius(&self, index: i32) -> f32 {
+        let ghosts = self.stack.ghost_spheres();
+        ghosts
+            .get(index as usize)
+            .map_or(0.0, |(_, amp, _)| *amp as f32 * WORLD_SCALE)
+    }
+
+    #[func]
+    fn ghost_sphere_spin_label(&self, index: i32) -> GString {
+        let ghosts = self.stack.ghost_spheres();
+        ghosts
+            .get(index as usize)
+            .map_or(GString::default(), |(_, _, st)| GString::from(st.label()))
     }
 
     /// Reset the spin stack to a single idle axial level and clear the path.

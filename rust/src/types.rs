@@ -5,7 +5,7 @@
 //! times across three tiers (photon / electron / baryon), with orbital radius
 //! doubling at each step (1, 2, 4, 8, 16, ..., 2048).
 
-use glam::DVec3;
+use glam::{DQuat, DVec3};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SpinType {
@@ -48,6 +48,18 @@ impl SpinType {
             SpinType::X => DVec3::Z,
             SpinType::Y => DVec3::Z,
             SpinType::Z => DVec3::X,
+        }
+    }
+
+    /// Alignment quaternion for end-over-end tumble: rotates the body's Y
+    /// pole to the orbital_start direction so the pole points radially
+    /// outward from the orbit center. Identity for Axial (no orbital offset).
+    pub fn tumble_alignment(self) -> DQuat {
+        let start = self.orbital_start();
+        if start.length_squared() < 1e-9 {
+            DQuat::IDENTITY
+        } else {
+            DQuat::from_rotation_arc(DVec3::Y, start)
         }
     }
 

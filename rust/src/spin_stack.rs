@@ -3,13 +3,12 @@
 //!
 //! Per PROJECT_DESIGN §"Spin Stack Engine" and PHYSICS_REFERENCE §2:
 //!
-//! - Each level's orbit plane is intrinsic to its spin type and FIXED in the
-//!   lab frame. Inner levels move the orbit's center (via additive sum) but
-//!   do not re-orient its plane — this is the "outside the gyroscopic
-//!   influence" property: each spin's amplitude doubles precisely so its
-//!   plane is decoupled from the inner level.
-//! - Position offset for level k is therefore `lab_rot_k * orbital_start_k *
-//!   amp_k`, summed across levels. Only the moving center accumulates.
+//! - Position is computed hierarchically: each orbital level shifts the
+//!   inner structure outward by `orbital_start * orbit_radius`, then rotates
+//!   the whole thing. This means the Y level carries the X ghost (and the
+//!   particle inside it) around as a unit — like a ball rolling inside a
+//!   larger ball. Orbit radius = amplitude/2 = previous amplitude, so the
+//!   inner ghost's far edge just touches the outer ghost's surface.
 //! - Orientation is the composition of all levels' rotations — that's how
 //!   the visible sphere's pose evolves.
 //! - The visible sphere mesh always represents the base photon (radius 1);
@@ -49,6 +48,17 @@ impl SpinLevel {
     pub fn is_at_c(&self) -> bool {
         self.angular_velocity.abs() >= 1.0 - 1e-9
     }
+
+    /// Radius the center traces: for axial, it's the particle radius (amplitude);
+    /// for orbital levels, the center sits at half the amplitude so the far edge
+    /// of the particle reaches the full amplitude.
+    pub fn orbit_radius(&self) -> f64 {
+        if self.spin_type == SpinType::Axial {
+            self.amplitude
+        } else {
+            self.amplitude / 2.0
+        }
+    }
 }
 
 pub struct SpinStack {
@@ -87,18 +97,14 @@ impl SpinStack {
 
     /// Push the next level onto the stack if the topmost is saturated and
     /// we're not already at level 12. Returns the new level index, or None.
-    /// The new level inherits the top's velocity so the 2:1 frequency ratio
-    /// between adjacent levels is established immediately.
+    /// The new level starts at ω=0 so the user can bring it up manually.
     pub fn activate_next(&mut self) -> Option<u8> {
         let top = self.levels.last()?;
         if !top.is_at_c() || top.level >= 12 {
             return None;
         }
-        let inherited_v = top.angular_velocity;
         let next = top.level + 1;
-        let mut new_level = SpinLevel::new(next);
-        new_level.angular_velocity = inherited_v;
-        self.levels.push(new_level);
+        self.levels.push(SpinLevel::new(next));
         Some(next)
     }
 
@@ -108,24 +114,10 @@ impl SpinStack {
             .map_or(false, |l| l.is_at_c() && l.level < 12)
     }
 
-    /// World-position of the outermost level's orbit center in natural units.
-    /// This is the sum of orbital contributions from all levels except the
-    /// outermost, and represents where the ghost sphere should be centered.
-    /// The particle always lies on the ghost sphere's equatorial circle at
-    /// distance `effective_radius()` from this center.
+    /// World-position of the outermost ghost sphere's center. In the
+    /// hierarchical nesting model the outermost shell is always at the origin.
     pub fn outer_orbit_center(&self) -> DVec3 {
-        if self.levels.len() <= 1 {
-            return DVec3::ZERO;
-        }
-        let mut center = DVec3::ZERO;
-        for l in &self.levels[..self.levels.len() - 1] {
-            let lab_rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
-            let start = l.spin_type.orbital_start();
-            if start.length_squared() > 0.0 {
-                center += lab_rot * (start * l.amplitude);
-            }
-        }
-        center
+        DVec3::ZERO
     }
 
     /// Reset to a single idle axial level — equivalent to a fresh stack.
@@ -137,19 +129,25 @@ impl SpinStack {
         }
     }
 
-    /// Advance every active level's angle by `velocity * dt * time_scale / amplitude`.
+    /// Advance every active level's angle by `velocity * dt * time_scale / orbit_radius`.
     /// `time_scale` is in (natural radians) per (real second) at v=c for the
-    /// axial level (amplitude = 1). Each orbital level's angular velocity is
-    /// ω = v/r = angular_velocity / amplitude, so outer levels rotate slower —
-    /// this is what produces spirograph patterns instead of ellipses.
+    /// axial level (orbit_radius = 1). Each orbital level's angular velocity is
+    /// ω = v/r where r = orbit_radius = amplitude/2, so outer levels rotate
+    /// slower — this is what produces spirograph patterns instead of ellipses.
     pub fn advance(&mut self, dt: f64, time_scale: f64) {
         let scaled = dt * time_scale;
         for l in &mut self.levels {
-            l.current_angle += l.angular_velocity * scaled / l.amplitude;
+            l.current_angle += l.angular_velocity * scaled / l.orbit_radius();
         }
     }
 
     /// Compose the stack into (world position of base particle, orientation).
+    ///
+    /// Position uses hierarchical nesting: each orbital level shifts the inner
+    /// structure outward by `orbital_start * orbit_radius`, then rotates the
+    /// result. With X+Y active this gives `R_y(θ_y) * (R_x(θ_x) * Z + Z*2)`,
+    /// so the Y rotation carries the entire X structure — producing a sine
+    /// wave on the Y ghost's equator rather than an independent Lissajous.
     pub fn compose(&self) -> (DVec3, DQuat) {
         let mut position = DVec3::ZERO;
         let mut orientation = DQuat::IDENTITY;
@@ -157,23 +155,40 @@ impl SpinStack {
         for l in &self.levels {
             let lab_rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
 
-            // Position: each level's orbit plane is fixed in the lab frame,
-            // so the offset uses this level's rotation alone. Inner levels
-            // only contribute the moving center (via the running sum).
             let start = l.spin_type.orbital_start();
             if start.length_squared() > 0.0 {
-                position += lab_rot * (start * l.amplitude);
+                position = lab_rot * (position + start * l.orbit_radius());
             }
 
-            // Orientation: pre-multiply so inner spins (added first) apply
-            // first to a body vector and outer spins ride on top. Iterating
-            // [axial, X, Y, Z] this builds q = R_z * R_y * R_x * R_a, so the
-            // visible body's pole only depends on the outer spins above it —
-            // axial alone never moves the pole, X tilts it in YZ, etc.
-            orientation = lab_rot * orientation;
+            orientation = lab_rot * l.spin_type.tumble_alignment() * orientation;
         }
 
         (position, orientation)
+    }
+
+    /// Ghost sphere data for each active orbital level: (center, amplitude, spin_type).
+    /// Center is in natural units, computed by running compose on all levels
+    /// ABOVE the ghost's own level (outermost ghost is always at origin).
+    pub fn ghost_spheres(&self) -> Vec<(DVec3, f64, SpinType)> {
+        let mut result = Vec::new();
+        for (idx, level) in self.levels.iter().enumerate() {
+            if level.spin_type == SpinType::Axial {
+                continue;
+            }
+            let mut center = DVec3::ZERO;
+            for outer in &self.levels[idx + 1..] {
+                let lab_rot = DQuat::from_axis_angle(
+                    outer.spin_type.rotation_axis(),
+                    outer.current_angle,
+                );
+                let start = outer.spin_type.orbital_start();
+                if start.length_squared() > 0.0 {
+                    center = lab_rot * (center + start * outer.orbit_radius());
+                }
+            }
+            result.push((center, level.amplitude, level.spin_type));
+        }
+        result
     }
 
     /// Effective radius = amplitude of the outermost active level.
@@ -273,16 +288,13 @@ mod tests {
             s.advance(0.13 * k as f64, TAU);
             let (pos, _) = s.compose();
             assert!(approx_zero(pos.x), "k={}: x={} (expected 0)", k, pos.x);
-            assert!(approx_eq(pos.length(), 2.0),
-                "k={}: |pos|={} (expected 2)", k, pos.length());
+            assert!(approx_eq(pos.length(), 1.0),
+                "k={}: |pos|={} (expected 1, orbit_radius=amp/2=1)", k, pos.length());
         }
     }
 
     /// Regression for the "balloon yo-yo" bug: an active axial spin must
-    /// NOT re-orient the X-spin's orbit plane. Pre-fix, position composition
-    /// used the accumulated quaternion, so axial Y-rotation precessed the
-    /// YZ-plane orbit around Y, producing 3D motion. Lab-frame composition
-    /// keeps the orbit plane intrinsic to the spin type.
+    /// NOT re-orient the X-spin's orbit plane.
     #[test]
     fn x_spin_with_active_axial_still_orbits_in_yz_plane() {
         for k in 0..16u32 {
@@ -292,35 +304,32 @@ mod tests {
             s.advance(0.13 * k as f64, TAU);
             let (pos, _) = s.compose();
             assert!(approx_zero(pos.x), "k={}: x={} (expected 0)", k, pos.x);
-            assert!(approx_eq(pos.length(), 2.0),
-                "k={}: |pos|={} (expected 2)", k, pos.length());
+            assert!(approx_eq(pos.length(), 1.0),
+                "k={}: |pos|={} (expected 1, orbit_radius=amp/2=1)", k, pos.length());
         }
     }
 
-    /// Regression for the same-frequency ellipse bug: when X (amp=2) and Y
-    /// (amp=4) are both at v=c but advancing at the same angular rate, their
-    /// sum is an ellipse. With ω = v/r, after dt=1/TAU seconds at time_scale=TAU,
-    /// X advances π radians and Y advances π/2 radians.
-    /// X orbital_start=Z: R_X(π)*Z*2 = (0,0,-2); R_Y(π/2)*Z*4 = (4,0,0) → total (4,0,-2).
+    /// With ω = v/orbit_radius, X (orbit_radius=1) and Y (orbit_radius=2)
+    /// advance at different rates. dt=0.5, time_scale=TAU:
+    /// θ_X = 0.5*TAU/1 = π, θ_Y = 0.5*TAU/2 = π/2.
+    /// Hierarchical: inner = R_X(π)*Z = (0,0,-1), then
+    /// R_Y(π/2) * ((0,0,-1) + Z*2) = R_Y(π/2) * (0,0,1) = (1,0,0).
     #[test]
-    fn orbital_angular_rate_scales_with_inverse_amplitude() {
+    fn orbital_angular_rate_scales_with_inverse_orbit_radius() {
         let mut s = stack_with_levels(3);
         s.set_velocity(1, 0.0);
         s.set_velocity(2, 1.0);
         s.set_velocity(3, 1.0);
-        // dt=1, time_scale=TAU → θ_X = TAU/2 = π, θ_Y = TAU/4 = π/2
-        s.advance(1.0, TAU);
+        s.advance(0.5, TAU);
         let (pos, _) = s.compose();
-        assert!(approx_eq(pos.x, 4.0),  "pos.x={} (expected 4)",  pos.x);
+        assert!(approx_eq(pos.x, 1.0),  "pos.x={} (expected 1)",  pos.x);
         assert!(approx_zero(pos.y),     "pos.y={} (expected 0)",  pos.y);
-        assert!(approx_eq(pos.z, -2.0), "pos.z={} (expected -2)", pos.z);
+        assert!(approx_zero(pos.z),     "pos.z={} (expected 0)",  pos.z);
     }
 
-    /// Verify that X+Y at saturation produces a spirograph rather than an ellipse.
-    /// With θ_X = 2*θ_Y (ω ratio 2:1), dist² = 20 + 32*sin(θ_Y)*cos²(θ_Y),
-    /// which ranges from ≈7.68 (dist≈2.77) to ≈32.32 (dist≈5.69).
-    /// The same-frequency bug produces dist² = 20 + 8*sin(2θ), ranging only
-    /// from ≈3.46 to ≈5.29 — a distinct, tighter band.
+    /// X+Y with hierarchical nesting: the path is a sine wave on the Y
+    /// ghost's equator. dist² = 5 + 4*cos(2θ_Y), ranging from 1 to 3.
+    /// (Rotation preserves length, so dist depends only on the inner offset.)
     #[test]
     fn x_y_combined_path_is_spirograph_not_ellipse() {
         let mut s = stack_with_levels(3);
@@ -335,10 +344,59 @@ mod tests {
             if d < min_d { min_d = d; }
             if d > max_d { max_d = d; }
         }
-        // Fixed (ω_X=2*ω_Y): max≈5.69, min≈2.77.
-        // Buggy (same rate):  max≈5.29, min≈3.46 — both bounds would fail.
-        assert!(max_d > 5.5, "max distance {} should approach 5.69", max_d);
-        assert!(min_d < 3.2, "min distance {} should approach 2.77", min_d);
+        assert!(max_d > 2.9, "max distance {} should approach 3.0", max_d);
+        assert!(min_d < 1.1, "min distance {} should approach 1.0", min_d);
+    }
+
+    #[test]
+    fn ghost_spheres_x_only_at_origin() {
+        let s = stack_with_levels(2);
+        let ghosts = s.ghost_spheres();
+        assert_eq!(ghosts.len(), 1, "axial+X → one orbital ghost");
+        let (center, amp, st) = &ghosts[0];
+        assert!(approx_zero(center.length()), "X ghost center at origin, got {:?}", center);
+        assert!(approx_eq(*amp, 2.0), "X amplitude should be 2, got {}", amp);
+        assert_eq!(*st, SpinType::X);
+    }
+
+    #[test]
+    fn ghost_spheres_x_y_positions() {
+        let mut s = stack_with_levels(3);
+        s.set_velocity(1, 0.0);
+        s.set_velocity(2, 1.0);
+        s.set_velocity(3, 1.0);
+        // θ_Y = 0 → X ghost center = R_Y(0) * (ZERO + Z*2) = Z*2 = (0,0,2)
+        let ghosts = s.ghost_spheres();
+        assert_eq!(ghosts.len(), 2);
+        let (x_center, x_amp, _) = &ghosts[0];
+        let (y_center, y_amp, _) = &ghosts[1];
+        assert!(approx_eq(*x_amp, 2.0));
+        assert!(approx_eq(*y_amp, 4.0));
+        assert!(approx_zero(y_center.length()), "Y ghost at origin");
+        assert!(approx_eq(x_center.z, 2.0), "X ghost at (0,0,2), got {:?}", x_center);
+        assert!(approx_zero(x_center.x));
+        assert!(approx_zero(x_center.y));
+
+        // Advance so θ_Y = π/2 → X ghost center = R_Y(π/2)*Z*2 = X*2 = (2,0,0)
+        s.advance(0.5, TAU);
+        let ghosts2 = s.ghost_spheres();
+        let (x_center2, _, _) = &ghosts2[0];
+        assert!(approx_eq(x_center2.x, 2.0),
+            "after θ_Y=π/2, X ghost at (2,0,0), got {:?}", x_center2);
+        assert!(approx_zero(x_center2.y));
+        assert!(approx_zero(x_center2.z));
+    }
+
+    #[test]
+    fn ghost_sphere_inner_edge_touches_outer() {
+        let s = stack_with_levels(3);
+        let ghosts = s.ghost_spheres();
+        let (x_center, x_amp, _) = &ghosts[0];
+        let (y_center, y_amp, _) = &ghosts[1];
+        let dist = (*x_center - *y_center).length();
+        assert!(approx_eq(dist + x_amp, *y_amp),
+            "inner ghost far edge should touch outer: dist={} + x_amp={} vs y_amp={}",
+            dist, x_amp, y_amp);
     }
 
     /// Regression for the orientation-wobble bug observed 2026-04-27:
