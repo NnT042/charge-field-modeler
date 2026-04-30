@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mathis-library": {
+      "command": "python",
+      "args": ["C:/Users/nnt04/Project/mathis-library/server/main.py"]
+    }
+  }
+}
