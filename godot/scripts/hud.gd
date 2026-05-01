@@ -1,20 +1,18 @@
 extends CanvasLayer
-## M2 HUD: drives the spin stack (levels 1-4, photon tier).
-##
-## - Each level row has a slider (−c..+c) plus an activate button. The button
-##   is visible only for the next-to-activate level, and only once the
-##   currently-topmost level has saturated to ±c.
-## - The time-scale slider is logarithmic (10^x). 0 = unity → TAU rad/s at c
-##   (one revolution per second, matching M1's feel). Negative = slow-mo.
-## - Readouts mirror the Rust side (signature, classification, effective
-##   radius, top-level ω, FPS) and update each frame.
+## M2 HUD: toolbar + slider panel for the spin stack (levels 1-4, photon tier).
 
-const PHASE_MAX_LEVEL: int = 4  ## M2 covers the photon tier (levels 1..4).
-const BASE_TIME_SCALE: float = TAU  ## Time scale at slider position 0.0.
+const PHASE_MAX_LEVEL: int = 4
+const BASE_TIME_SCALE: float = TAU
 
 @export var focus_particle_path: NodePath
+@export var camera_rig_path: NodePath
+@export var ghost_sphere_path: NodePath
+@export var path_trace_path: NodePath
 
 var _focus: Node3D
+var _camera_rig: Node3D
+var _ghost: Node3D
+var _trace: Node3D
 var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
@@ -24,6 +22,10 @@ var _paused: bool = false
 
 func _ready() -> void:
 	_focus = get_node_or_null(focus_particle_path) as Node3D
+	_camera_rig = get_node_or_null(camera_rig_path) as Node3D
+	_ghost = get_node_or_null(ghost_sphere_path) as Node3D
+	_trace = get_node_or_null(path_trace_path) as Node3D
+
 	if _focus == null:
 		push_error("HUD: focus_particle_path does not resolve to a Node3D")
 		return
@@ -40,9 +42,26 @@ func _ready() -> void:
 		_activate_buttons[i].pressed.connect(_on_activate_pressed.bind(level))
 
 	%TimeScaleSlider.value_changed.connect(_on_time_scale_changed)
-	%ResetButton.pressed.connect(_on_reset_pressed)
+	%LinearSpeedSlider.value_changed.connect(_on_linear_speed_changed)
 	_apply_time_scale(%TimeScaleSlider.value)
 	_refresh_row_states()
+
+	# Toolbar buttons
+	%PauseBtn.pressed.connect(_on_pause_btn_pressed)
+	%GhostBtn.pressed.connect(_on_ghost_btn_pressed)
+	%TraceBtn.pressed.connect(_on_trace_btn_pressed)
+	%ClearBtn.pressed.connect(_on_clear_btn_pressed)
+	%LinearBtn.pressed.connect(_on_linear_btn_pressed)
+	%DirBtn.pressed.connect(_on_dir_btn_pressed)
+	%ResetBtn.pressed.connect(_on_reset_pressed)
+
+	if _camera_rig:
+		%FrontBtn.pressed.connect(_camera_rig.snap_front)
+		%SideBtn.pressed.connect(_camera_rig.snap_right)
+		%TopBtn.pressed.connect(_camera_rig.snap_top)
+		%IsoBtn.pressed.connect(_camera_rig.snap_iso)
+		%HomeBtn.pressed.connect(_camera_rig.snap_default)
+		%FitBtn.pressed.connect(_camera_rig.auto_fit)
 
 
 func _process(_delta: float) -> void:
@@ -62,6 +81,7 @@ func _process(_delta: float) -> void:
 
 	_refresh_row_states()
 
+	# Readouts
 	%ParticleLabel.text = String(_focus.call("classification"))
 	%SignatureLabel.text = String(_focus.call("signature"))
 	%RadiusLabel.text = "%d r" % int(_focus.call("effective_radius"))
@@ -71,6 +91,36 @@ func _process(_delta: float) -> void:
 	else:
 		%TopOmegaLabel.text = "—"
 	%FpsLabel.text = "%d" % Engine.get_frames_per_second()
+
+	# Linear state
+	var linear_on: bool = bool(_focus.call("is_linear_enabled"))
+	%LinearSpeedSlider.editable = linear_on
+	if linear_on:
+		var spd: float = float(_focus.call("get_linear_speed"))
+		if not %LinearSpeedSlider.has_focus():
+			%LinearSpeedSlider.set_value_no_signal(spd)
+		%LinearSpeedValue.text = "%.3f c" % spd
+		var dir_label: String = String(_focus.call("get_linear_direction_label"))
+		%LinearVelLabel.text = "%.3f c (%s)" % [spd, dir_label]
+	else:
+		%LinearSpeedValue.text = "—"
+		%LinearVelLabel.text = "at rest"
+	var wl: float = float(_focus.call("get_wavelength"))
+	if wl > 0.01:
+		%WavelengthLabel.text = "%.2f r" % wl
+	else:
+		%WavelengthLabel.text = "—"
+
+	# Toolbar state labels
+	%PauseBtn.text = "Resume" if _paused else "Pause"
+	%LinearBtn.text = "Linear: on" if linear_on else "Linear: off"
+	var dir_lbl: String = String(_focus.call("get_linear_direction_label"))
+	%DirBtn.text = "Dir: " + dir_lbl
+	%DirBtn.disabled = not linear_on
+	if _ghost:
+		%GhostBtn.text = "Ghost: " + _ghost.display_mode_label()
+	if _trace:
+		%TraceBtn.text = "Trace: " + _trace.display_mode_label()
 
 
 func _on_slider_changed(value: float, level: int) -> void:
@@ -86,8 +136,6 @@ func _on_slider_changed(value: float, level: int) -> void:
 func _on_activate_pressed(level: int) -> void:
 	if _focus == null:
 		return
-	# Walk activate_next() up to the requested level (defensive — in practice
-	# the button is only enabled for level == current_top + 1).
 	while int(_focus.call("level_count")) < level:
 		var added: int = int(_focus.call("activate_next"))
 		if added == 0:
@@ -110,11 +158,56 @@ func _snap_to_targets(value: float, targets: Array, deadzone: float) -> float:
 	return value
 
 
+func _on_linear_speed_changed(value: float) -> void:
+	if _focus == null:
+		return
+	_focus.call("set_linear_speed", value)
+
+
+# ---- Toolbar handlers ----
+
+func _on_pause_btn_pressed() -> void:
+	_set_paused(not _paused)
+
+
+func _on_ghost_btn_pressed() -> void:
+	if _ghost:
+		_ghost.cycle_display_mode()
+
+
+func _on_trace_btn_pressed() -> void:
+	if _trace:
+		_trace.cycle_display_mode()
+
+
+func _on_clear_btn_pressed() -> void:
+	if _trace:
+		_trace.clear_trace()
+
+
+func _on_linear_btn_pressed() -> void:
+	if _focus:
+		var current: bool = bool(_focus.call("is_linear_enabled"))
+		_focus.call("set_linear_enabled", not current)
+
+
+func _on_dir_btn_pressed() -> void:
+	if _focus:
+		var current: int = int(_focus.call("get_linear_direction_preset"))
+		var count: int = int(_focus.call("get_linear_direction_count"))
+		_focus.call("set_linear_direction_preset", (current + 1) % count)
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	if event.keycode == KEY_SPACE:
-		_set_paused(not _paused)
+	match (event as InputEventKey).keycode:
+		KEY_SPACE:
+			_set_paused(not _paused)
+		KEY_L:
+			if _focus != null:
+				var current: bool = bool(_focus.call("is_linear_enabled"))
+				_focus.call("set_linear_enabled", not current)
 
 
 func _set_paused(p: bool) -> void:
@@ -127,12 +220,13 @@ func _set_paused(p: bool) -> void:
 func _on_reset_pressed() -> void:
 	if _focus == null:
 		return
-	# Deactivate all spin levels and clear the path trace.
 	_focus.call("reset_stack")
 	for level: int in range(1, PHASE_MAX_LEVEL + 1):
 		_sliders[level - 1].set_value_no_signal(0.0)
 	%TimeScaleSlider.set_value_no_signal(0.0)
 	_apply_time_scale(0.0)
+	%LinearSpeedSlider.set_value_no_signal(0.0)
+	%LinearSpeedSlider.editable = false
 	_refresh_row_states()
 
 
@@ -141,7 +235,7 @@ func _apply_time_scale(slider_log: float) -> void:
 	var ts: float = BASE_TIME_SCALE * factor
 	if _focus != null:
 		_focus.call("set_time_scale", ts)
-	%TimeScaleValue.text = "%.3f× (%.2f rad/s @ c)" % [factor, ts]
+	%TimeScaleValue.text = "%.3fx (%.2f rad/s @ c)" % [factor, ts]
 
 
 func _refresh_row_states() -> void:

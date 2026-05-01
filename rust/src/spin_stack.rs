@@ -191,6 +191,11 @@ impl SpinStack {
         result
     }
 
+    /// The outermost active orbital (non-axial) level, or None if only axial.
+    pub fn outermost_orbital(&self) -> Option<&SpinLevel> {
+        self.levels.iter().rev().find(|l| l.spin_type != SpinType::Axial)
+    }
+
     /// Effective radius = amplitude of the outermost active level.
     /// At rest (level 1 only) this is 1.0 (the base photon radius).
     pub fn effective_radius(&self) -> f64 {
@@ -406,6 +411,20 @@ mod tests {
     /// applied X first then axial-around-lab-Y to a body vector, dragging
     /// the X-tilted pole around lab Y. Inner spins must apply first to the
     /// body so outer spins ride on top — pre-multiply (`lab_rot * orientation`).
+    #[test]
+    fn outermost_orbital_returns_correct_level() {
+        let s = stack_with_levels(3);
+        let outer = s.outermost_orbital().unwrap();
+        assert_eq!(outer.spin_type, SpinType::Y);
+        assert_eq!(outer.level, 3);
+    }
+
+    #[test]
+    fn outermost_orbital_none_for_axial_only() {
+        let s = SpinStack::new();
+        assert!(s.outermost_orbital().is_none());
+    }
+
     #[test]
     fn body_pole_stays_in_yz_plane_under_axial_plus_x() {
         for k in 0..32u32 {

@@ -88,3 +88,6 @@ near = 0.05
 
 [node name="HUD" parent="." instance=ExtResource("2_hud")]
 focus_particle_path = NodePath("../FocusParticle")
+camera_rig_path = NodePath("../OrbitCameraRig")
+ghost_sphere_path = NodePath("../GhostSphere")
+path_trace_path = NodePath("../PathTraceLine")

@@ -23,8 +23,8 @@ extends Node3D
 @export var snap_duration: float = 0.25
 @export var fit_padding: float = 1.3
 
-const _DEFAULT_YAW: float = 0.0
-const _DEFAULT_PITCH_DEG: float = 20.0
+const _DEFAULT_YAW: float = deg_to_rad(-30.0)
+const _DEFAULT_PITCH_DEG: float = 35.0
 const _DEFAULT_DISTANCE: float = 5.0
 
 var _focus: Node3D
@@ -36,6 +36,8 @@ var _distance: float = _DEFAULT_DISTANCE
 var _rotating: bool = false
 var _panning: bool = false
 var _snap_tween: Tween
+var _tracking: bool = false
+const _TRACK_SMOOTH: float = 8.0
 
 
 func _ready() -> void:
@@ -53,6 +55,18 @@ func _find_camera() -> Camera3D:
 		if child is Camera3D:
 			return child
 	return null
+
+
+func _process(delta: float) -> void:
+	if _focus == null:
+		return
+	_tracking = bool(_focus.call("is_linear_enabled"))
+	if _tracking:
+		var target: Vector3 = Vector3(_focus.call("get_linear_offset"))
+		position = position.lerp(target, clamp(_TRACK_SMOOTH * delta, 0.0, 1.0))
+	else:
+		if not position.is_zero_approx():
+			position = position.lerp(Vector3.ZERO, clamp(_TRACK_SMOOTH * delta, 0.0, 1.0))
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -163,8 +177,30 @@ func _auto_fit() -> void:
 	var world_radius: float = float(_focus.call("effective_radius")) * 0.5
 	var half_fov: float = deg_to_rad(_camera.fov * 0.5)
 	var target_dist: float = clamp(world_radius * fit_padding / tan(half_fov), min_zoom, max_zoom)
-	position = Vector3.ZERO
+	if _tracking:
+		position = Vector3(_focus.call("get_linear_offset"))
+	else:
+		position = Vector3.ZERO
 	_snap_to(_yaw, _pitch, target_dist)
+
+
+func snap_front() -> void:
+	_snap_to(0.0, 0.0)
+
+func snap_right() -> void:
+	_snap_to(-PI * 0.5, 0.0)
+
+func snap_top() -> void:
+	_snap_to(0.0, pitch_limit)
+
+func snap_iso() -> void:
+	_snap_to(-PI * 0.25, deg_to_rad(30.0))
+
+func snap_default() -> void:
+	_snap_to(_DEFAULT_YAW, deg_to_rad(_DEFAULT_PITCH_DEG), _DEFAULT_DISTANCE)
+
+func auto_fit() -> void:
+	_auto_fit()
 
 
 func _kill_snap() -> void:

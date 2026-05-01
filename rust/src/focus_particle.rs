@@ -1,5 +1,6 @@
 use std::f64::consts::TAU;
 
+use glam::DVec3;
 use godot::classes::{INode3D, Node3D};
 use godot::prelude::*;
 
@@ -10,7 +11,7 @@ use crate::types::{level_amplitude, level_spec};
 /// Default trace ring-buffer capacity. At 60Hz physics tick with `min_step`
 /// filtering, this gives several seconds of history at modest spin rates and
 /// caps GPU work for the line-strip rebuild.
-const PATH_TRACE_CAPACITY: usize = 2048;
+const PATH_TRACE_CAPACITY: usize = 8192;
 /// Default minimum movement (natural units) between consecutive recorded
 /// samples. The base photon has radius 1, so 0.005 r is fine but not absurd.
 const PATH_TRACE_MIN_STEP: f64 = 0.005;
@@ -32,6 +33,32 @@ pub struct FocusParticle {
     stack: SpinStack,
     time_scale: f64,
     path: PathTrace,
+    linear_enabled: bool,
+    linear_speed: f64,
+    linear_offset: DVec3,
+    linear_dir_preset: u8,
+}
+
+const LINEAR_DIR_COUNT: u8 = 4;
+
+fn direction_vec(preset: u8) -> DVec3 {
+    match preset {
+        0 => DVec3::X,
+        1 => DVec3::Y,
+        2 => DVec3::Z,
+        3 => DVec3::new(1.0, 1.0, 1.0).normalize(),
+        _ => DVec3::X,
+    }
+}
+
+fn direction_label(preset: u8) -> &'static str {
+    match preset {
+        0 => "+X",
+        1 => "+Y",
+        2 => "+Z",
+        3 => "XYZ",
+        _ => "+X",
+    }
 }
 
 #[godot_api]
@@ -42,18 +69,29 @@ impl INode3D for FocusParticle {
             stack: SpinStack::new(),
             time_scale: TAU,
             path: PathTrace::new(PATH_TRACE_CAPACITY, PATH_TRACE_MIN_STEP),
+            linear_enabled: false,
+            linear_speed: 0.0,
+            linear_offset: DVec3::ZERO,
+            linear_dir_preset: 0,
         }
     }
 
     fn physics_process(&mut self, delta: f64) {
         self.stack.advance(delta, self.time_scale);
-        let (pos, rot) = self.stack.compose();
-        self.path.record(pos);
+        let (local_pos, rot) = self.stack.compose();
+
+        if self.linear_enabled {
+            self.linear_offset +=
+                direction_vec(self.linear_dir_preset) * self.linear_speed * delta * self.time_scale;
+        }
+
+        let world_pos = local_pos + self.linear_offset;
+        self.path.record(world_pos, 1.0);
 
         let g_pos = Vector3::new(
-            pos.x as f32 * WORLD_SCALE,
-            pos.y as f32 * WORLD_SCALE,
-            pos.z as f32 * WORLD_SCALE,
+            world_pos.x as f32 * WORLD_SCALE,
+            world_pos.y as f32 * WORLD_SCALE,
+            world_pos.z as f32 * WORLD_SCALE,
         );
         let g_rot = Quaternion::new(
             rot.x as f32,
@@ -181,6 +219,18 @@ impl FocusParticle {
         arr
     }
 
+    /// Per-sample particle radius in world space, same order as `get_path_points`.
+    #[func]
+    fn get_path_radii(&self) -> PackedFloat32Array {
+        let samples = self.path.samples_chronological();
+        let mut arr = PackedFloat32Array::new();
+        arr.resize(samples.len());
+        for (i, s) in samples.iter().enumerate() {
+            arr[i] = s.radius as f32 * WORLD_SCALE;
+        }
+        arr
+    }
+
     #[func]
     fn clear_path(&mut self) {
         self.path.clear();
@@ -202,7 +252,7 @@ impl FocusParticle {
     /// World-space center of the outermost level's orbit.
     #[func]
     fn outer_orbit_center(&self) -> Vector3 {
-        let c = self.stack.outer_orbit_center();
+        let c = self.stack.outer_orbit_center() + self.linear_offset;
         Vector3::new(
             c.x as f32 * WORLD_SCALE,
             c.y as f32 * WORLD_SCALE,
@@ -219,10 +269,11 @@ impl FocusParticle {
     fn ghost_sphere_center(&self, index: i32) -> Vector3 {
         let ghosts = self.stack.ghost_spheres();
         if let Some((c, _, _)) = ghosts.get(index as usize) {
+            let world_c = *c + self.linear_offset;
             Vector3::new(
-                c.x as f32 * WORLD_SCALE,
-                c.y as f32 * WORLD_SCALE,
-                c.z as f32 * WORLD_SCALE,
+                world_c.x as f32 * WORLD_SCALE,
+                world_c.y as f32 * WORLD_SCALE,
+                world_c.z as f32 * WORLD_SCALE,
             )
         } else {
             Vector3::ZERO
@@ -245,10 +296,87 @@ impl FocusParticle {
             .map_or(GString::default(), |(_, _, st)| GString::from(st.label()))
     }
 
+    #[func]
+    fn set_linear_enabled(&mut self, enabled: bool) {
+        self.linear_enabled = enabled;
+        self.linear_offset = DVec3::ZERO;
+        self.path.clear();
+    }
+
+    #[func]
+    fn is_linear_enabled(&self) -> bool {
+        self.linear_enabled
+    }
+
+    #[func]
+    fn set_linear_speed(&mut self, speed: f64) {
+        self.linear_speed = speed.clamp(0.0, 1.0);
+    }
+
+    #[func]
+    fn get_linear_speed(&self) -> f64 {
+        self.linear_speed
+    }
+
+    #[func]
+    fn set_linear_direction_preset(&mut self, preset: i32) {
+        let p = (preset.max(0) as u8).min(LINEAR_DIR_COUNT - 1);
+        if p != self.linear_dir_preset {
+            self.linear_dir_preset = p;
+            self.linear_offset = DVec3::ZERO;
+            self.path.clear();
+        }
+    }
+
+    #[func]
+    fn get_linear_direction_preset(&self) -> i32 {
+        self.linear_dir_preset as i32
+    }
+
+    #[func]
+    fn get_linear_direction_label(&self) -> GString {
+        GString::from(direction_label(self.linear_dir_preset))
+    }
+
+    #[func]
+    fn get_linear_direction_count(&self) -> i32 {
+        LINEAR_DIR_COUNT as i32
+    }
+
+    #[func]
+    fn get_linear_offset(&self) -> Vector3 {
+        Vector3::new(
+            self.linear_offset.x as f32 * WORLD_SCALE,
+            self.linear_offset.y as f32 * WORLD_SCALE,
+            self.linear_offset.z as f32 * WORLD_SCALE,
+        )
+    }
+
+    /// Wavelength in natural units: distance traveled during one full outer
+    /// orbital revolution. Returns 0 if no orbital spin or no linear motion.
+    /// The time_scale cancels out of the formula, confirming wavelength is
+    /// a purely spatial quantity.
+    #[func]
+    fn get_wavelength(&self) -> f64 {
+        if !self.linear_enabled || self.linear_speed < 1e-12 {
+            return 0.0;
+        }
+        match self.stack.outermost_orbital() {
+            Some(outer) if outer.angular_velocity.abs() > 1e-12 => {
+                self.linear_speed * TAU * outer.orbit_radius() / outer.angular_velocity.abs()
+            }
+            _ => 0.0,
+        }
+    }
+
     /// Reset the spin stack to a single idle axial level and clear the path.
     #[func]
     fn reset_stack(&mut self) {
         self.stack.reset();
         self.path.clear();
+        self.linear_enabled = false;
+        self.linear_speed = 0.0;
+        self.linear_offset = DVec3::ZERO;
+        self.linear_dir_preset = 0;
     }
 }

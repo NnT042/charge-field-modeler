@@ -12,8 +12,14 @@
 
 use glam::DVec3;
 
+#[derive(Clone, Copy)]
+pub struct TraceSample {
+    pub pos: DVec3,
+    pub radius: f64,
+}
+
 pub struct PathTrace {
-    buf: Vec<DVec3>,
+    buf: Vec<TraceSample>,
     /// Index of the next slot to write. Equal to `len` until the buffer fills,
     /// then wraps modulo `capacity`.
     head: usize,
@@ -57,19 +63,20 @@ impl PathTrace {
     /// Record a position if tracing is enabled and the threshold is met.
     /// The very first sample is always recorded; subsequent samples must be
     /// at least `min_step` from the previous recorded point.
-    pub fn record(&mut self, pos: DVec3) {
+    pub fn record(&mut self, pos: DVec3, radius: f64) {
         if !self.enabled {
             return;
         }
         if let Some(last) = self.last() {
-            if (pos - last).length_squared() < self.min_step * self.min_step {
+            if (pos - last.pos).length_squared() < self.min_step * self.min_step {
                 return;
             }
         }
+        let sample = TraceSample { pos, radius };
         if self.buf.len() < self.capacity {
-            self.buf.push(pos);
+            self.buf.push(sample);
         } else {
-            self.buf[self.head] = pos;
+            self.buf[self.head] = sample;
         }
         self.head = (self.head + 1) % self.capacity;
         if self.len < self.capacity {
@@ -78,30 +85,32 @@ impl PathTrace {
     }
 
     /// Most recently recorded sample, if any.
-    pub fn last(&self) -> Option<DVec3> {
+    pub fn last(&self) -> Option<TraceSample> {
         if self.len == 0 {
             return None;
         }
-        // `head` points one past the newest, modulo capacity.
         let idx = (self.head + self.capacity - 1) % self.capacity;
         Some(self.buf[idx])
     }
 
     /// Live samples in chronological order: oldest first, newest last.
-    pub fn points_chronological(&self) -> Vec<DVec3> {
+    pub fn samples_chronological(&self) -> Vec<TraceSample> {
         if self.len == 0 {
             return Vec::new();
         }
         let mut out = Vec::with_capacity(self.len);
         if self.len < self.capacity {
-            // Buffer hasn't wrapped yet — `buf` is already chronological.
             out.extend_from_slice(&self.buf);
         } else {
-            // After wrap, `head` points at the oldest sample.
             out.extend_from_slice(&self.buf[self.head..]);
             out.extend_from_slice(&self.buf[..self.head]);
         }
         out
+    }
+
+    /// Positions only (backward-compatible accessor).
+    pub fn points_chronological(&self) -> Vec<DVec3> {
+        self.samples_chronological().iter().map(|s| s.pos).collect()
     }
 }
 
@@ -109,21 +118,23 @@ impl PathTrace {
 mod tests {
     use super::*;
 
+    const R: f64 = 1.0;
+
     #[test]
     fn first_point_always_recorded() {
         let mut t = PathTrace::new(8, 0.5);
-        t.record(DVec3::new(0.0, 0.0, 0.0));
+        t.record(DVec3::new(0.0, 0.0, 0.0), R);
         assert_eq!(t.len(), 1);
     }
 
     #[test]
     fn distance_threshold_skips_close_samples() {
         let mut t = PathTrace::new(8, 0.5);
-        t.record(DVec3::ZERO);
-        t.record(DVec3::new(0.1, 0.0, 0.0)); // below threshold, skipped
-        t.record(DVec3::new(0.4, 0.0, 0.0)); // still below threshold from origin
+        t.record(DVec3::ZERO, R);
+        t.record(DVec3::new(0.1, 0.0, 0.0), R);
+        t.record(DVec3::new(0.4, 0.0, 0.0), R);
         assert_eq!(t.len(), 1);
-        t.record(DVec3::new(0.6, 0.0, 0.0)); // 0.6 from origin, above threshold
+        t.record(DVec3::new(0.6, 0.0, 0.0), R);
         assert_eq!(t.len(), 2);
     }
 
@@ -131,11 +142,10 @@ mod tests {
     fn ring_buffer_wraps_and_preserves_chronological_order() {
         let mut t = PathTrace::new(4, 0.0);
         for i in 0..6 {
-            t.record(DVec3::new(i as f64, 0.0, 0.0));
+            t.record(DVec3::new(i as f64, 0.0, 0.0), R);
         }
         assert_eq!(t.len(), 4);
         let pts = t.points_chronological();
-        // Oldest two (0.0, 1.0) should have been overwritten; we keep 2..=5.
         assert_eq!(pts.len(), 4);
         assert_eq!(pts[0].x, 2.0);
         assert_eq!(pts[1].x, 3.0);
@@ -146,13 +156,12 @@ mod tests {
     #[test]
     fn clear_resets_state() {
         let mut t = PathTrace::new(4, 0.0);
-        t.record(DVec3::ZERO);
-        t.record(DVec3::X);
+        t.record(DVec3::ZERO, R);
+        t.record(DVec3::X, R);
         t.clear();
         assert_eq!(t.len(), 0);
         assert!(t.last().is_none());
-        // After clear, the next record should land at index 0 chronologically.
-        t.record(DVec3::Y);
+        t.record(DVec3::Y, R);
         assert_eq!(t.points_chronological(), vec![DVec3::Y]);
     }
 
@@ -160,11 +169,22 @@ mod tests {
     fn disabled_drops_samples() {
         let mut t = PathTrace::new(4, 0.0);
         t.set_enabled(false);
-        t.record(DVec3::ZERO);
-        t.record(DVec3::X);
+        t.record(DVec3::ZERO, R);
+        t.record(DVec3::X, R);
         assert_eq!(t.len(), 0);
         t.set_enabled(true);
-        t.record(DVec3::Y);
+        t.record(DVec3::Y, R);
         assert_eq!(t.len(), 1);
+    }
+
+    #[test]
+    fn samples_store_radius() {
+        let mut t = PathTrace::new(4, 0.0);
+        t.record(DVec3::ZERO, 1.0);
+        t.record(DVec3::X, 2.0);
+        let samples = t.samples_chronological();
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].radius, 1.0);
+        assert_eq!(samples[1].radius, 2.0);
     }
 }
