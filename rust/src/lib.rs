@@ -4,6 +4,7 @@ mod focus_particle;
 mod path_trace;
 mod spin_stack;
 mod types;
+mod units;
 
 struct ChargeFieldModelerExtension;
 

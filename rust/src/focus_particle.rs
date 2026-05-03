@@ -1,4 +1,4 @@
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 use glam::DVec3;
 use godot::classes::{INode3D, Node3D};
@@ -7,6 +7,7 @@ use godot::prelude::*;
 use crate::path_trace::PathTrace;
 use crate::spin_stack::SpinStack;
 use crate::types::{level_amplitude, level_spec};
+use crate::units;
 
 /// Default trace ring-buffer capacity. At 60Hz physics tick with `min_step`
 /// filtering, this gives several seconds of history at modest spin rates and
@@ -33,10 +34,14 @@ pub struct FocusParticle {
     stack: SpinStack,
     time_scale: f64,
     path: PathTrace,
+    surface_path: PathTrace,
     linear_enabled: bool,
     linear_speed: f64,
     linear_offset: DVec3,
     linear_dir_preset: u8,
+    crest_markers: Vec<DVec3>,
+    trough_markers: Vec<DVec3>,
+    prev_outer_half_period: i64,
 }
 
 const LINEAR_DIR_COUNT: u8 = 4;
@@ -69,10 +74,14 @@ impl INode3D for FocusParticle {
             stack: SpinStack::new(),
             time_scale: TAU,
             path: PathTrace::new(PATH_TRACE_CAPACITY, PATH_TRACE_MIN_STEP),
+            surface_path: PathTrace::new(PATH_TRACE_CAPACITY, PATH_TRACE_MIN_STEP),
             linear_enabled: false,
             linear_speed: 0.0,
             linear_offset: DVec3::ZERO,
             linear_dir_preset: 0,
+            crest_markers: Vec::new(),
+            trough_markers: Vec::new(),
+            prev_outer_half_period: i64::MIN,
         }
     }
 
@@ -87,6 +96,33 @@ impl INode3D for FocusParticle {
 
         let world_pos = local_pos + self.linear_offset;
         self.path.record(world_pos, 1.0);
+
+        let pole = rot * DVec3::Y;
+        self.surface_path.record(world_pos + pole, 1.0);
+
+        if self.linear_enabled {
+            if let Some(outer) = self.stack.outermost_orbital() {
+                if outer.angular_velocity.abs() > 1e-12 {
+                    let hp = (outer.current_angle / PI).floor() as i64;
+                    if self.prev_outer_half_period != i64::MIN
+                        && hp != self.prev_outer_half_period
+                    {
+                        if hp & 1 == 0 {
+                            if self.crest_markers.len() >= 256 {
+                                self.crest_markers.remove(0);
+                            }
+                            self.crest_markers.push(world_pos);
+                        } else {
+                            if self.trough_markers.len() >= 256 {
+                                self.trough_markers.remove(0);
+                            }
+                            self.trough_markers.push(world_pos);
+                        }
+                    }
+                    self.prev_outer_half_period = hp;
+                }
+            }
+        }
 
         let g_pos = Vector3::new(
             world_pos.x as f32 * WORLD_SCALE,
@@ -233,20 +269,36 @@ impl FocusParticle {
 
     #[func]
     fn clear_path(&mut self) {
-        self.path.clear();
+        self.clear_all_traces();
     }
 
     #[func]
     fn set_path_enabled(&mut self, e: bool) {
         self.path.set_enabled(e);
+        self.surface_path.set_enabled(e);
         if !e {
-            self.path.clear();
+            self.clear_all_traces();
         }
     }
 
     #[func]
     fn is_path_enabled(&self) -> bool {
         self.path.enabled()
+    }
+
+    #[func]
+    fn get_surface_path_points(&self) -> PackedVector3Array {
+        let pts = self.surface_path.points_chronological();
+        let mut arr = PackedVector3Array::new();
+        arr.resize(pts.len());
+        for (i, p) in pts.iter().enumerate() {
+            arr[i] = Vector3::new(
+                p.x as f32 * WORLD_SCALE,
+                p.y as f32 * WORLD_SCALE,
+                p.z as f32 * WORLD_SCALE,
+            );
+        }
+        arr
     }
 
     /// World-space center of the outermost level's orbit.
@@ -300,7 +352,7 @@ impl FocusParticle {
     fn set_linear_enabled(&mut self, enabled: bool) {
         self.linear_enabled = enabled;
         self.linear_offset = DVec3::ZERO;
-        self.path.clear();
+        self.clear_all_traces();
     }
 
     #[func]
@@ -324,7 +376,7 @@ impl FocusParticle {
         if p != self.linear_dir_preset {
             self.linear_dir_preset = p;
             self.linear_offset = DVec3::ZERO;
-            self.path.clear();
+            self.clear_all_traces();
         }
     }
 
@@ -352,10 +404,10 @@ impl FocusParticle {
         )
     }
 
-    /// Wavelength in natural units: distance traveled during one full outer
-    /// orbital revolution. Returns 0 if no orbital spin or no linear motion.
-    /// The time_scale cancels out of the formula, confirming wavelength is
-    /// a purely spatial quantity.
+    /// Wavelength in natural units: the spatial period of the outermost
+    /// orbital wave during linear motion. This is the peak-to-peak distance
+    /// visible in the path trace. Returns 0 if no orbital spin or no
+    /// linear motion.
     #[func]
     fn get_wavelength(&self) -> f64 {
         if !self.linear_enabled || self.linear_speed < 1e-12 {
@@ -369,11 +421,94 @@ impl FocusParticle {
         }
     }
 
+    /// Characteristic wavelength in natural units at speed c. The spatial
+    /// period of the outermost orbital wave. Doesn't require linear
+    /// motion — this is the intrinsic wavelength of the spin structure.
+    #[func]
+    fn get_characteristic_wavelength(&self) -> f64 {
+        match self.stack.outermost_orbital() {
+            Some(outer) if outer.angular_velocity.abs() > 1e-12 => {
+                TAU * outer.orbit_radius() / outer.angular_velocity.abs()
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Wavelength in nanometers. Uses the linear-motion wavelength when
+    /// moving, otherwise falls back to the characteristic (speed=c) wavelength.
+    #[func]
+    fn get_wavelength_nm(&self) -> f64 {
+        let wl_nat = self.get_wavelength();
+        let wl = if wl_nat > 0.0 {
+            wl_nat
+        } else {
+            self.get_characteristic_wavelength()
+        };
+        units::wavelength_nm(wl)
+    }
+
+    /// EM band label with visible-color detail (e.g. "visible (green)", "near-IR").
+    #[func]
+    fn get_em_band(&self) -> GString {
+        let nm = self.get_wavelength_nm();
+        GString::from(units::em_band_detail(nm))
+    }
+
+    /// Formatted SI wavelength string with auto-scaled units (e.g. "502.0 nm", "2.00 μm").
+    #[func]
+    fn get_wavelength_si(&self) -> GString {
+        GString::from(units::format_wavelength_si(self.get_wavelength_nm()).as_str())
+    }
+
+    /// Approximate spectral color for the current wavelength. Returns a Godot
+    /// Color — spectral RGB in visible range, neutral gray outside.
+    #[func]
+    fn get_wavelength_color(&self) -> Color {
+        let (r, g, b) = units::wavelength_to_rgb(self.get_wavelength_nm());
+        Color::from_rgb(r, g, b)
+    }
+
+    fn clear_all_traces(&mut self) {
+        self.path.clear();
+        self.surface_path.clear();
+        self.crest_markers.clear();
+        self.trough_markers.clear();
+        self.prev_outer_half_period = i64::MIN;
+    }
+
+    #[func]
+    fn get_crest_markers(&self) -> PackedVector3Array {
+        let mut arr = PackedVector3Array::new();
+        arr.resize(self.crest_markers.len());
+        for (i, p) in self.crest_markers.iter().enumerate() {
+            arr[i] = Vector3::new(
+                p.x as f32 * WORLD_SCALE,
+                p.y as f32 * WORLD_SCALE,
+                p.z as f32 * WORLD_SCALE,
+            );
+        }
+        arr
+    }
+
+    #[func]
+    fn get_trough_markers(&self) -> PackedVector3Array {
+        let mut arr = PackedVector3Array::new();
+        arr.resize(self.trough_markers.len());
+        for (i, p) in self.trough_markers.iter().enumerate() {
+            arr[i] = Vector3::new(
+                p.x as f32 * WORLD_SCALE,
+                p.y as f32 * WORLD_SCALE,
+                p.z as f32 * WORLD_SCALE,
+            );
+        }
+        arr
+    }
+
     /// Reset the spin stack to a single idle axial level and clear the path.
     #[func]
     fn reset_stack(&mut self) {
         self.stack.reset();
-        self.path.clear();
+        self.clear_all_traces();
         self.linear_enabled = false;
         self.linear_speed = 0.0;
         self.linear_offset = DVec3::ZERO;

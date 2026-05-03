@@ -1,7 +1,9 @@
 extends CanvasLayer
-## M2 HUD: toolbar + slider panel for the spin stack (levels 1-4, photon tier).
+## M3 HUD: toolbar + tier-tabbed slider panel for the spin stack (levels 1-12).
 
-const PHASE_MAX_LEVEL: int = 4
+const PHASE_MAX_LEVEL: int = 12
+const LEVELS_PER_TIER: int = 4
+const TIER_COUNT: int = 3
 const BASE_TIME_SCALE: float = TAU
 
 @export var focus_particle_path: NodePath
@@ -13,6 +15,7 @@ var _focus: Node3D
 var _camera_rig: Node3D
 var _ghost: Node3D
 var _trace: Node3D
+var _tab_container: TabContainer
 var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
@@ -30,14 +33,10 @@ func _ready() -> void:
 		push_error("HUD: focus_particle_path does not resolve to a Node3D")
 		return
 
-	_level_labels = [%Lvl1Label, %Lvl2Label, %Lvl3Label, %Lvl4Label]
-	_sliders = [%Lvl1Slider, %Lvl2Slider, %Lvl3Slider, %Lvl4Slider]
-	_value_labels = [%Lvl1Value, %Lvl2Value, %Lvl3Value, %Lvl4Value]
-	_activate_buttons = [%Lvl1Activate, %Lvl2Activate, %Lvl3Activate, %Lvl4Activate]
+	_build_tier_tabs()
 
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
-		_level_labels[i].text = _format_level_label(level)
 		_sliders[i].value_changed.connect(_on_slider_changed.bind(level))
 		_activate_buttons[i].pressed.connect(_on_activate_pressed.bind(level))
 
@@ -62,6 +61,76 @@ func _ready() -> void:
 		%IsoBtn.pressed.connect(_camera_rig.snap_iso)
 		%HomeBtn.pressed.connect(_camera_rig.snap_default)
 		%FitBtn.pressed.connect(_camera_rig.auto_fit)
+
+
+func _build_tier_tabs() -> void:
+	_tab_container = TabContainer.new()
+	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	var tier_names: Array = ["Photon (1-4)", "Electron (5-8)", "Baryon (9-12)"]
+
+	for tier in TIER_COUNT:
+		var tab_vbox: VBoxContainer = VBoxContainer.new()
+		tab_vbox.name = tier_names[tier]
+		tab_vbox.add_theme_constant_override("separation", 4)
+
+		if tier == 0:
+			var help: Label = Label.new()
+			help.modulate = Color(0.75, 0.75, 0.78, 1)
+			help.text = "Saturate to +/-c to unlock the next level."
+			tab_vbox.add_child(help)
+
+		for j in LEVELS_PER_TIER:
+			var level: int = tier * LEVELS_PER_TIER + j + 1
+
+			var row: VBoxContainer = VBoxContainer.new()
+			row.add_theme_constant_override("separation", 2)
+
+			var header: HBoxContainer = HBoxContainer.new()
+
+			var lbl: Label = Label.new()
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lbl.text = _format_level_label(level)
+			header.add_child(lbl)
+			_level_labels.append(lbl)
+
+			var btn: Button = Button.new()
+			btn.text = "Activate"
+			btn.visible = false
+			header.add_child(btn)
+			_activate_buttons.append(btn)
+
+			row.add_child(header)
+
+			var slider_row: HBoxContainer = HBoxContainer.new()
+
+			var slider: HSlider = HSlider.new()
+			slider.min_value = -1.0
+			slider.max_value = 1.0
+			slider.step = 0.001
+			slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			slider.editable = false
+			slider.tick_count = 5
+			slider.ticks_on_borders = true
+			slider_row.add_child(slider)
+			_sliders.append(slider)
+
+			var val_lbl: Label = Label.new()
+			val_lbl.custom_minimum_size = Vector2(80, 0)
+			val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			val_lbl.text = "—"
+			slider_row.add_child(val_lbl)
+			_value_labels.append(val_lbl)
+
+			row.add_child(slider_row)
+			tab_vbox.add_child(row)
+
+		_tab_container.add_child(tab_vbox)
+
+	var vbox: VBoxContainer = $ControlPanel/Margin/VBox
+	vbox.add_child(_tab_container)
+	vbox.move_child(_tab_container, 1)
 
 
 func _process(_delta: float) -> void:
@@ -109,7 +178,18 @@ func _process(_delta: float) -> void:
 	if wl > 0.01:
 		%WavelengthLabel.text = "%.2f r" % wl
 	else:
-		%WavelengthLabel.text = "—"
+		var char_wl: float = float(_focus.call("get_characteristic_wavelength"))
+		if char_wl > 0.01:
+			%WavelengthLabel.text = "%.2f r (at c)" % char_wl
+		else:
+			%WavelengthLabel.text = "—"
+
+	# SI wavelength and EM band
+	var wl_si: String = String(_focus.call("get_wavelength_si"))
+	%WavelengthSILabel.text = wl_si
+	%EMBandLabel.text = String(_focus.call("get_em_band"))
+	var em_color: Color = Color(_focus.call("get_wavelength_color"))
+	%EMColorSwatch.color = em_color
 
 	# Toolbar state labels
 	%PauseBtn.text = "Resume" if _paused else "Pause"
@@ -221,13 +301,16 @@ func _on_reset_pressed() -> void:
 	if _focus == null:
 		return
 	_focus.call("reset_stack")
-	for level: int in range(1, PHASE_MAX_LEVEL + 1):
-		_sliders[level - 1].set_value_no_signal(0.0)
+	for i in PHASE_MAX_LEVEL:
+		_sliders[i].set_value_no_signal(0.0)
 	%TimeScaleSlider.set_value_no_signal(0.0)
 	_apply_time_scale(0.0)
 	%LinearSpeedSlider.set_value_no_signal(0.0)
 	%LinearSpeedSlider.editable = false
 	_refresh_row_states()
+	_tab_container.current_tab = 0
+	if _camera_rig:
+		_camera_rig.snap_default()
 
 
 func _apply_time_scale(slider_log: float) -> void:
@@ -250,6 +333,14 @@ func _refresh_row_states() -> void:
 		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.35)
 		var is_next: bool = (level == active + 1) and can_next
 		_activate_buttons[i].visible = is_next
+
+	for tier in TIER_COUNT:
+		if tier == 0:
+			_tab_container.set_tab_disabled(tier, false)
+		else:
+			var gate_level: int = tier * LEVELS_PER_TIER
+			var unlocked: bool = active >= gate_level and abs(float(_focus.call("get_level_velocity", gate_level))) >= 0.999
+			_tab_container.set_tab_disabled(tier, not unlocked)
 
 
 func _format_level_label(level: int) -> String:

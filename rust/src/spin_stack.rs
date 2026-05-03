@@ -21,6 +21,7 @@ use crate::types::{level_amplitude, level_spec, SpinType, Tier};
 pub struct SpinLevel {
     pub level: u8,
     pub spin_type: SpinType,
+    #[allow(dead_code)]
     pub tier: Tier,
     pub amplitude: f64,
     /// Angular velocity in natural units. Range [-1.0, 1.0]; sign carries
@@ -191,9 +192,14 @@ impl SpinStack {
         result
     }
 
-    /// The outermost active orbital (non-axial) level, or None if only axial.
+    /// The outermost active orbital (non-axial) level with non-zero spin,
+    /// or None if no orbital level is spinning. Skips idle (ω≈0) levels so
+    /// wavelength reflects the actual spinning structure, not inactive ones.
     pub fn outermost_orbital(&self) -> Option<&SpinLevel> {
-        self.levels.iter().rev().find(|l| l.spin_type != SpinType::Axial)
+        self.levels
+            .iter()
+            .rev()
+            .find(|l| l.spin_type != SpinType::Axial && l.angular_velocity.abs() > 1e-12)
     }
 
     /// Effective radius = amplitude of the outermost active level.
@@ -413,10 +419,20 @@ mod tests {
     /// body so outer spins ride on top — pre-multiply (`lab_rot * orientation`).
     #[test]
     fn outermost_orbital_returns_correct_level() {
-        let s = stack_with_levels(3);
+        let mut s = stack_with_levels(3);
+        s.set_velocity(3, 1.0);
         let outer = s.outermost_orbital().unwrap();
         assert_eq!(outer.spin_type, SpinType::Y);
         assert_eq!(outer.level, 3);
+    }
+
+    #[test]
+    fn outermost_orbital_skips_idle_levels() {
+        let s = stack_with_levels(3);
+        // Level 3 activated but at ω=0 — outermost spinning orbital is level 2
+        let outer = s.outermost_orbital().unwrap();
+        assert_eq!(outer.spin_type, SpinType::X);
+        assert_eq!(outer.level, 2);
     }
 
     #[test]

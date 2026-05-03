@@ -50,6 +50,7 @@ impl PathTrace {
         self.enabled = e;
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.len
     }

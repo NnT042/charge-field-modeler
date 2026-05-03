@@ -115,7 +115,7 @@ text = "Reset"
 offset_left = 16.0
 offset_top = 52.0
 offset_right = 440.0
-offset_bottom = 530.0
+offset_bottom = 570.0
 mouse_filter = 0
 
 [node name="Margin" type="MarginContainer" parent="ControlPanel"]
@@ -132,164 +132,6 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="ControlPanel/Margin/VBox"]
 layout_mode = 2
 text = "Spin Level Controls"
-
-[node name="HelpLabel" type="Label" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-modulate = Color(0.75, 0.75, 0.78, 1)
-text = "Saturate to +/-c to unlock the next level."
-
-[node name="Lvl1Row" type="VBoxContainer" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-theme_override_constants/separation = 2
-
-[node name="Header" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl1Row"]
-layout_mode = 2
-
-[node name="Lvl1Label" type="Label" parent="ControlPanel/Margin/VBox/Lvl1Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Lvl 1"
-
-[node name="Lvl1Activate" type="Button" parent="ControlPanel/Margin/VBox/Lvl1Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-visible = false
-text = "Activate"
-
-[node name="Slider" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl1Row"]
-layout_mode = 2
-
-[node name="Lvl1Slider" type="HSlider" parent="ControlPanel/Margin/VBox/Lvl1Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = -1.0
-max_value = 1.0
-step = 0.001
-tick_count = 5
-ticks_on_borders = true
-
-[node name="Lvl1Value" type="Label" parent="ControlPanel/Margin/VBox/Lvl1Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
-horizontal_alignment = 2
-text = "+0.000 c"
-
-[node name="Lvl2Row" type="VBoxContainer" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-theme_override_constants/separation = 2
-
-[node name="Header" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl2Row"]
-layout_mode = 2
-
-[node name="Lvl2Label" type="Label" parent="ControlPanel/Margin/VBox/Lvl2Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Lvl 2"
-
-[node name="Lvl2Activate" type="Button" parent="ControlPanel/Margin/VBox/Lvl2Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-visible = false
-text = "Activate"
-
-[node name="Slider" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl2Row"]
-layout_mode = 2
-
-[node name="Lvl2Slider" type="HSlider" parent="ControlPanel/Margin/VBox/Lvl2Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = -1.0
-max_value = 1.0
-step = 0.001
-editable = false
-
-[node name="Lvl2Value" type="Label" parent="ControlPanel/Margin/VBox/Lvl2Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
-horizontal_alignment = 2
-text = "—"
-
-[node name="Lvl3Row" type="VBoxContainer" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-theme_override_constants/separation = 2
-
-[node name="Header" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl3Row"]
-layout_mode = 2
-
-[node name="Lvl3Label" type="Label" parent="ControlPanel/Margin/VBox/Lvl3Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Lvl 3"
-
-[node name="Lvl3Activate" type="Button" parent="ControlPanel/Margin/VBox/Lvl3Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-visible = false
-text = "Activate"
-
-[node name="Slider" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl3Row"]
-layout_mode = 2
-
-[node name="Lvl3Slider" type="HSlider" parent="ControlPanel/Margin/VBox/Lvl3Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = -1.0
-max_value = 1.0
-step = 0.001
-editable = false
-
-[node name="Lvl3Value" type="Label" parent="ControlPanel/Margin/VBox/Lvl3Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
-horizontal_alignment = 2
-text = "—"
-
-[node name="Lvl4Row" type="VBoxContainer" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-theme_override_constants/separation = 2
-
-[node name="Header" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl4Row"]
-layout_mode = 2
-
-[node name="Lvl4Label" type="Label" parent="ControlPanel/Margin/VBox/Lvl4Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Lvl 4"
-
-[node name="Lvl4Activate" type="Button" parent="ControlPanel/Margin/VBox/Lvl4Row/Header"]
-unique_name_in_owner = true
-layout_mode = 2
-visible = false
-text = "Activate"
-
-[node name="Slider" type="HBoxContainer" parent="ControlPanel/Margin/VBox/Lvl4Row"]
-layout_mode = 2
-
-[node name="Lvl4Slider" type="HSlider" parent="ControlPanel/Margin/VBox/Lvl4Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = -1.0
-max_value = 1.0
-step = 0.001
-editable = false
-
-[node name="Lvl4Value" type="Label" parent="ControlPanel/Margin/VBox/Lvl4Row/Slider"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
-horizontal_alignment = 2
-text = "—"
 
 [node name="Sep" type="HSeparator" parent="ControlPanel/Margin/VBox"]
 layout_mode = 2
@@ -364,7 +206,7 @@ anchor_right = 1.0
 offset_left = -400.0
 offset_top = 52.0
 offset_right = -16.0
-offset_bottom = 370.0
+offset_bottom = 430.0
 mouse_filter = 0
 
 [node name="Margin" type="MarginContainer" parent="ReadoutPanel"]
@@ -454,6 +296,38 @@ custom_minimum_size = Vector2(120, 0)
 text = "Wavelength:"
 
 [node name="WavelengthLabel" type="Label" parent="ReadoutPanel/Margin/VBox/WavelengthRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "—"
+
+[node name="WavelengthSIRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/WavelengthSIRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 0)
+text = "Wavelength (SI):"
+
+[node name="WavelengthSILabel" type="Label" parent="ReadoutPanel/Margin/VBox/WavelengthSIRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "—"
+
+[node name="EMBandRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/EMBandRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 0)
+text = "EM band:"
+
+[node name="EMColorSwatch" type="ColorRect" parent="ReadoutPanel/Margin/VBox/EMBandRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(16, 16)
+color = Color(0.5, 0.5, 0.5, 1)
+
+[node name="EMBandLabel" type="Label" parent="ReadoutPanel/Margin/VBox/EMBandRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "—"

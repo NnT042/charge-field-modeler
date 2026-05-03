@@ -2,20 +2,26 @@ extends Node3D
 ## Renders the focus particle's worldline.
 ##
 ## Three display modes cycled by T:
-##   0 = OFF   — tracing disabled, nothing drawn
-##   1 = LINE  — unshaded line-strip of the center point's path
-##   2 = TUBE  — triangle-strip tube showing the full swept volume
+##   0 = OFF     — tracing disabled, nothing drawn
+##   1 = LINE    — unshaded line-strip of the center point's path
+##   2 = TUBE    — triangle-strip tube showing the full swept volume
+##   3 = SURFACE — line-strip following a point on the particle's pole
 ##
 ## C clears the trace in any active mode.
 
 @export var focus_particle_path: NodePath
 @export var color: Color = Color(1.0, 0.95, 0.85, 1.0)
 @export var tube_color: Color = Color(0.6, 0.55, 0.45, 0.35)
+@export var surface_color: Color = Color(0.4, 0.8, 1.0, 0.9)
+@export var crest_color: Color = Color(1.0, 0.4, 0.1, 0.9)
+@export var trough_color: Color = Color(0.2, 0.6, 1.0, 0.9)
+@export var marker_size: float = 0.1
 @export var tail_min_alpha: float = 0.05
 @export var tube_segments: int = 10
 
-## 0 = off, 1 = line, 2 = tube
+## 0 = off, 1 = line, 2 = tube, 3 = surface
 var _display_mode: int = 1
+var _show_marker_lines: bool = false
 var _focus: Node3D
 var _mesh_instance: MeshInstance3D
 var _mesh: ImmediateMesh
@@ -48,6 +54,7 @@ func display_mode_label() -> String:
 		0: return "off"
 		1: return "line"
 		2: return "tube"
+		3: return "surface"
 		_: return "off"
 
 
@@ -66,9 +73,26 @@ func _process(_delta: float) -> void:
 
 	if _display_mode == 1:
 		_draw_line(points, color)
-	else:
+	elif _display_mode == 2:
 		var radii: PackedFloat32Array = _focus.call("get_path_radii")
 		_draw_tube(points, radii, tube_color)
+	elif _display_mode == 3:
+		var surface_pts: PackedVector3Array = _focus.call("get_surface_path_points")
+		if surface_pts.size() >= 2:
+			_draw_line(surface_pts, surface_color)
+
+	if _display_mode > 0:
+		var crests: PackedVector3Array = _focus.call("get_crest_markers")
+		var troughs: PackedVector3Array = _focus.call("get_trough_markers")
+		if crests.size() > 0:
+			_draw_markers(crests, crest_color)
+		if troughs.size() > 0:
+			_draw_markers(troughs, trough_color)
+		if _show_marker_lines:
+			if crests.size() > 1:
+				_draw_marker_chain(crests, Color(crest_color.r, crest_color.g, crest_color.b, 0.5))
+			if troughs.size() > 1:
+				_draw_marker_chain(troughs, Color(trough_color.r, trough_color.g, trough_color.b, 0.5))
 
 
 func _draw_line(points: PackedVector3Array, c: Color) -> void:
@@ -146,8 +170,39 @@ func _draw_tube(points: PackedVector3Array, radii: PackedFloat32Array, c: Color)
 	_mesh.surface_end()
 
 
+func _draw_markers(points: PackedVector3Array, c: Color) -> void:
+	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, _material)
+	var s: float = marker_size
+	for p in points:
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p + Vector3(s, 0, 0))
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p - Vector3(s, 0, 0))
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p + Vector3(0, s, 0))
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p - Vector3(0, s, 0))
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p + Vector3(0, 0, s))
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(p - Vector3(0, 0, s))
+	_mesh.surface_end()
+
+
+func _draw_marker_chain(points: PackedVector3Array, c: Color) -> void:
+	if points.size() < 2:
+		return
+	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, _material)
+	for i in range(0, points.size() - 1, 2):
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(points[i])
+		_mesh.surface_set_color(c)
+		_mesh.surface_add_vertex(points[i + 1])
+	_mesh.surface_end()
+
+
 func cycle_display_mode() -> void:
-	_display_mode = (_display_mode + 1) % 3
+	_display_mode = (_display_mode + 1) % 4
 	if _focus != null:
 		_focus.call("set_path_enabled", _display_mode > 0)
 	if _display_mode == 0 and _mesh != null:
@@ -172,3 +227,5 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			cycle_display_mode()
 		KEY_C:
 			clear_trace()
+		KEY_M:
+			_show_marker_lines = not _show_marker_lines
