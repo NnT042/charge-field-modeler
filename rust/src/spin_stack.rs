@@ -50,14 +50,37 @@ impl SpinLevel {
         self.angular_velocity.abs() >= 1.0 - 1e-9
     }
 
-    /// Radius the center traces: for axial, it's the particle radius (amplitude);
-    /// for orbital levels, the center sits at half the amplitude so the far edge
-    /// of the particle reaches the full amplitude.
+    /// True if this level precesses the inner tier around a new axis
+    /// without adding orbital offset. The structure stays centered and
+    /// rotates as a unit — spinning the fan blades, not swinging them.
+    pub fn is_precession(&self) -> bool {
+        self.spin_type == SpinType::Axial && self.tier != Tier::Photon
+    }
+
+    /// True if this level traces an orbital path (X/Y/Z spins).
+    /// Precession levels rotate in place and don't produce ghost spheres.
+    pub fn is_orbital(&self) -> bool {
+        self.spin_type != SpinType::Axial
+    }
+
+    /// Radius used for angular rate scaling: ω_actual = v × time_scale / orbit_radius.
+    /// Axial and precession levels use amplitude (larger structure = slower).
+    /// Orbital levels use amplitude/2 (the actual orbit radius).
     pub fn orbit_radius(&self) -> f64 {
         if self.spin_type == SpinType::Axial {
             self.amplitude
         } else {
             self.amplitude / 2.0
+        }
+    }
+
+    /// Rotation axis. Tier 2+ axial precesses around Z (the nozzle void axis
+    /// of the tier 1 fan-blade structure). Easy to swap for experimentation.
+    pub fn rotation_axis(&self) -> DVec3 {
+        if self.is_precession() {
+            DVec3::Z
+        } else {
+            self.spin_type.rotation_axis()
         }
     }
 }
@@ -144,21 +167,24 @@ impl SpinStack {
 
     /// Compose the stack into (world position of base particle, orientation).
     ///
-    /// Position uses hierarchical nesting: each orbital level shifts the inner
-    /// structure outward by `orbital_start * orbit_radius`, then rotates the
-    /// result. With X+Y active this gives `R_y(θ_y) * (R_x(θ_x) * Z + Z*2)`,
-    /// so the Y rotation carries the entire X structure — producing a sine
-    /// wave on the Y ghost's equator rather than an independent Lissajous.
+    /// Three kinds of level:
+    ///   - Pure axial (tier 1 A): orientation only, position unchanged.
+    ///   - Precession (tier 2+ A): rotates accumulated position around a new
+    ///     axis without offset — spins the fan blades in place.
+    ///   - Orbital (X/Y/Z): offsets outward then rotates — standard nesting.
     pub fn compose(&self) -> (DVec3, DQuat) {
         let mut position = DVec3::ZERO;
         let mut orientation = DQuat::IDENTITY;
 
         for l in &self.levels {
-            let lab_rot = DQuat::from_axis_angle(l.spin_type.rotation_axis(), l.current_angle);
+            let rot_axis = l.rotation_axis();
+            let lab_rot = DQuat::from_axis_angle(rot_axis, l.current_angle);
 
-            let start = l.spin_type.orbital_start();
-            if start.length_squared() > 0.0 {
+            if l.is_orbital() {
+                let start = l.spin_type.orbital_start();
                 position = lab_rot * (position + start * l.orbit_radius());
+            } else if l.is_precession() {
+                position = lab_rot * position;
             }
 
             orientation = lab_rot * l.spin_type.tumble_alignment() * orientation;
@@ -167,27 +193,35 @@ impl SpinStack {
         (position, orientation)
     }
 
-    /// Ghost sphere data for each active orbital level: (center, amplitude, spin_type).
+    /// Ghost sphere data for each orbital (X/Y/Z) level:
+    /// (center, amplitude, spin_type, tier).
+    /// Precession levels (tier 2+ axial) rotate in place and have no ghost.
     /// Center is in natural units, computed by running compose on all levels
     /// ABOVE the ghost's own level (outermost ghost is always at origin).
-    pub fn ghost_spheres(&self) -> Vec<(DVec3, f64, SpinType)> {
+    pub fn ghost_spheres(&self) -> Vec<(DVec3, f64, SpinType, Tier)> {
         let mut result = Vec::new();
         for (idx, level) in self.levels.iter().enumerate() {
-            if level.spin_type == SpinType::Axial {
+            if !level.is_orbital() {
                 continue;
             }
             let mut center = DVec3::ZERO;
             for outer in &self.levels[idx + 1..] {
-                let lab_rot = DQuat::from_axis_angle(
-                    outer.spin_type.rotation_axis(),
-                    outer.current_angle,
-                );
-                let start = outer.spin_type.orbital_start();
-                if start.length_squared() > 0.0 {
+                if outer.is_orbital() {
+                    let lab_rot = DQuat::from_axis_angle(
+                        outer.spin_type.rotation_axis(),
+                        outer.current_angle,
+                    );
+                    let start = outer.spin_type.orbital_start();
                     center = lab_rot * (center + start * outer.orbit_radius());
+                } else if outer.is_precession() {
+                    let lab_rot = DQuat::from_axis_angle(
+                        outer.rotation_axis(),
+                        outer.current_angle,
+                    );
+                    center = lab_rot * center;
                 }
             }
-            result.push((center, level.amplitude, level.spin_type));
+            result.push((center, level.amplitude, level.spin_type, level.tier));
         }
         result
     }
@@ -199,7 +233,7 @@ impl SpinStack {
         self.levels
             .iter()
             .rev()
-            .find(|l| l.spin_type != SpinType::Axial && l.angular_velocity.abs() > 1e-12)
+            .find(|l| l.is_orbital() && l.angular_velocity.abs() > 1e-12)
     }
 
     /// Effective radius = amplitude of the outermost active level.
@@ -364,7 +398,7 @@ mod tests {
         let s = stack_with_levels(2);
         let ghosts = s.ghost_spheres();
         assert_eq!(ghosts.len(), 1, "axial+X → one orbital ghost");
-        let (center, amp, st) = &ghosts[0];
+        let (center, amp, st, _) = &ghosts[0];
         assert!(approx_zero(center.length()), "X ghost center at origin, got {:?}", center);
         assert!(approx_eq(*amp, 2.0), "X amplitude should be 2, got {}", amp);
         assert_eq!(*st, SpinType::X);
@@ -379,8 +413,8 @@ mod tests {
         // θ_Y = 0 → X ghost center = R_Y(0) * (ZERO + Z*2) = Z*2 = (0,0,2)
         let ghosts = s.ghost_spheres();
         assert_eq!(ghosts.len(), 2);
-        let (x_center, x_amp, _) = &ghosts[0];
-        let (y_center, y_amp, _) = &ghosts[1];
+        let (x_center, x_amp, _, _) = &ghosts[0];
+        let (y_center, y_amp, _, _) = &ghosts[1];
         assert!(approx_eq(*x_amp, 2.0));
         assert!(approx_eq(*y_amp, 4.0));
         assert!(approx_zero(y_center.length()), "Y ghost at origin");
@@ -391,7 +425,7 @@ mod tests {
         // Advance so θ_Y = π/2 → X ghost center = R_Y(π/2)*Z*2 = X*2 = (2,0,0)
         s.advance(0.5, TAU);
         let ghosts2 = s.ghost_spheres();
-        let (x_center2, _, _) = &ghosts2[0];
+        let (x_center2, _, _, _) = &ghosts2[0];
         assert!(approx_eq(x_center2.x, 2.0),
             "after θ_Y=π/2, X ghost at (2,0,0), got {:?}", x_center2);
         assert!(approx_zero(x_center2.y));
@@ -402,8 +436,8 @@ mod tests {
     fn ghost_sphere_inner_edge_touches_outer() {
         let s = stack_with_levels(3);
         let ghosts = s.ghost_spheres();
-        let (x_center, x_amp, _) = &ghosts[0];
-        let (y_center, y_amp, _) = &ghosts[1];
+        let (x_center, x_amp, _, _) = &ghosts[0];
+        let (y_center, y_amp, _, _) = &ghosts[1];
         let dist = (*x_center - *y_center).length();
         assert!(approx_eq(dist + x_amp, *y_amp),
             "inner ghost far edge should touch outer: dist={} + x_amp={} vs y_amp={}",
@@ -455,5 +489,55 @@ mod tests {
             assert!(approx_eq(pole.length(), 1.0),
                 "k={}: pole not unit length: |pole|={}", k, pole.length());
         }
+    }
+
+    #[test]
+    fn tier_amplitude_resets_at_boundary() {
+        use crate::types::level_amplitude;
+        assert_eq!(level_amplitude(4), 8.0);
+        assert_eq!(level_amplitude(5), 8.0, "A2 should equal Z1 amplitude");
+        assert_eq!(level_amplitude(6), 16.0);
+        assert_eq!(level_amplitude(7), 32.0);
+        assert_eq!(level_amplitude(8), 64.0, "Z2");
+        assert_eq!(level_amplitude(9), 64.0, "A3 should equal Z2 amplitude");
+        assert_eq!(level_amplitude(12), 512.0, "Z3");
+    }
+
+    #[test]
+    fn tier2_axial_translates_particle() {
+        let mut s = stack_with_levels(5);
+        s.set_velocity(5, 1.0);
+        s.advance(0.25, TAU);
+        let (pos, _) = s.compose();
+        assert!(pos.length() > 0.1,
+            "tier 2 axial should orbit, not spin in place; got {:?}", pos);
+    }
+
+    #[test]
+    fn tier2_axial_no_ghost_sphere() {
+        let s = stack_with_levels(5);
+        let ghosts = s.ghost_spheres();
+        let has_axial_ghost = ghosts.iter().any(|(_, _, st, _)| {
+            *st == SpinType::Axial
+        });
+        assert!(!has_axial_ghost,
+            "precession levels rotate in place — no ghost sphere");
+    }
+
+    #[test]
+    fn tier2_axial_precesses_existing_structure() {
+        let mut s = stack_with_levels(5);
+        for lvl in 1..=4 { s.set_velocity(lvl, 1.0); }
+        s.set_velocity(5, 0.0);
+        s.advance(0.1, TAU);
+        let (pos_before, _) = s.compose();
+
+        s.set_velocity(5, 1.0);
+        s.advance(0.25, TAU);
+        let (pos_after, _) = s.compose();
+
+        assert!(pos_before.length() > 0.1, "tier 1 structure should have extent");
+        assert!((pos_after - pos_before).length() > 0.1,
+            "A2 precession should rotate the tier 1 structure to a new position");
     }
 }

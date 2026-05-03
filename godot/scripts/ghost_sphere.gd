@@ -18,9 +18,20 @@ var _shader: Shader
 var _materials: Dictionary = {}
 
 const AXIS_COLORS: Dictionary = {
-	"x": Color(1.0, 0.35, 0.35),
-	"y": Color(0.35, 1.0, 0.35),
-	"z": Color(0.4, 0.6, 1.0),
+	# Tier 1 — Photon: classic RGB
+	"x1": Color(1.0, 0.35, 0.35),
+	"y1": Color(0.35, 1.0, 0.35),
+	"z1": Color(0.4, 0.6, 1.0),
+	# Tier 2 — Electron: warm shifted (axial = white-blue to mark new precession axis)
+	"axial2": Color(0.7, 0.8, 1.0),
+	"x2": Color(1.0, 0.6, 0.15),
+	"y2": Color(0.15, 0.85, 0.85),
+	"z2": Color(0.85, 0.3, 0.85),
+	# Tier 3 — Baryon: earth tones (axial = pale gold)
+	"axial3": Color(0.9, 0.85, 0.6),
+	"x3": Color(0.95, 0.8, 0.2),
+	"y3": Color(0.2, 0.7, 0.6),
+	"z3": Color(0.55, 0.3, 0.9),
 }
 
 
@@ -61,7 +72,7 @@ func _process(_delta: float) -> void:
 
 		mi.position = center
 		mi.scale = Vector3(r, r, r)
-		mi.material_override = _materials.get(label, _materials["x"])
+		mi.material_override = _materials.get(label, _materials["x1"])
 		_align_mesh_to(mi, _label_to_axis(label))
 
 
@@ -115,7 +126,11 @@ func _align_mesh_to(mi: MeshInstance3D, axis: Vector3) -> void:
 
 
 func _label_to_axis(label: String) -> Vector3:
-	match label:
-		"x": return Vector3.RIGHT
-		"z": return Vector3(0.0, 0.0, 1.0)
-		_:   return Vector3.UP
+	if label.begins_with("axial"):
+		return Vector3(0.0, 0.0, 1.0)
+	elif label.begins_with("x"):
+		return Vector3.RIGHT
+	elif label.begins_with("z"):
+		return Vector3(0.0, 0.0, 1.0)
+	else:
+		return Vector3.UP

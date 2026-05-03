@@ -110,11 +110,20 @@ pub fn level_spec(level: u8) -> (SpinType, Tier) {
     (spin_type, tier)
 }
 
-/// Geometric orbital radius for a level (natural units, base photon r = 1).
-/// Doubles each level: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048.
+/// Geometric amplitude for a level (natural units, base photon r = 1).
+/// Within each tier, amplitudes double: A=base, X=2×base, Y=4×base, Z=8×base.
+/// Each tier's base equals the previous tier's Z amplitude, so the new axial
+/// wraps the previous tier's outer extent without a gap.
+///
+///   Tier 1 (photon):   1,  2,  4,   8
+///   Tier 2 (electron): 8, 16, 32,  64
+///   Tier 3 (baryon):  64,128,256, 512
 pub fn level_amplitude(level: u8) -> f64 {
     if level == 0 || level > 12 {
         return 0.0;
     }
-    (1u64 << (level - 1)) as f64
+    let tier = ((level - 1) / 4) as u32;
+    let pos = ((level - 1) % 4) as u32;
+    let tier_base = 8u64.pow(tier) as f64;
+    tier_base * (1u64 << pos) as f64
 }

@@ -320,7 +320,7 @@ impl FocusParticle {
     #[func]
     fn ghost_sphere_center(&self, index: i32) -> Vector3 {
         let ghosts = self.stack.ghost_spheres();
-        if let Some((c, _, _)) = ghosts.get(index as usize) {
+        if let Some((c, _, _, _)) = ghosts.get(index as usize) {
             let world_c = *c + self.linear_offset;
             Vector3::new(
                 world_c.x as f32 * WORLD_SCALE,
@@ -337,15 +337,20 @@ impl FocusParticle {
         let ghosts = self.stack.ghost_spheres();
         ghosts
             .get(index as usize)
-            .map_or(0.0, |(_, amp, _)| *amp as f32 * WORLD_SCALE)
+            .map_or(0.0, |(_, amp, _, _)| *amp as f32 * WORLD_SCALE)
     }
 
     #[func]
     fn ghost_sphere_spin_label(&self, index: i32) -> GString {
         let ghosts = self.stack.ghost_spheres();
-        ghosts
-            .get(index as usize)
-            .map_or(GString::default(), |(_, _, st)| GString::from(st.label()))
+        ghosts.get(index as usize).map_or(GString::default(), |(_, _, st, tier)| {
+            let tier_num = match tier {
+                crate::types::Tier::Photon => 1,
+                crate::types::Tier::Electron => 2,
+                crate::types::Tier::Baryon => 3,
+            };
+            GString::from(format!("{}{}", st.label(), tier_num).as_str())
+        })
     }
 
     #[func]
