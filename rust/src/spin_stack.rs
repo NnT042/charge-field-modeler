@@ -279,12 +279,13 @@ impl SpinStack {
             .unwrap_or(0);
         match max_saturated {
             0 => "B-photon (at rest)",
-            1..=3 => "B-photon (sub-photon)",
-            4 => "B-photon (full photon)",
-            5..=7 => "Sub-electron",
-            8 => "Electron",
-            9..=11 => "Sub-baryon",
-            12 => "Baryon",
+            1..=3 => "Charge photon (partial)",
+            4 => "Charge photon",
+            5..=7 => "High photon",
+            8 => "Maximal photon",
+            9 => "Electron (at rest)",
+            10..=11 => "Meson",
+            12 => "Baryon (at rest)",
             _ => "(unknown)",
         }
     }

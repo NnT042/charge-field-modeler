@@ -69,7 +69,7 @@ func _build_tier_tabs() -> void:
 	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var tier_names: Array = ["Photon (1-4)", "Electron (5-8)", "Baryon (9-12)"]
+	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Meson (9-12)"]
 
 	for tier in TIER_COUNT:
 		var tab_vbox: VBoxContainer = VBoxContainer.new()

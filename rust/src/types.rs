@@ -1,9 +1,10 @@
 //! Shared types for the spin stack: spin axis kinds, tier hierarchy, and the
 //! geometric mappings (level → spin type, level → tier, level → amplitude).
 //!
-//! Per `docs/PHYSICS_REFERENCE.md`, levels 1..=12 cycle Axial / X / Y / Z four
-//! times across three tiers (photon / electron / baryon), with orbital radius
-//! doubling at each step (1, 2, 4, 8, 16, ..., 2048).
+//! Per Mathis, levels 1..=12 cycle Axial / X / Y / Z four times across three
+//! tiers. Levels 1-8 are all photon spins (charge photon + high photon).
+//! Levels 9-12 span electron → meson → baryon-at-rest. A hypothetical level 13
+//! (baryon axial) would be the proton/neutron engine starter.
 
 use glam::{DQuat, DVec3};
 
@@ -86,9 +87,9 @@ impl SpinType {
 impl Tier {
     pub fn label(self) -> &'static str {
         match self {
-            Tier::Photon => "photon",
-            Tier::Electron => "electron",
-            Tier::Baryon => "baryon",
+            Tier::Photon => "charge photon",
+            Tier::Electron => "high photon",
+            Tier::Baryon => "meson",
         }
     }
 }
@@ -115,9 +116,9 @@ pub fn level_spec(level: u8) -> (SpinType, Tier) {
 /// Each tier's base equals the previous tier's Z amplitude, so the new axial
 /// wraps the previous tier's outer extent without a gap.
 ///
-///   Tier 1 (photon):   1,  2,  4,   8
-///   Tier 2 (electron): 8, 16, 32,  64
-///   Tier 3 (baryon):  64,128,256, 512
+///   Tier 1 (charge photon):  1,  2,  4,   8
+///   Tier 2 (high photon):    8, 16, 32,  64
+///   Tier 3 (meson):         64,128,256, 512
 pub fn level_amplitude(level: u8) -> f64 {
     if level == 0 || level > 12 {
         return 0.0;

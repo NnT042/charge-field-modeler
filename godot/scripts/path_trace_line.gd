@@ -71,15 +71,21 @@ func _process(_delta: float) -> void:
 	if points.size() < 2:
 		return
 
+	var spectral: Color = Color(_focus.call("get_wavelength_color"))
+	var in_visible: bool = not spectral.is_equal_approx(Color(0.5, 0.5, 0.5))
+	var line_c: Color = Color(spectral.r, spectral.g, spectral.b, color.a) if in_visible else color
+	var tube_c: Color = Color(spectral.r, spectral.g, spectral.b, tube_color.a) if in_visible else tube_color
+	var surf_c: Color = Color(spectral.r, spectral.g, spectral.b, surface_color.a) if in_visible else surface_color
+
 	if _display_mode == 1:
-		_draw_line(points, color)
+		_draw_line(points, line_c)
 	elif _display_mode == 2:
 		var radii: PackedFloat32Array = _focus.call("get_path_radii")
-		_draw_tube(points, radii, tube_color)
+		_draw_tube(points, radii, tube_c)
 	elif _display_mode == 3:
 		var surface_pts: PackedVector3Array = _focus.call("get_surface_path_points")
 		if surface_pts.size() >= 2:
-			_draw_line(surface_pts, surface_color)
+			_draw_line(surface_pts, surf_c)
 
 	if _display_mode > 0:
 		var crests: PackedVector3Array = _focus.call("get_crest_markers")
