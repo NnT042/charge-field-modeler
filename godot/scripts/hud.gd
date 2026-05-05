@@ -19,8 +19,9 @@ var _tab_container: TabContainer
 var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
-var _activate_buttons: Array[Button] = []
+var _reverse_buttons: Array[Button] = []
 var _paused: bool = false
+var _prev_level_count: int = 0
 
 
 func _ready() -> void:
@@ -38,7 +39,7 @@ func _ready() -> void:
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
 		_sliders[i].value_changed.connect(_on_slider_changed.bind(level))
-		_activate_buttons[i].pressed.connect(_on_activate_pressed.bind(level))
+		_reverse_buttons[i].pressed.connect(_on_reverse_pressed.bind(level))
 
 	%TimeScaleSlider.value_changed.connect(_on_time_scale_changed)
 	%LinearSpeedSlider.value_changed.connect(_on_linear_speed_changed)
@@ -78,7 +79,7 @@ func _build_tier_tabs() -> void:
 		if tier == 0:
 			var help: Label = Label.new()
 			help.modulate = Color(0.75, 0.75, 0.78, 1)
-			help.text = "Saturate to +/-c to unlock the next level."
+			help.text = "Drag any slider to activate. Prior levels auto-set to +c."
 			tab_vbox.add_child(help)
 
 		for j in LEVELS_PER_TIER:
@@ -87,30 +88,26 @@ func _build_tier_tabs() -> void:
 			var row: VBoxContainer = VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
 
-			var header: HBoxContainer = HBoxContainer.new()
-
 			var lbl: Label = Label.new()
-			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			lbl.text = _format_level_label(level)
-			header.add_child(lbl)
+			row.add_child(lbl)
 			_level_labels.append(lbl)
 
-			var btn: Button = Button.new()
-			btn.text = "Activate"
-			btn.visible = false
-			header.add_child(btn)
-			_activate_buttons.append(btn)
-
-			row.add_child(header)
-
 			var slider_row: HBoxContainer = HBoxContainer.new()
+
+			var rev_btn: Button = Button.new()
+			rev_btn.text = "±"
+			rev_btn.custom_minimum_size = Vector2(32, 0)
+			rev_btn.tooltip_text = "Reverse spin direction"
+			slider_row.add_child(rev_btn)
+			_reverse_buttons.append(rev_btn)
 
 			var slider: HSlider = HSlider.new()
 			slider.min_value = -1.0
 			slider.max_value = 1.0
 			slider.step = 0.001
 			slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			slider.editable = false
+			slider.editable = true
 			slider.tick_count = 5
 			slider.ticks_on_borders = true
 			slider_row.add_child(slider)
@@ -138,6 +135,12 @@ func _process(_delta: float) -> void:
 		return
 
 	var active: int = int(_focus.call("level_count"))
+	if active != _prev_level_count:
+		_prev_level_count = active
+		if _trace:
+			_trace.clear_trace()
+		if _camera_rig:
+			_camera_rig.auto_fit()
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
 		if level <= active:
@@ -210,21 +213,32 @@ func _on_slider_changed(value: float, level: int) -> void:
 		value = snapped
 	if _focus == null:
 		return
+	var active: int = int(_focus.call("level_count"))
+	if level > active:
+		for prev in range(1, level):
+			if prev > active:
+				_focus.call("activate_next")
+			_focus.call("set_level_velocity", prev, 1.0)
+			_sliders[prev - 1].set_value_no_signal(1.0)
+		if int(_focus.call("level_count")) < level:
+			_focus.call("activate_next")
+		_refresh_row_states()
 	_focus.call("set_level_velocity", level, value)
 
 
-func _on_activate_pressed(level: int) -> void:
+func _on_reverse_pressed(level: int) -> void:
 	if _focus == null:
 		return
-	while int(_focus.call("level_count")) < level:
-		var added: int = int(_focus.call("activate_next"))
-		if added == 0:
-			break
-	_refresh_row_states()
+	var active: int = int(_focus.call("level_count"))
+	if level > active:
+		return
+	var v: float = float(_focus.call("get_level_velocity", level))
+	_focus.call("set_level_velocity", level, -v)
+	_sliders[level - 1].set_value_no_signal(-v)
 
 
 func _on_time_scale_changed(slider_log: float) -> void:
-	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0], 0.02)
+	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0], 0.02)
 	if snapped != slider_log:
 		%TimeScaleSlider.set_value_no_signal(snapped)
 		slider_log = snapped
@@ -325,22 +339,14 @@ func _refresh_row_states() -> void:
 	if _focus == null:
 		return
 	var active: int = int(_focus.call("level_count"))
-	var can_next: bool = bool(_focus.call("can_activate_next"))
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
 		var is_active: bool = level <= active
-		_sliders[i].editable = is_active
-		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.35)
-		var is_next: bool = (level == active + 1) and can_next
-		_activate_buttons[i].visible = is_next
+		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
+		_reverse_buttons[i].disabled = not is_active
 
 	for tier in TIER_COUNT:
-		if tier == 0:
-			_tab_container.set_tab_disabled(tier, false)
-		else:
-			var gate_level: int = tier * LEVELS_PER_TIER
-			var unlocked: bool = active >= gate_level and abs(float(_focus.call("get_level_velocity", gate_level))) >= 0.999
-			_tab_container.set_tab_disabled(tier, not unlocked)
+		_tab_container.set_tab_disabled(tier, false)
 
 
 func _format_level_label(level: int) -> String:

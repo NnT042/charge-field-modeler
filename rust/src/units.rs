@@ -55,7 +55,9 @@ pub fn em_band_detail(wl_nm: f64) -> &'static str {
         w if w < 3_000.0 => "short-wave IR",
         w if w < 8_000.0 => "mid-IR",
         w if w < 15_000.0 => "thermal IR",
-        w if w < 1_000_000.0 => "far-IR",
+        w if w < 50_000.0 => "far-IR",
+        w if w < 300_000.0 => "sub-mm (electron scale)",
+        w if w < 1_000_000.0 => "microwave (baryon scale)",
         w if w < 1_000_000_000.0 => "microwave",
         _ => "radio",
     }
@@ -189,7 +191,7 @@ mod tests {
         assert_eq!(em_band_detail(2000.0), "short-wave IR");
         assert_eq!(em_band_detail(5000.0), "mid-IR");
         assert_eq!(em_band_detail(10000.0), "thermal IR");
-        assert_eq!(em_band_detail(100_000.0), "far-IR");
+        assert_eq!(em_band_detail(100_000.0), "sub-mm (electron scale)");
     }
 
     #[test]

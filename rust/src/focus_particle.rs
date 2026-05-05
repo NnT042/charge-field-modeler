@@ -320,7 +320,7 @@ impl FocusParticle {
     #[func]
     fn ghost_sphere_center(&self, index: i32) -> Vector3 {
         let ghosts = self.stack.ghost_spheres();
-        if let Some((c, _, _, _)) = ghosts.get(index as usize) {
+        if let Some((c, _, _, _, _)) = ghosts.get(index as usize) {
             let world_c = *c + self.linear_offset;
             Vector3::new(
                 world_c.x as f32 * WORLD_SCALE,
@@ -337,13 +337,13 @@ impl FocusParticle {
         let ghosts = self.stack.ghost_spheres();
         ghosts
             .get(index as usize)
-            .map_or(0.0, |(_, amp, _, _)| *amp as f32 * WORLD_SCALE)
+            .map_or(0.0, |(_, amp, _, _, _)| *amp as f32 * WORLD_SCALE)
     }
 
     #[func]
     fn ghost_sphere_spin_label(&self, index: i32) -> GString {
         let ghosts = self.stack.ghost_spheres();
-        ghosts.get(index as usize).map_or(GString::default(), |(_, _, st, tier)| {
+        ghosts.get(index as usize).map_or(GString::default(), |(_, _, st, tier, _)| {
             let tier_num = match tier {
                 crate::types::Tier::Photon => 1,
                 crate::types::Tier::Electron => 2,
@@ -351,6 +351,15 @@ impl FocusParticle {
             };
             GString::from(format!("{}{}", st.label(), tier_num).as_str())
         })
+    }
+
+    #[func]
+    fn ghost_sphere_orientation(&self, index: i32) -> Quaternion {
+        let ghosts = self.stack.ghost_spheres();
+        ghosts.get(index as usize).map_or(
+            Quaternion::new(0.0, 0.0, 0.0, 1.0),
+            |(_, _, _, _, q)| Quaternion::new(q.x as f32, q.y as f32, q.z as f32, q.w as f32),
+        )
     }
 
     #[func]

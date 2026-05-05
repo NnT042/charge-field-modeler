@@ -198,13 +198,14 @@ impl SpinStack {
     /// Precession levels (tier 2+ axial) rotate in place and have no ghost.
     /// Center is in natural units, computed by running compose on all levels
     /// ABOVE the ghost's own level (outermost ghost is always at origin).
-    pub fn ghost_spheres(&self) -> Vec<(DVec3, f64, SpinType, Tier)> {
+    pub fn ghost_spheres(&self) -> Vec<(DVec3, f64, SpinType, Tier, DQuat)> {
         let mut result = Vec::new();
         for (idx, level) in self.levels.iter().enumerate() {
             if !level.is_orbital() {
                 continue;
             }
             let mut center = DVec3::ZERO;
+            let mut orientation = DQuat::IDENTITY;
             for outer in &self.levels[idx + 1..] {
                 if outer.is_orbital() {
                     let lab_rot = DQuat::from_axis_angle(
@@ -213,15 +214,17 @@ impl SpinStack {
                     );
                     let start = outer.spin_type.orbital_start();
                     center = lab_rot * (center + start * outer.orbit_radius());
+                    orientation = lab_rot * orientation;
                 } else if outer.is_precession() {
                     let lab_rot = DQuat::from_axis_angle(
                         outer.rotation_axis(),
                         outer.current_angle,
                     );
                     center = lab_rot * center;
+                    orientation = lab_rot * orientation;
                 }
             }
-            result.push((center, level.amplitude, level.spin_type, level.tier));
+            result.push((center, level.amplitude, level.spin_type, level.tier, orientation));
         }
         result
     }
@@ -398,7 +401,7 @@ mod tests {
         let s = stack_with_levels(2);
         let ghosts = s.ghost_spheres();
         assert_eq!(ghosts.len(), 1, "axial+X → one orbital ghost");
-        let (center, amp, st, _) = &ghosts[0];
+        let (center, amp, st, _, _) = &ghosts[0];
         assert!(approx_zero(center.length()), "X ghost center at origin, got {:?}", center);
         assert!(approx_eq(*amp, 2.0), "X amplitude should be 2, got {}", amp);
         assert_eq!(*st, SpinType::X);
@@ -413,8 +416,8 @@ mod tests {
         // θ_Y = 0 → X ghost center = R_Y(0) * (ZERO + Z*2) = Z*2 = (0,0,2)
         let ghosts = s.ghost_spheres();
         assert_eq!(ghosts.len(), 2);
-        let (x_center, x_amp, _, _) = &ghosts[0];
-        let (y_center, y_amp, _, _) = &ghosts[1];
+        let (x_center, x_amp, _, _, _) = &ghosts[0];
+        let (y_center, y_amp, _, _, _) = &ghosts[1];
         assert!(approx_eq(*x_amp, 2.0));
         assert!(approx_eq(*y_amp, 4.0));
         assert!(approx_zero(y_center.length()), "Y ghost at origin");
@@ -425,7 +428,7 @@ mod tests {
         // Advance so θ_Y = π/2 → X ghost center = R_Y(π/2)*Z*2 = X*2 = (2,0,0)
         s.advance(0.5, TAU);
         let ghosts2 = s.ghost_spheres();
-        let (x_center2, _, _, _) = &ghosts2[0];
+        let (x_center2, _, _, _, _) = &ghosts2[0];
         assert!(approx_eq(x_center2.x, 2.0),
             "after θ_Y=π/2, X ghost at (2,0,0), got {:?}", x_center2);
         assert!(approx_zero(x_center2.y));
@@ -436,8 +439,8 @@ mod tests {
     fn ghost_sphere_inner_edge_touches_outer() {
         let s = stack_with_levels(3);
         let ghosts = s.ghost_spheres();
-        let (x_center, x_amp, _, _) = &ghosts[0];
-        let (y_center, y_amp, _, _) = &ghosts[1];
+        let (x_center, x_amp, _, _, _) = &ghosts[0];
+        let (y_center, y_amp, _, _, _) = &ghosts[1];
         let dist = (*x_center - *y_center).length();
         assert!(approx_eq(dist + x_amp, *y_amp),
             "inner ghost far edge should touch outer: dist={} + x_amp={} vs y_amp={}",
@@ -517,7 +520,7 @@ mod tests {
     fn tier2_axial_no_ghost_sphere() {
         let s = stack_with_levels(5);
         let ghosts = s.ghost_spheres();
-        let has_axial_ghost = ghosts.iter().any(|(_, _, st, _)| {
+        let has_axial_ghost = ghosts.iter().any(|(_, _, st, _, _)| {
             *st == SpinType::Axial
         });
         assert!(!has_axial_ghost,

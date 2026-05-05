@@ -15,7 +15,7 @@ extends Node3D
 
 @export var focus_particle_path: NodePath
 @export var min_zoom: float = 0.5
-@export var max_zoom: float = 200.0
+@export var max_zoom: float = 50000.0
 @export var zoom_step: float = 1.1
 @export var rotate_sensitivity: float = 0.005
 @export var pan_sensitivity: float = 0.0025
@@ -24,7 +24,7 @@ extends Node3D
 @export var fit_padding: float = 1.3
 
 const _DEFAULT_YAW: float = deg_to_rad(-30.0)
-const _DEFAULT_PITCH_DEG: float = 35.0
+const _DEFAULT_PITCH_DEG: float = -30.0
 const _DEFAULT_DISTANCE: float = 5.0
 
 var _focus: Node3D

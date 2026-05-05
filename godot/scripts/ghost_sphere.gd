@@ -69,11 +69,14 @@ func _process(_delta: float) -> void:
 		var center: Vector3 = Vector3(_focus.call("ghost_sphere_center", i))
 		var r: float = float(_focus.call("ghost_sphere_radius", i))
 		var label: String = String(_focus.call("ghost_sphere_spin_label", i))
+		var orient: Quaternion = Quaternion(_focus.call("ghost_sphere_orientation", i))
 
 		mi.position = center
 		mi.scale = Vector3(r, r, r)
 		mi.material_override = _materials.get(label, _materials["x1"])
-		_align_mesh_to(mi, _label_to_axis(label))
+		var base_axis: Vector3 = _label_to_axis(label)
+		var base_quat: Quaternion = _axis_to_quat(base_axis)
+		mi.quaternion = orient * base_quat
 
 
 func _sync_mesh_count(target: int) -> void:
@@ -115,14 +118,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		cycle_display_mode()
 
 
-func _align_mesh_to(mi: MeshInstance3D, axis: Vector3) -> void:
+func _axis_to_quat(axis: Vector3) -> Quaternion:
 	var up := Vector3.UP
 	if axis.is_equal_approx(up):
-		mi.quaternion = Quaternion.IDENTITY
+		return Quaternion.IDENTITY
 	elif axis.is_equal_approx(-up):
-		mi.quaternion = Quaternion(Vector3.RIGHT, PI)
+		return Quaternion(Vector3.RIGHT, PI)
 	else:
-		mi.quaternion = Quaternion(up.cross(axis).normalized(), up.angle_to(axis))
+		return Quaternion(up.cross(axis).normalized(), up.angle_to(axis))
 
 
 func _label_to_axis(label: String) -> Vector3:
