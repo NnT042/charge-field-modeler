@@ -151,7 +151,7 @@ impl FocusParticle {
 
     #[func]
     fn set_level_velocity(&mut self, level: i32, v: f64) -> bool {
-        if level <= 0 || level > 12 {
+        if level <= 0 || level > 16 {
             return false;
         }
         self.stack.set_velocity(level as u8, v)
@@ -173,7 +173,7 @@ impl FocusParticle {
     }
 
     /// Activate the next level. Returns the new level index, or 0 if not
-    /// allowed (top level not at ±c, or already at level 12).
+    /// allowed (top level not at ±c, or already at level 16).
     #[func]
     fn activate_next(&mut self) -> i32 {
         self.stack.activate_next().map(|n| n as i32).unwrap_or(0)
@@ -208,20 +208,20 @@ impl FocusParticle {
     }
 
     /// UI helper: spin type label ("axial" / "x" / "y" / "z") for an
-    /// absolute level index 1..=12. Returns "" for out-of-range.
+    /// absolute level index 1..=16. Returns "" for out-of-range.
     #[func]
     fn spin_type_label(&self, level: i32) -> GString {
-        if level <= 0 || level > 12 {
+        if level <= 0 || level > 16 {
             return GString::default();
         }
         let (st, _) = level_spec(level as u8);
         GString::from(st.label())
     }
 
-    /// UI helper: tier label ("photon" / "electron" / "baryon").
+    /// UI helper: tier label for the given level.
     #[func]
     fn tier_label(&self, level: i32) -> GString {
-        if level <= 0 || level > 12 {
+        if level <= 0 || level > 16 {
             return GString::default();
         }
         let (_, t) = level_spec(level as u8);
@@ -231,7 +231,7 @@ impl FocusParticle {
     /// UI helper: orbital amplitude in natural units for an absolute level.
     #[func]
     fn level_amplitude(&self, level: i32) -> f64 {
-        if level <= 0 || level > 12 {
+        if level <= 0 || level > 16 {
             return 0.0;
         }
         level_amplitude(level as u8)
@@ -348,6 +348,7 @@ impl FocusParticle {
                 crate::types::Tier::Photon => 1,
                 crate::types::Tier::Electron => 2,
                 crate::types::Tier::Baryon => 3,
+                crate::types::Tier::SuperBaryon => 4,
             };
             GString::from(format!("{}{}", st.label(), tier_num).as_str())
         })

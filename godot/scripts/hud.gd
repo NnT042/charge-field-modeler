@@ -1,9 +1,9 @@
 extends CanvasLayer
-## M3 HUD: toolbar + tier-tabbed slider panel for the spin stack (levels 1-12).
+## M4 HUD: toolbar + tier-tabbed slider panel for the spin stack (levels 1-16).
 
-const PHASE_MAX_LEVEL: int = 12
+const PHASE_MAX_LEVEL: int = 16
 const LEVELS_PER_TIER: int = 4
-const TIER_COUNT: int = 3
+const TIER_COUNT: int = 4
 const BASE_TIME_SCALE: float = TAU
 
 @export var focus_particle_path: NodePath
@@ -69,7 +69,7 @@ func _build_tier_tabs() -> void:
 	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Meson (9-12)"]
+	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Meson (9-12)", "Baryon (13-16)"]
 
 	for tier in TIER_COUNT:
 		var tab_vbox: VBoxContainer = VBoxContainer.new()

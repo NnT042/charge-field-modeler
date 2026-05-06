@@ -32,6 +32,11 @@ const AXIS_COLORS: Dictionary = {
 	"x3": Color(0.95, 0.8, 0.2),
 	"y3": Color(0.2, 0.7, 0.6),
 	"z3": Color(0.55, 0.3, 0.9),
+	# Tier 4 — SuperBaryon: dark reds/browns (unstable suprabaryon spins)
+	"axial4": Color(0.7, 0.2, 0.15),
+	"x4": Color(0.85, 0.35, 0.1),
+	"y4": Color(0.6, 0.15, 0.3),
+	"z4": Color(0.45, 0.1, 0.1),
 }
 
 

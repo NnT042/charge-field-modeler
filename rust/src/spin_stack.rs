@@ -120,11 +120,11 @@ impl SpinStack {
     }
 
     /// Push the next level onto the stack if the topmost is saturated and
-    /// we're not already at level 12. Returns the new level index, or None.
+    /// we're not already at level 16. Returns the new level index, or None.
     /// The new level starts at ω=0 so the user can bring it up manually.
     pub fn activate_next(&mut self) -> Option<u8> {
         let top = self.levels.last()?;
-        if !top.is_at_c() || top.level >= 12 {
+        if !top.is_at_c() || top.level >= 16 {
             return None;
         }
         let next = top.level + 1;
@@ -135,7 +135,7 @@ impl SpinStack {
     pub fn can_activate_next(&self) -> bool {
         self.levels
             .last()
-            .map_or(false, |l| l.is_at_c() && l.level < 12)
+            .map_or(false, |l| l.is_at_c() && l.level < 16)
     }
 
     /// World-position of the outermost ghost sphere's center. In the
@@ -267,6 +267,28 @@ impl SpinStack {
         }
     }
 
+    /// Baryon type from the ± sign pattern of tier-3 spins (levels 9-12).
+    /// From Mathis QCD paper: 16 sign combos map to proton, anti-proton,
+    /// neutron, anti-neutron based on how charge navigates the spin maze.
+    fn baryon_type(&self) -> &'static str {
+        let sign = |lvl: u8| -> bool {
+            self.get(lvl).map_or(true, |l| l.angular_velocity >= 0.0)
+        };
+        let (a, x, y, z) = (sign(9), sign(10), sign(11), sign(12));
+        match (a, x, y, z) {
+            (true,true,true,true) | (false,false,false,false) |
+            (false,true,true,true) | (true,false,false,false)
+                => "Proton",
+            (true,false,true,false) | (false,true,false,true) |
+            (true,true,false,true) | (false,false,true,false)
+                => "Anti-proton",
+            (false,false,false,true) | (true,true,true,false) |
+            (false,true,true,false) | (true,false,false,true)
+                => "Neutron",
+            _ => "Anti-neutron",
+        }
+    }
+
     /// Classification based on the highest *saturated* level. A particle is
     /// only "at" a tier when that tier's spins are all at ±c.
     pub fn classification(&self) -> &'static str {
@@ -282,10 +304,15 @@ impl SpinStack {
             1..=3 => "Charge photon (partial)",
             4 => "Charge photon",
             5..=7 => "High photon",
-            8 => "Maximal photon",
-            9 => "Electron (at rest)",
-            10..=11 => "Meson",
-            12 => "Baryon (at rest)",
+            8 => "Electron (at rest)",
+            9 => "Electron (a-spin)",
+            10 => "Meson (a+x)",
+            11 => "Muon (a+x+y)",
+            12 => self.baryon_type(),
+            13 => "D meson (a\u{2084})",
+            14 => "Uberon (a+x)",
+            15 => "Uberon (a+x+y)",
+            16 => "Uberon (a+x+y+z)",
             _ => "(unknown)",
         }
     }
@@ -505,6 +532,8 @@ mod tests {
         assert_eq!(level_amplitude(8), 64.0, "Z2");
         assert_eq!(level_amplitude(9), 64.0, "A3 should equal Z2 amplitude");
         assert_eq!(level_amplitude(12), 512.0, "Z3");
+        assert_eq!(level_amplitude(13), 512.0, "A4 should equal Z3 amplitude");
+        assert_eq!(level_amplitude(16), 4096.0, "Z4");
     }
 
     #[test]

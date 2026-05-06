@@ -1,10 +1,11 @@
 //! Shared types for the spin stack: spin axis kinds, tier hierarchy, and the
 //! geometric mappings (level → spin type, level → tier, level → amplitude).
 //!
-//! Per Mathis, levels 1..=12 cycle Axial / X / Y / Z four times across three
+//! Per Mathis, levels 1..=16 cycle Axial / X / Y / Z four times across four
 //! tiers. Levels 1-8 are all photon spins (charge photon + high photon).
-//! Levels 9-12 span electron → meson → baryon-at-rest. A hypothetical level 13
-//! (baryon axial) would be the proton/neutron engine starter.
+//! Levels 9-12 span electron → meson → baryon-at-rest.
+//! Levels 13-16 are suprabaryon: 13 is the proton engine starter,
+//! 14-16 are unstable uberon territory (D meson and above).
 
 use glam::{DQuat, DVec3};
 
@@ -23,6 +24,7 @@ pub enum Tier {
     Photon,
     Electron,
     Baryon,
+    SuperBaryon,
 }
 
 impl SpinType {
@@ -90,17 +92,19 @@ impl Tier {
             Tier::Photon => "charge photon",
             Tier::Electron => "high photon",
             Tier::Baryon => "meson",
+            Tier::SuperBaryon => "baryon",
         }
     }
 }
 
-/// For an absolute level index 1..=12, return the (spin type, tier) pair.
-/// Levels outside this range are clamped at the baryon tier.
+/// For an absolute level index 1..=16, return the (spin type, tier) pair.
+/// Levels outside this range are clamped at the super-baryon tier.
 pub fn level_spec(level: u8) -> (SpinType, Tier) {
     let tier = match level {
         1..=4 => Tier::Photon,
         5..=8 => Tier::Electron,
-        _ => Tier::Baryon,
+        9..=12 => Tier::Baryon,
+        _ => Tier::SuperBaryon,
     };
     let spin_type = match (level.saturating_sub(1)) % 4 {
         0 => SpinType::Axial,
@@ -116,11 +120,12 @@ pub fn level_spec(level: u8) -> (SpinType, Tier) {
 /// Each tier's base equals the previous tier's Z amplitude, so the new axial
 /// wraps the previous tier's outer extent without a gap.
 ///
-///   Tier 1 (charge photon):  1,  2,  4,   8
-///   Tier 2 (high photon):    8, 16, 32,  64
-///   Tier 3 (meson):         64,128,256, 512
+///   Tier 1 (charge photon):    1,   2,   4,    8
+///   Tier 2 (high photon):      8,  16,  32,   64
+///   Tier 3 (meson):           64, 128, 256,  512
+///   Tier 4 (baryon):         512,1024,2048, 4096
 pub fn level_amplitude(level: u8) -> f64 {
-    if level == 0 || level > 12 {
+    if level == 0 || level > 16 {
         return 0.0;
     }
     let tier = ((level - 1) / 4) as u32;

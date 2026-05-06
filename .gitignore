@@ -1,6 +1,13 @@
 # Claude Code per-machine state
 .claude/
 
+# Godot editor cache and export builds
+godot/.godot/
+godot/build/
+
+# Rust build artifacts
+rust/target/
+
 # OS cruft
 .DS_Store
 Thumbs.db
