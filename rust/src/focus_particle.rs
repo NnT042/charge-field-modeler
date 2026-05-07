@@ -42,6 +42,9 @@ pub struct FocusParticle {
     crest_markers: Vec<DVec3>,
     trough_markers: Vec<DVec3>,
     prev_outer_half_period: i64,
+    last_physics_delta: f64,
+    cached_tube_verts: PackedVector3Array,
+    cached_tube_colors: PackedColorArray,
 }
 
 const LINEAR_DIR_COUNT: u8 = 4;
@@ -82,11 +85,21 @@ impl INode3D for FocusParticle {
             crest_markers: Vec::new(),
             trough_markers: Vec::new(),
             prev_outer_half_period: i64::MIN,
+            last_physics_delta: 1.0 / 60.0,
+            cached_tube_verts: PackedVector3Array::new(),
+            cached_tube_colors: PackedColorArray::new(),
         }
     }
 
     fn physics_process(&mut self, delta: f64) {
+        self.last_physics_delta = delta;
         self.stack.advance(delta, self.time_scale);
+
+        let eff_r = self.stack.effective_radius();
+        let adaptive_step = PATH_TRACE_MIN_STEP * eff_r.max(1.0);
+        self.path.set_min_step(adaptive_step);
+        self.surface_path.set_min_step(adaptive_step);
+
         let (local_pos, rot) = self.stack.compose();
 
         if self.linear_enabled {
@@ -528,5 +541,169 @@ impl FocusParticle {
         self.linear_speed = 0.0;
         self.linear_offset = DVec3::ZERO;
         self.linear_dir_preset = 0;
+    }
+
+    /// Annul the given level and everything above it. Level 1 resets to
+    /// idle; levels 2+ truncate the stack to keep 1..level-1.
+    #[func]
+    fn truncate_to_level(&mut self, level: i32) {
+        let keep = if level <= 1 { 0 } else { (level - 1) as usize };
+        self.stack.truncate_to(keep);
+        self.clear_all_traces();
+    }
+
+    /// Number of path-trace samples to display in snake mode: one quarter
+    /// of the outermost ghost sphere's rotation period in physics ticks.
+    /// Returns 0 when no orbital level is spinning (fallback to full trail).
+    #[func]
+    fn snake_trace_length(&self) -> i32 {
+        let dt = self.last_physics_delta;
+        if dt < 1e-12 {
+            return 0;
+        }
+        match self.stack.outermost_orbital() {
+            Some(outer) if outer.angular_velocity.abs() > 1e-12 => {
+                let angle_per_tick =
+                    outer.angular_velocity.abs() * dt * self.time_scale / outer.orbit_radius();
+                if angle_per_tick < 1e-12 {
+                    return 0;
+                }
+                let ticks_per_rotation = TAU / angle_per_tick;
+                let quarter = (ticks_per_rotation / 4.0).round() as i32;
+                quarter.clamp(8, PATH_TRACE_CAPACITY as i32)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Build a tube mesh around the path trace entirely in Rust.
+    /// Stores results internally; retrieve with `get_tube_vertices` /
+    /// `get_tube_colors`. Returns vertex count (0 = nothing to draw).
+    /// `max_samples` <= 0 means use all samples; > 0 means take the tail.
+    #[func]
+    fn build_tube_mesh(
+        &mut self,
+        segments: i32,
+        max_samples: i32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+        tail_alpha: f32,
+    ) -> i32 {
+        let all_samples = self.path.samples_chronological();
+        let samples = if max_samples > 0 && (max_samples as usize) < all_samples.len() {
+            &all_samples[all_samples.len() - max_samples as usize..]
+        } else {
+            &all_samples[..]
+        };
+
+        let n = samples.len();
+        if n < 2 {
+            self.cached_tube_verts = PackedVector3Array::new();
+            self.cached_tube_colors = PackedColorArray::new();
+            return 0;
+        }
+
+        let seg = segments.max(3) as usize;
+        let angle_step = std::f32::consts::TAU / seg as f32;
+        let ws = WORLD_SCALE;
+
+        let positions: Vec<Vector3> = samples
+            .iter()
+            .map(|s| {
+                Vector3::new(
+                    s.pos.x as f32 * ws,
+                    s.pos.y as f32 * ws,
+                    s.pos.z as f32 * ws,
+                )
+            })
+            .collect();
+        let radii: Vec<f32> = samples.iter().map(|s| s.radius as f32 * ws).collect();
+
+        let mut rings: Vec<Vec<Vector3>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let fwd = if i < n - 1 {
+                (positions[i + 1] - positions[i]).normalized()
+            } else {
+                (positions[i] - positions[i - 1]).normalized()
+            };
+            let fwd = if fwd.length_squared() < 1e-6 {
+                Vector3::UP
+            } else {
+                fwd
+            };
+
+            let up_hint = if fwd.dot(Vector3::UP).abs() < 0.99 {
+                Vector3::UP
+            } else {
+                Vector3::RIGHT
+            };
+            let right_v = fwd.cross(up_hint).normalized();
+            let up_v = right_v.cross(fwd).normalized();
+
+            let radius = radii[i];
+            let mut ring = Vec::with_capacity(seg);
+            for j in 0..seg {
+                let theta = j as f32 * angle_step;
+                ring.push(
+                    positions[i] + (right_v * theta.cos() + up_v * theta.sin()) * radius,
+                );
+            }
+            rings.push(ring);
+        }
+
+        let vert_count = (n - 1) * seg * 6;
+        let mut verts = PackedVector3Array::new();
+        verts.resize(vert_count);
+        let mut colors = PackedColorArray::new();
+        colors.resize(vert_count);
+
+        let inv_last = 1.0f32 / (n - 1) as f32;
+        let mut idx = 0usize;
+        for i in 0..n - 1 {
+            let t0 = i as f32 * inv_last;
+            let t1 = (i + 1) as f32 * inv_last;
+            let a0 = (tail_alpha + (1.0 - tail_alpha) * t0) * a;
+            let a1 = (tail_alpha + (1.0 - tail_alpha) * t1) * a;
+            let c0 = Color::from_rgba(r, g, b, a0);
+            let c1 = Color::from_rgba(r, g, b, a1);
+
+            for j in 0..seg {
+                let j_next = (j + 1) % seg;
+                verts[idx] = rings[i][j];
+                colors[idx] = c0;
+                idx += 1;
+                verts[idx] = rings[i + 1][j];
+                colors[idx] = c1;
+                idx += 1;
+                verts[idx] = rings[i][j_next];
+                colors[idx] = c0;
+                idx += 1;
+                verts[idx] = rings[i][j_next];
+                colors[idx] = c0;
+                idx += 1;
+                verts[idx] = rings[i + 1][j];
+                colors[idx] = c1;
+                idx += 1;
+                verts[idx] = rings[i + 1][j_next];
+                colors[idx] = c1;
+                idx += 1;
+            }
+        }
+
+        self.cached_tube_verts = verts;
+        self.cached_tube_colors = colors;
+        vert_count as i32
+    }
+
+    #[func]
+    fn get_tube_vertices(&self) -> PackedVector3Array {
+        self.cached_tube_verts.clone()
+    }
+
+    #[func]
+    fn get_tube_colors(&self) -> PackedColorArray {
+        self.cached_tube_colors.clone()
     }
 }

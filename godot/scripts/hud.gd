@@ -20,6 +20,7 @@ var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
 var _reverse_buttons: Array[Button] = []
+var _annul_buttons: Array[Button] = []
 var _paused: bool = false
 var _prev_level_count: int = 0
 
@@ -40,6 +41,7 @@ func _ready() -> void:
 		var level: int = i + 1
 		_sliders[i].value_changed.connect(_on_slider_changed.bind(level))
 		_reverse_buttons[i].pressed.connect(_on_reverse_pressed.bind(level))
+		_annul_buttons[i].pressed.connect(_on_annul_pressed.bind(level))
 
 	%TimeScaleSlider.value_changed.connect(_on_time_scale_changed)
 	%LinearSpeedSlider.value_changed.connect(_on_linear_speed_changed)
@@ -101,6 +103,13 @@ func _build_tier_tabs() -> void:
 			rev_btn.tooltip_text = "Reverse spin direction"
 			slider_row.add_child(rev_btn)
 			_reverse_buttons.append(rev_btn)
+
+			var annul_btn: Button = Button.new()
+			annul_btn.text = "0"
+			annul_btn.custom_minimum_size = Vector2(24, 0)
+			annul_btn.tooltip_text = "Annul this spin and all above"
+			slider_row.add_child(annul_btn)
+			_annul_buttons.append(annul_btn)
 
 			var slider: HSlider = HSlider.new()
 			slider.min_value = -1.0
@@ -237,6 +246,23 @@ func _on_reverse_pressed(level: int) -> void:
 	_sliders[level - 1].set_value_no_signal(-v)
 
 
+func _on_annul_pressed(level: int) -> void:
+	if _focus == null:
+		return
+	var active: int = int(_focus.call("level_count"))
+	if level > active:
+		return
+	_focus.call("truncate_to_level", level)
+	for i in range(level - 1, PHASE_MAX_LEVEL):
+		_sliders[i].set_value_no_signal(0.0)
+	var target_level: int = max(1, level - 1)
+	var target_tier: int = (target_level - 1) / LEVELS_PER_TIER
+	_tab_container.current_tab = target_tier
+	_refresh_row_states()
+	if _camera_rig:
+		_camera_rig.auto_fit()
+
+
 func _on_time_scale_changed(slider_log: float) -> void:
 	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0], 0.02)
 	if snapped != slider_log:
@@ -344,6 +370,7 @@ func _refresh_row_states() -> void:
 		var is_active: bool = level <= active
 		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
 		_reverse_buttons[i].disabled = not is_active
+		_annul_buttons[i].disabled = not is_active
 
 	for tier in TIER_COUNT:
 		_tab_container.set_tab_disabled(tier, false)

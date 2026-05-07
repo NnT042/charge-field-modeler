@@ -1,11 +1,12 @@
 extends Node3D
 ## Renders the focus particle's worldline.
 ##
-## Three display modes cycled by T:
+## Five display modes cycled by T:
 ##   0 = OFF     — tracing disabled, nothing drawn
 ##   1 = LINE    — unshaded line-strip of the center point's path
 ##   2 = TUBE    — triangle-strip tube showing the full swept volume
 ##   3 = SURFACE — line-strip following a point on the particle's pole
+##   4 = SNAKE   — fading tube tail showing 1/4 rotation of the outermost ghost
 ##
 ## C clears the trace in any active mode.
 
@@ -19,12 +20,12 @@ extends Node3D
 @export var tail_min_alpha: float = 0.05
 @export var tube_segments: int = 10
 
-## 0 = off, 1 = line, 2 = tube, 3 = surface
+## 0 = off, 1 = line, 2 = tube, 3 = surface, 4 = snake
 var _display_mode: int = 1
 var _show_marker_lines: bool = false
 var _focus: Node3D
 var _mesh_instance: MeshInstance3D
-var _mesh: ImmediateMesh
+var _mesh: ArrayMesh
 var _material: StandardMaterial3D
 
 
@@ -41,7 +42,7 @@ func _ready() -> void:
 	_material.disable_receive_shadows = true
 	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	_mesh = ImmediateMesh.new()
+	_mesh = ArrayMesh.new()
 	_mesh_instance = MeshInstance3D.new()
 	_mesh_instance.mesh = _mesh
 	add_child(_mesh_instance)
@@ -55,6 +56,7 @@ func display_mode_label() -> String:
 		1: return "line"
 		2: return "tube"
 		3: return "surface"
+		4: return "snake"
 		_: return "off"
 
 
@@ -80,12 +82,14 @@ func _process(_delta: float) -> void:
 	if _display_mode == 1:
 		_draw_line(points, line_c)
 	elif _display_mode == 2:
-		var radii: PackedFloat32Array = _focus.call("get_path_radii")
-		_draw_tube(points, radii, tube_c)
+		_draw_tube_from_rust(tube_c, -1)
 	elif _display_mode == 3:
 		var surface_pts: PackedVector3Array = _focus.call("get_surface_path_points")
 		if surface_pts.size() >= 2:
 			_draw_line(surface_pts, surf_c)
+	elif _display_mode == 4:
+		var snake_len: int = int(_focus.call("snake_trace_length"))
+		_draw_tube_from_rust(tube_c, snake_len)
 
 	if _display_mode > 0:
 		var crests: PackedVector3Array = _focus.call("get_crest_markers")
@@ -101,114 +105,72 @@ func _process(_delta: float) -> void:
 				_draw_marker_chain(troughs, Color(trough_color.r, trough_color.g, trough_color.b, 0.5))
 
 
+func _add_surface(primitive: Mesh.PrimitiveType, verts: PackedVector3Array, colors: PackedColorArray) -> void:
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	_mesh.add_surface_from_arrays(primitive, arrays)
+	_mesh.surface_set_material(_mesh.get_surface_count() - 1, _material)
+
+
 func _draw_line(points: PackedVector3Array, c: Color) -> void:
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, _material)
 	var n: int = points.size()
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(n)
 	var inv_last: float = 1.0 / float(n - 1)
 	for i in n:
 		var t: float = float(i) * inv_last
 		var a: float = lerp(tail_min_alpha, 1.0, t) * c.a
-		_mesh.surface_set_color(Color(c.r, c.g, c.b, a))
-		_mesh.surface_add_vertex(points[i])
-	_mesh.surface_end()
+		colors[i] = Color(c.r, c.g, c.b, a)
+	_add_surface(Mesh.PRIMITIVE_LINE_STRIP, points, colors)
 
 
-func _draw_tube(points: PackedVector3Array, radii: PackedFloat32Array, c: Color) -> void:
-	var n: int = points.size()
-	if n < 2 or radii.size() < n:
-		return
-
-	var seg: int = tube_segments
-	var angle_step: float = TAU / float(seg)
-	var inv_last: float = 1.0 / float(n - 1)
-
-	# Build ring vertices for each sample point.
-	# Each ring lies in the plane perpendicular to the path tangent.
-	var rings: Array[PackedVector3Array] = []
-	rings.resize(n)
-	for i in n:
-		var fwd: Vector3
-		if i < n - 1:
-			fwd = (points[i + 1] - points[i]).normalized()
-		else:
-			fwd = (points[i] - points[i - 1]).normalized()
-		if fwd.is_zero_approx():
-			fwd = Vector3.UP
-
-		# Build a stable perpendicular basis.
-		var up_hint: Vector3 = Vector3.UP if abs(fwd.dot(Vector3.UP)) < 0.99 else Vector3.RIGHT
-		var right: Vector3 = fwd.cross(up_hint).normalized()
-		var up: Vector3 = right.cross(fwd).normalized()
-
-		var r: float = radii[i]
-		var ring: PackedVector3Array = PackedVector3Array()
-		ring.resize(seg)
-		for j in seg:
-			var theta: float = float(j) * angle_step
-			ring[j] = points[i] + (right * cos(theta) + up * sin(theta)) * r
-		rings[i] = ring
-
-	_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, _material)
-	for i in range(n - 1):
-		var t0: float = float(i) * inv_last
-		var t1: float = float(i + 1) * inv_last
-		var a0: float = lerp(tail_min_alpha, 1.0, t0) * c.a
-		var a1: float = lerp(tail_min_alpha, 1.0, t1) * c.a
-		var c0: Color = Color(c.r, c.g, c.b, a0)
-		var c1: Color = Color(c.r, c.g, c.b, a1)
-
-		for j in seg:
-			var j_next: int = (j + 1) % seg
-			_mesh.surface_set_color(c0)
-			_mesh.surface_add_vertex(rings[i][j])
-			_mesh.surface_set_color(c1)
-			_mesh.surface_add_vertex(rings[i + 1][j])
-			_mesh.surface_set_color(c0)
-			_mesh.surface_add_vertex(rings[i][j_next])
-
-			_mesh.surface_set_color(c0)
-			_mesh.surface_add_vertex(rings[i][j_next])
-			_mesh.surface_set_color(c1)
-			_mesh.surface_add_vertex(rings[i + 1][j])
-			_mesh.surface_set_color(c1)
-			_mesh.surface_add_vertex(rings[i + 1][j_next])
-
-	_mesh.surface_end()
+func _draw_tube_from_rust(c: Color, max_samples: int) -> void:
+	var count: int = int(_focus.call("build_tube_mesh", tube_segments, max_samples,
+		c.r, c.g, c.b, c.a, tail_min_alpha))
+	if count > 0:
+		_add_surface(Mesh.PRIMITIVE_TRIANGLES,
+			_focus.call("get_tube_vertices"),
+			_focus.call("get_tube_colors"))
 
 
 func _draw_markers(points: PackedVector3Array, c: Color) -> void:
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, _material)
+	var n: int = points.size()
 	var s: float = marker_size
-	for p in points:
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p + Vector3(s, 0, 0))
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p - Vector3(s, 0, 0))
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p + Vector3(0, s, 0))
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p - Vector3(0, s, 0))
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p + Vector3(0, 0, s))
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(p - Vector3(0, 0, s))
-	_mesh.surface_end()
+	var verts: PackedVector3Array = PackedVector3Array()
+	verts.resize(n * 6)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(n * 6)
+	for i in n:
+		var p: Vector3 = points[i]
+		var base: int = i * 6
+		verts[base] = p + Vector3(s, 0, 0); colors[base] = c
+		verts[base + 1] = p - Vector3(s, 0, 0); colors[base + 1] = c
+		verts[base + 2] = p + Vector3(0, s, 0); colors[base + 2] = c
+		verts[base + 3] = p - Vector3(0, s, 0); colors[base + 3] = c
+		verts[base + 4] = p + Vector3(0, 0, s); colors[base + 4] = c
+		verts[base + 5] = p - Vector3(0, 0, s); colors[base + 5] = c
+	_add_surface(Mesh.PRIMITIVE_LINES, verts, colors)
 
 
 func _draw_marker_chain(points: PackedVector3Array, c: Color) -> void:
 	if points.size() < 2:
 		return
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, _material)
-	for i in range(0, points.size() - 1, 2):
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(points[i])
-		_mesh.surface_set_color(c)
-		_mesh.surface_add_vertex(points[i + 1])
-	_mesh.surface_end()
+	var pair_count: int = points.size() / 2
+	var verts: PackedVector3Array = PackedVector3Array()
+	verts.resize(pair_count * 2)
+	var colors: PackedColorArray = PackedColorArray()
+	colors.resize(pair_count * 2)
+	for i in pair_count:
+		var base: int = i * 2
+		verts[base] = points[base]; colors[base] = c
+		verts[base + 1] = points[base + 1]; colors[base + 1] = c
+	_add_surface(Mesh.PRIMITIVE_LINES, verts, colors)
 
 
 func cycle_display_mode() -> void:
-	_display_mode = (_display_mode + 1) % 4
+	_display_mode = (_display_mode + 1) % 5
 	if _focus != null:
 		_focus.call("set_path_enabled", _display_mode > 0)
 	if _display_mode == 0 and _mesh != null:

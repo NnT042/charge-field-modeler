@@ -368,8 +368,11 @@ Each frame, the focus particle's position is computed by summing every active sp
 - [x] *Baryon tab with dark red/brown ghost sphere palette*
 - [x] *Chirality-based classification (proton/neutron/anti-proton/anti-neutron from ± sign pattern)*
 - [x] *D meson and uberon labels for suprabaryon levels*
-- [ ] *GPU-accelerated position computation (7 FPS at 13 levels — critical)*
-- [ ] *Performance profiling and optimization pass*
+- [x] *Performance: adaptive trace min_step scaling with effective radius*
+- [x] *Performance: ArrayMesh bulk upload replaces per-vertex ImmediateMesh calls*
+- [x] *Spin annul button (0) — truncate stack from any level*
+- [x] *Snake trace mode — quarter-rotation fading tube tail*
+- [ ] *GPU-accelerated position computation (for future field sim at scale)*
 
 ### *M4: Field Simulation*
 - [ ] *GPU compute pipeline for field photon updates*

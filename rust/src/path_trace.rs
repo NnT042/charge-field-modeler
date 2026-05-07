@@ -50,6 +50,10 @@ impl PathTrace {
         self.enabled = e;
     }
 
+    pub fn set_min_step(&mut self, step: f64) {
+        self.min_step = step.max(0.0);
+    }
+
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.len

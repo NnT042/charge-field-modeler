@@ -153,6 +153,19 @@ impl SpinStack {
         }
     }
 
+    /// Remove all levels above `keep`, leaving levels 1..=keep.
+    /// If `keep` is 0, acts like `reset()` (single idle level 1).
+    pub fn truncate_to(&mut self, keep: usize) {
+        if keep == 0 {
+            self.reset();
+            return;
+        }
+        if keep >= self.levels.len() {
+            return;
+        }
+        self.levels.truncate(keep);
+    }
+
     /// Advance every active level's angle by `velocity * dt * time_scale / orbit_radius`.
     /// `time_scale` is in (natural radians) per (real second) at v=c for the
     /// axial level (orbit_radius = 1). Each orbital level's angular velocity is
@@ -572,5 +585,31 @@ mod tests {
         assert!(pos_before.length() > 0.1, "tier 1 structure should have extent");
         assert!((pos_after - pos_before).length() > 0.1,
             "A2 precession should rotate the tier 1 structure to a new position");
+    }
+
+    #[test]
+    fn truncate_to_removes_upper_levels() {
+        let mut s = stack_with_levels(8);
+        assert_eq!(s.level_count(), 8);
+        s.truncate_to(4);
+        assert_eq!(s.level_count(), 4);
+        assert!(s.get(4).is_some());
+        assert!(s.get(5).is_none());
+    }
+
+    #[test]
+    fn truncate_to_zero_resets() {
+        let mut s = stack_with_levels(4);
+        s.truncate_to(0);
+        assert_eq!(s.level_count(), 1);
+        let l1 = s.get(1).unwrap();
+        assert_eq!(l1.angular_velocity, 0.0);
+    }
+
+    #[test]
+    fn truncate_to_noop_when_above_count() {
+        let mut s = stack_with_levels(4);
+        s.truncate_to(8);
+        assert_eq!(s.level_count(), 4);
     }
 }
