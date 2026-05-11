@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ddxe3lefc1um"
+path="res://.godot/imported/trace_collide.glsl-324b0716f3747e17e7c48efdccb2b854.res"
+
+[deps]
+
+source_file="res://shaders/compute/trace_collide.glsl"
+dest_files=["res://.godot/imported/trace_collide.glsl-324b0716f3747e17e7c48efdccb2b854.res"]
+
+[params]
+

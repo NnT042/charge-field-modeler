@@ -6,7 +6,7 @@ reloadable = true
 
 [libraries]
 
-windows.debug.x86_64   = "res://../rust/target/debug/charge_field_modeler.dll"
+windows.debug.x86_64   = "res://../rust/target/release/charge_field_modeler.dll"
 windows.release.x86_64 = "res://../rust/target/release/charge_field_modeler.dll"
 linux.debug.x86_64     = "res://../rust/target/debug/libcharge_field_modeler.so"
 linux.release.x86_64   = "res://../rust/target/release/libcharge_field_modeler.so"

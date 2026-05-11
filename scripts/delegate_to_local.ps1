@@ -64,7 +64,21 @@ $TaskPrompt
 
 # --- Build the request ---
 $SystemPrompt = @"
-You are a code generation assistant for the Charge Field Modeler project. The stack is Godot 4 + Rust (via gdext GDExtension) + Vulkan compute shaders (GLSL). Generate clean, well-commented code. Do not explain unless asked — just output the code. Use idiomatic Rust with proper error handling. For GDScript, use static typing. For GLSL, target Vulkan 1.1 / SPIR-V.
+You are a code generator for Godot 4.4+ (GDScript) and Rust (gdext 0.5). Output ONLY code. No markdown fences. No explanations.
+
+GDSCRIPT RULES — follow these exactly:
+- Static types on EVERY variable and return: var x: int = 0, var s: String = "", -> void, -> bool
+- Enum constants use ClassName.CONSTANT: StandardMaterial3D.SHADING_MODE_UNSHADED (NOT MaterialShadingMode.UNSHADED)
+- BaseMaterial3D for: CULL_DISABLED, CULL_BACK
+- StandardMaterial3D for: SHADING_MODE_UNSHADED, TRANSPARENCY_ALPHA, BILLBOARD_ENABLED
+- MultiMesh for: TRANSFORM_3D, TRANSFORM_2D
+- Signal syntax: signal_name.connect(callable) (NOT .connect("signal", self, "method"))
+- Node references: %UniqueName (NOT $NodePath)
+- Assign mesh material: mesh.material = mat (NOT mesh.set_material(mat))
+- MultiMesh.set_buffer(buffer) takes ONE arg, not two
+- Do NOT use class_name unless explicitly asked
+- func _ready() -> void: (always include return type)
+- Use tabs for indentation, not spaces
 "@
 
 $Body = @{

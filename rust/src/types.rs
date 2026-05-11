@@ -87,13 +87,14 @@ impl SpinType {
 }
 
 impl Tier {
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
-        match self {
-            Tier::Photon => "charge photon",
-            Tier::Electron => "high photon",
-            Tier::Baryon => "meson",
-            Tier::SuperBaryon => "baryon",
-        }
+        level_tier_label(match self {
+            Tier::Photon => 1,
+            Tier::Electron => 5,
+            Tier::Baryon => 10,
+            Tier::SuperBaryon => 13,
+        })
     }
 }
 
@@ -113,6 +114,19 @@ pub fn level_spec(level: u8) -> (SpinType, Tier) {
         _ => SpinType::Z,
     };
     (spin_type, tier)
+}
+
+/// Level-specific tier label that accounts for the electron/meson split
+/// within tier 3. Level 9 (axial) is still an electron; 10-12 are meson-class.
+pub fn level_tier_label(level: u8) -> &'static str {
+    match level {
+        1..=4 => "charge photon",
+        5..=8 => "high photon",
+        9 => "electron",
+        10..=12 => "meson",
+        13..=16 => "baryon",
+        _ => "(unknown)",
+    }
 }
 
 /// Geometric amplitude for a level (natural units, base photon r = 1).

@@ -302,17 +302,18 @@ impl SpinStack {
         }
     }
 
-    /// Classification based on the highest *saturated* level. A particle is
-    /// only "at" a tier when that tier's spins are all at ±c.
+    /// Classification based on the highest *spinning* level (any non-zero
+    /// angular velocity). Shows what the particle is becoming as soon as the
+    /// user starts dragging, not only after saturation.
     pub fn classification(&self) -> &'static str {
-        let max_saturated = self
+        let max_spinning = self
             .levels
             .iter()
-            .filter(|l| l.is_at_c())
+            .filter(|l| l.angular_velocity.abs() > 1e-9)
             .map(|l| l.level)
             .max()
             .unwrap_or(0);
-        match max_saturated {
+        match max_spinning {
             0 => "B-photon (at rest)",
             1..=3 => "Charge photon (partial)",
             4 => "Charge photon",

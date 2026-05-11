@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://cfm_main_0001"]
+[gd_scene load_steps=15 format=3 uid="uid://cfm_main_0001"]
 
 [ext_resource type="Script" path="res://scripts/orbit_camera_rig.gd" id="1_orbit"]
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="2_hud"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://scripts/origin_gizmo.gd" id="4_gizmo"]
 [ext_resource type="Script" path="res://scripts/path_trace_line.gd" id="5_trace"]
 [ext_resource type="Script" path="res://scripts/ghost_sphere.gd" id="6_ghost"]
+[ext_resource type="Script" path="res://scripts/field_sim.gd" id="7_field_sim"]
+[ext_resource type="Script" path="res://scripts/field_renderer.gd" id="8_field_renderer"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_1"]
 sky_top_color = Color(0.04, 0.05, 0.09, 1)
@@ -86,8 +88,19 @@ current = true
 fov = 50.0
 near = 0.05
 
+[node name="FieldSim" type="Node3D" parent="."]
+script = ExtResource("7_field_sim")
+focus_particle_path = NodePath("../FocusParticle")
+field_renderer_path = NodePath("../FieldRenderer")
+
+[node name="FieldRenderer" type="Node3D" parent="."]
+script = ExtResource("8_field_renderer")
+focus_particle_path = NodePath("../FocusParticle")
+
 [node name="HUD" parent="." instance=ExtResource("2_hud")]
 focus_particle_path = NodePath("../FocusParticle")
 camera_rig_path = NodePath("../OrbitCameraRig")
 ghost_sphere_path = NodePath("../GhostSphere")
 path_trace_path = NodePath("../PathTraceLine")
+field_sim_path = NodePath("../FieldSim")
+field_renderer_path = NodePath("../FieldRenderer")

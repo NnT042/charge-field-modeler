@@ -16,6 +16,7 @@ use glam::DVec3;
 pub struct TraceSample {
     pub pos: DVec3,
     pub radius: f64,
+    pub vel: DVec3,
 }
 
 pub struct PathTrace {
@@ -68,7 +69,7 @@ impl PathTrace {
     /// Record a position if tracing is enabled and the threshold is met.
     /// The very first sample is always recorded; subsequent samples must be
     /// at least `min_step` from the previous recorded point.
-    pub fn record(&mut self, pos: DVec3, radius: f64) {
+    pub fn record(&mut self, pos: DVec3, radius: f64, vel: DVec3) {
         if !self.enabled {
             return;
         }
@@ -77,7 +78,7 @@ impl PathTrace {
                 return;
             }
         }
-        let sample = TraceSample { pos, radius };
+        let sample = TraceSample { pos, radius, vel };
         if self.buf.len() < self.capacity {
             self.buf.push(sample);
         } else {
@@ -125,21 +126,23 @@ mod tests {
 
     const R: f64 = 1.0;
 
+    const V: DVec3 = DVec3::ZERO;
+
     #[test]
     fn first_point_always_recorded() {
         let mut t = PathTrace::new(8, 0.5);
-        t.record(DVec3::new(0.0, 0.0, 0.0), R);
+        t.record(DVec3::new(0.0, 0.0, 0.0), R, V);
         assert_eq!(t.len(), 1);
     }
 
     #[test]
     fn distance_threshold_skips_close_samples() {
         let mut t = PathTrace::new(8, 0.5);
-        t.record(DVec3::ZERO, R);
-        t.record(DVec3::new(0.1, 0.0, 0.0), R);
-        t.record(DVec3::new(0.4, 0.0, 0.0), R);
+        t.record(DVec3::ZERO, R, V);
+        t.record(DVec3::new(0.1, 0.0, 0.0), R, V);
+        t.record(DVec3::new(0.4, 0.0, 0.0), R, V);
         assert_eq!(t.len(), 1);
-        t.record(DVec3::new(0.6, 0.0, 0.0), R);
+        t.record(DVec3::new(0.6, 0.0, 0.0), R, V);
         assert_eq!(t.len(), 2);
     }
 
@@ -147,7 +150,7 @@ mod tests {
     fn ring_buffer_wraps_and_preserves_chronological_order() {
         let mut t = PathTrace::new(4, 0.0);
         for i in 0..6 {
-            t.record(DVec3::new(i as f64, 0.0, 0.0), R);
+            t.record(DVec3::new(i as f64, 0.0, 0.0), R, V);
         }
         assert_eq!(t.len(), 4);
         let pts = t.points_chronological();
@@ -161,12 +164,12 @@ mod tests {
     #[test]
     fn clear_resets_state() {
         let mut t = PathTrace::new(4, 0.0);
-        t.record(DVec3::ZERO, R);
-        t.record(DVec3::X, R);
+        t.record(DVec3::ZERO, R, V);
+        t.record(DVec3::X, R, V);
         t.clear();
         assert_eq!(t.len(), 0);
         assert!(t.last().is_none());
-        t.record(DVec3::Y, R);
+        t.record(DVec3::Y, R, V);
         assert_eq!(t.points_chronological(), vec![DVec3::Y]);
     }
 
@@ -174,19 +177,19 @@ mod tests {
     fn disabled_drops_samples() {
         let mut t = PathTrace::new(4, 0.0);
         t.set_enabled(false);
-        t.record(DVec3::ZERO, R);
-        t.record(DVec3::X, R);
+        t.record(DVec3::ZERO, R, V);
+        t.record(DVec3::X, R, V);
         assert_eq!(t.len(), 0);
         t.set_enabled(true);
-        t.record(DVec3::Y, R);
+        t.record(DVec3::Y, R, V);
         assert_eq!(t.len(), 1);
     }
 
     #[test]
     fn samples_store_radius() {
         let mut t = PathTrace::new(4, 0.0);
-        t.record(DVec3::ZERO, 1.0);
-        t.record(DVec3::X, 2.0);
+        t.record(DVec3::ZERO, 1.0, V);
+        t.record(DVec3::X, 2.0, V);
         let samples = t.samples_chronological();
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[0].radius, 1.0);

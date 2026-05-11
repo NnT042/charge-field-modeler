@@ -10,11 +10,30 @@ const BASE_TIME_SCALE: float = TAU
 @export var camera_rig_path: NodePath
 @export var ghost_sphere_path: NodePath
 @export var path_trace_path: NodePath
+@export var field_sim_path: NodePath
+@export var field_renderer_path: NodePath
 
 var _focus: Node3D
 var _camera_rig: Node3D
 var _ghost: Node3D
 var _trace: Node3D
+var _field_sim: Node3D
+var _field_renderer: Node3D
+var _field_start_btn: Button
+var _field_stop_btn: Button
+var _field_reset_btn: Button
+var _field_count_label: Label
+var _collision_label: Label
+var _field_count_spin: SpinBox
+var _anticharge_slider: HSlider
+var _anticharge_label: Label
+var _dir_buttons: Dictionary = {}
+var _parallel_btn: Button
+var _exit_holes_btn: Button
+var _blank_btn: Button
+var _stream_btn: Button
+var _preset_dropdown: OptionButton
+var _presets: Array = []
 var _tab_container: TabContainer
 var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
@@ -30,12 +49,15 @@ func _ready() -> void:
 	_camera_rig = get_node_or_null(camera_rig_path) as Node3D
 	_ghost = get_node_or_null(ghost_sphere_path) as Node3D
 	_trace = get_node_or_null(path_trace_path) as Node3D
+	_field_sim = get_node_or_null(field_sim_path) as Node3D
+	_field_renderer = get_node_or_null(field_renderer_path) as Node3D
 
 	if _focus == null:
 		push_error("HUD: focus_particle_path does not resolve to a Node3D")
 		return
 
 	_build_tier_tabs()
+	_build_preset_row()
 
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
@@ -65,13 +87,17 @@ func _ready() -> void:
 		%HomeBtn.pressed.connect(_camera_rig.snap_default)
 		%FitBtn.pressed.connect(_camera_rig.auto_fit)
 
+	var field_row: VBoxContainer = _build_field_controls()
+	var vbox_toolbar: VBoxContainer = $ControlPanel/Margin/VBox
+	vbox_toolbar.add_child(field_row)
+
 
 func _build_tier_tabs() -> void:
 	_tab_container = TabContainer.new()
 	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Meson (9-12)", "Baryon (13-16)"]
+	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Electron/Meson (9-12)", "Baryon (13-16)"]
 
 	for tier in TIER_COUNT:
 		var tab_vbox: VBoxContainer = VBoxContainer.new()
@@ -203,6 +229,8 @@ func _process(_delta: float) -> void:
 	var em_color: Color = Color(_focus.call("get_wavelength_color"))
 	%EMColorSwatch.color = em_color
 
+	_update_field_readout()
+
 	# Toolbar state labels
 	%PauseBtn.text = "Resume" if _paused else "Pause"
 	%LinearBtn.text = "Linear: on" if linear_on else "Linear: off"
@@ -231,6 +259,8 @@ func _on_slider_changed(value: float, level: int) -> void:
 			_sliders[prev - 1].set_value_no_signal(1.0)
 		if int(_focus.call("level_count")) < level:
 			_focus.call("activate_next")
+		if _field_sim:
+			_field_sim.clear_exit_holes()
 		_refresh_row_states()
 	_focus.call("set_level_velocity", level, value)
 
@@ -328,6 +358,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			if _focus != null:
 				var current: bool = bool(_focus.call("is_linear_enabled"))
 				_focus.call("set_linear_enabled", not current)
+		KEY_F:
+			if _field_renderer:
+				_field_renderer.toggle_visible()
 
 
 func _set_paused(p: bool) -> void:
@@ -338,6 +371,8 @@ func _set_paused(p: bool) -> void:
 
 
 func _on_reset_pressed() -> void:
+	if _paused:
+		_set_paused(false)
 	if _focus == null:
 		return
 	_focus.call("reset_stack")
@@ -347,6 +382,9 @@ func _on_reset_pressed() -> void:
 	_apply_time_scale(0.0)
 	%LinearSpeedSlider.set_value_no_signal(0.0)
 	%LinearSpeedSlider.editable = false
+	if _field_sim:
+		_field_sim.reset_field()
+	_reset_field_controls()
 	_refresh_row_states()
 	_tab_container.current_tab = 0
 	if _camera_rig:
@@ -376,6 +414,261 @@ func _refresh_row_states() -> void:
 		_tab_container.set_tab_disabled(tier, false)
 
 
+func _build_field_controls() -> VBoxContainer:
+	var wrapper: VBoxContainer = VBoxContainer.new()
+	wrapper.add_theme_constant_override("separation", 4)
+
+	# Row 1: Start / Stop / Reset + status
+	var row1: HBoxContainer = HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 6)
+
+	_field_start_btn = Button.new()
+	_field_start_btn.text = "Start Field"
+	_field_start_btn.pressed.connect(_on_field_start_pressed)
+	row1.add_child(_field_start_btn)
+
+	_field_stop_btn = Button.new()
+	_field_stop_btn.text = "Stop Field"
+	_field_stop_btn.disabled = true
+	_field_stop_btn.pressed.connect(_on_field_stop_pressed)
+	row1.add_child(_field_stop_btn)
+
+	_field_reset_btn = Button.new()
+	_field_reset_btn.text = "Reset Field"
+	_field_reset_btn.disabled = true
+	_field_reset_btn.pressed.connect(_on_field_reset_pressed)
+	row1.add_child(_field_reset_btn)
+
+	_field_count_label = Label.new()
+	_field_count_label.text = "Field: off"
+	row1.add_child(_field_count_label)
+
+	_collision_label = Label.new()
+	_collision_label.text = ""
+	_collision_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_collision_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row1.add_child(_collision_label)
+
+	wrapper.add_child(row1)
+
+	# Row 2: Count + Anticharge
+	var row2: HBoxContainer = HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 6)
+
+	var count_lbl: Label = Label.new()
+	count_lbl.text = "Count:"
+	row2.add_child(count_lbl)
+
+	_field_count_spin = SpinBox.new()
+	_field_count_spin.min_value = 50
+	_field_count_spin.max_value = 100000
+	_field_count_spin.step = 50
+	_field_count_spin.value = 5000
+	_field_count_spin.custom_minimum_size = Vector2(100, 0)
+	_field_count_spin.tooltip_text = "Number of charge photons (50-100k)"
+	row2.add_child(_field_count_spin)
+
+	var sep: VSeparator = VSeparator.new()
+	row2.add_child(sep)
+
+	var ac_lbl: Label = Label.new()
+	ac_lbl.text = "Anticharge:"
+	row2.add_child(ac_lbl)
+
+	_anticharge_slider = HSlider.new()
+	_anticharge_slider.min_value = 0.0
+	_anticharge_slider.max_value = 100.0
+	_anticharge_slider.step = 1.0
+	_anticharge_slider.value = 33.0
+	_anticharge_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_anticharge_slider.custom_minimum_size = Vector2(80, 0)
+	_anticharge_slider.tooltip_text = "Percentage of red (anti-charge) photons"
+	_anticharge_slider.value_changed.connect(_on_anticharge_changed)
+	row2.add_child(_anticharge_slider)
+
+	_anticharge_label = Label.new()
+	_anticharge_label.custom_minimum_size = Vector2(40, 0)
+	_anticharge_label.text = "33%"
+	row2.add_child(_anticharge_label)
+
+	wrapper.add_child(row2)
+
+	# Row 3: Direction toggles + Parallel switch
+	var row3: HBoxContainer = HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 4)
+
+	var dir_lbl: Label = Label.new()
+	dir_lbl.text = "Direction:"
+	row3.add_child(dir_lbl)
+
+	var axes: Array = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+	for axis_name: String in axes:
+		var btn: Button = Button.new()
+		btn.text = axis_name
+		btn.toggle_mode = true
+		btn.custom_minimum_size = Vector2(36, 0)
+		btn.pressed.connect(_on_direction_toggled)
+		row3.add_child(btn)
+		_dir_buttons[axis_name] = btn
+
+	var sep2: VSeparator = VSeparator.new()
+	row3.add_child(sep2)
+
+	_parallel_btn = Button.new()
+	_parallel_btn.text = "Scatter"
+	_parallel_btn.toggle_mode = true
+	_parallel_btn.button_pressed = true
+	_parallel_btn.tooltip_text = "ON = mostly-parallel (some scatter). OFF = all-parallel (exact direction)"
+	_parallel_btn.pressed.connect(_on_parallel_toggled)
+	row3.add_child(_parallel_btn)
+
+	var sep3: VSeparator = VSeparator.new()
+	row3.add_child(sep3)
+
+	_exit_holes_btn = Button.new()
+	_exit_holes_btn.text = "Exit dots"
+	_exit_holes_btn.toggle_mode = true
+	_exit_holes_btn.button_pressed = false
+	_exit_holes_btn.tooltip_text = "Show exit points on ghost sphere"
+	_exit_holes_btn.pressed.connect(_on_exit_holes_toggled)
+	row3.add_child(_exit_holes_btn)
+
+	_blank_btn = Button.new()
+	_blank_btn.text = "Blank"
+	_blank_btn.toggle_mode = true
+	_blank_btn.button_pressed = false
+	_blank_btn.tooltip_text = "Hide charge cloud (exit dots remain)"
+	_blank_btn.pressed.connect(_on_blank_toggled)
+	row3.add_child(_blank_btn)
+
+	_stream_btn = Button.new()
+	_stream_btn.text = "Stream"
+	_stream_btn.toggle_mode = true
+	_stream_btn.button_pressed = false
+	_stream_btn.tooltip_text = "Continuous flow instead of synchronized waves"
+	_stream_btn.pressed.connect(_on_stream_toggled)
+	row3.add_child(_stream_btn)
+
+	wrapper.add_child(row3)
+	return wrapper
+
+
+func _on_field_start_pressed() -> void:
+	if _field_sim:
+		var count: int = int(_field_count_spin.value)
+		_field_sim.start_field(count)
+		_field_start_btn.disabled = true
+		_field_stop_btn.disabled = false
+		_field_reset_btn.disabled = false
+
+
+func _on_field_stop_pressed() -> void:
+	if _field_sim:
+		_field_sim.stop_field()
+		_field_start_btn.disabled = false
+		_field_stop_btn.disabled = true
+
+
+func _on_field_reset_pressed() -> void:
+	if _field_sim:
+		_field_sim.reset_field()
+		_field_start_btn.disabled = false
+		_field_stop_btn.disabled = true
+		_field_reset_btn.disabled = true
+		_field_count_label.text = "Field: off"
+	_reset_field_controls()
+
+
+func _reset_field_controls() -> void:
+	for key: String in _dir_buttons:
+		_dir_buttons[key].button_pressed = false
+	_parallel_btn.button_pressed = true
+	_parallel_btn.text = "Scatter"
+	_exit_holes_btn.button_pressed = false
+	_blank_btn.button_pressed = false
+	_stream_btn.button_pressed = false
+	_anticharge_slider.set_value_no_signal(33.0)
+	_anticharge_label.text = "33%"
+	if _field_sim:
+		_field_sim.set_direction_mask(0)
+		_field_sim.set_direction_strength(0.0)
+		_field_sim.set_direction_scatter(0.3)
+		_field_sim.set_photon_ratio(0.67)
+		_field_sim.set_show_exit_holes(false)
+		_field_sim.set_cloud_blanked(false)
+		_field_sim.set_stream_mode(false)
+
+
+func _on_anticharge_changed(value: float) -> void:
+	var pct: int = int(value)
+	_anticharge_label.text = "%d%%" % pct
+	if _field_sim:
+		_field_sim.set_photon_ratio(1.0 - value / 100.0)
+
+
+func _on_direction_toggled() -> void:
+	_apply_field_direction()
+
+
+func _on_parallel_toggled() -> void:
+	_parallel_btn.text = "Scatter" if _parallel_btn.button_pressed else "Parallel"
+	_apply_field_direction()
+
+
+func _on_exit_holes_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_show_exit_holes(_exit_holes_btn.button_pressed)
+
+
+func _on_blank_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_cloud_blanked(_blank_btn.button_pressed)
+
+
+func _on_stream_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_stream_mode(_stream_btn.button_pressed)
+
+
+func _apply_field_direction() -> void:
+	if not _field_sim:
+		return
+
+	# Bitmask: +X=0, -X=1, +Y=2, -Y=3, +Z=4, -Z=5
+	var mask: int = 0
+	var axis_bits: Dictionary = {"+X": 0, "-X": 1, "+Y": 2, "-Y": 3, "+Z": 4, "-Z": 5}
+	for key: String in axis_bits:
+		if _dir_buttons[key].button_pressed:
+			mask |= 1 << axis_bits[key]
+
+	_field_sim.set_direction_mask(mask)
+
+	if mask == 0:
+		_field_sim.set_direction_strength(0.0)
+		_field_sim.set_direction_scatter(0.3)
+	else:
+		_field_sim.set_direction_strength(1.0)
+		if _parallel_btn.button_pressed:
+			_field_sim.set_direction_scatter(0.3)
+		else:
+			_field_sim.set_direction_scatter(0.0)
+
+
+func _update_field_readout() -> void:
+	if not _field_sim:
+		return
+
+	if _field_sim.is_running():
+		var count: int = _field_sim.get_photon_count()
+		_field_count_label.text = "Field: %dK" % (count / 1000)
+		var collisions: int = _field_sim.get_collision_count()
+		var impulse: Vector3 = _field_sim.get_net_impulse()
+		_collision_label.text = "Cloud hits: %d  |F|: %.3f" % [collisions, impulse.length()]
+	else:
+		_field_count_label.text = "Field: off"
+		_collision_label.text = ""
+
+
 func _format_level_label(level: int) -> String:
 	if _focus == null:
 		return "Lvl %d" % level
@@ -383,3 +676,90 @@ func _format_level_label(level: int) -> String:
 	var tier: String = String(_focus.call("tier_label", level))
 	var amp: float = float(_focus.call("level_amplitude", level))
 	return "Lvl %d — %s (%s, r=%d)" % [level, spin_type, tier, int(amp)]
+
+
+# ---- Particle presets ----
+
+func _build_preset_row() -> void:
+	_presets = _load_presets()
+	if _presets.is_empty():
+		return
+
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+
+	var lbl: Label = Label.new()
+	lbl.text = "Preset:"
+	row.add_child(lbl)
+
+	_preset_dropdown = OptionButton.new()
+	_preset_dropdown.add_item("Custom")
+	for p: Dictionary in _presets:
+		_preset_dropdown.add_item(p.get("name", "?"))
+	_preset_dropdown.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_preset_dropdown.item_selected.connect(_on_preset_selected)
+	row.add_child(_preset_dropdown)
+
+	var vbox: VBoxContainer = $ControlPanel/Margin/VBox
+	vbox.add_child(row)
+	vbox.move_child(row, 1)
+
+
+func _load_presets() -> Array:
+	var f: FileAccess = FileAccess.open("res://config/particle_presets.json", FileAccess.READ)
+	if f == null:
+		push_warning("No particle_presets.json found")
+		return []
+	var text: String = f.get_as_text()
+	f.close()
+	var json: JSON = JSON.new()
+	var err: int = json.parse(text)
+	if err != OK:
+		push_error("particle_presets.json parse error: " + json.get_error_message())
+		return []
+	if json.data is Array:
+		return json.data
+	return []
+
+
+func _on_preset_selected(index: int) -> void:
+	if index == 0 or _focus == null:
+		return
+	var preset: Dictionary = _presets[index - 1]
+	var levels: Array = preset.get("levels", [])
+	if levels.is_empty():
+		return
+
+	_focus.call("reset_stack")
+	for i in PHASE_MAX_LEVEL:
+		_sliders[i].set_value_no_signal(0.0)
+
+	var count: int = mini(levels.size(), PHASE_MAX_LEVEL)
+	for i in count:
+		var v: float = float(levels[i])
+		var level: int = i + 1
+		var active: int = int(_focus.call("level_count"))
+		if level > active:
+			var top: int = active
+			if top >= 1:
+				var top_v: float = float(_focus.call("get_level_velocity", top))
+				if absf(top_v) < 1.0 - 1e-6:
+					_focus.call("set_level_velocity", top, signf(top_v) if absf(top_v) > 0.01 else 1.0)
+			_focus.call("activate_next")
+		_focus.call("set_level_velocity", level, v)
+		_sliders[i].set_value_no_signal(v)
+
+	if preset.has("time_scale_log"):
+		var ts_log: float = float(preset["time_scale_log"])
+		%TimeScaleSlider.set_value_no_signal(ts_log)
+		_apply_time_scale(ts_log)
+
+	var target_tier: int = (count - 1) / LEVELS_PER_TIER
+	_tab_container.current_tab = target_tier
+	_refresh_row_states()
+	if _field_sim:
+		_field_sim.clear_exit_holes()
+	if _trace:
+		_trace.clear_trace()
+	if _camera_rig:
+		_camera_rig.auto_fit()

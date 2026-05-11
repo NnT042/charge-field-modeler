@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Charge Photon (4-spin)",
+    "levels": [1, 1, 1, 0.5],
+    "time_scale_log": 0.0
+  },
+  {
+    "name": "High Photon (8-spin)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 0.5],
+    "time_scale_log": 0.0
+  },
+  {
+    "name": "Electron (rest)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "time_scale_log": 1.0
+  },
+  {
+    "name": "Muon (+a+x+y)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "time_scale_log": 1.0
+  },
+  {
+    "name": "Proton (+a+x+y+z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Anti-proton (+a-x+y-z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -0.5],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Neutron (-a-x-y+z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, 0.5],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Anti-neutron (+a-x+y+z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, 0.5],
+    "time_scale_log": 2.0
+  }
+]

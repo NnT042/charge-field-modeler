@@ -6,7 +6,7 @@ use godot::prelude::*;
 
 use crate::path_trace::PathTrace;
 use crate::spin_stack::SpinStack;
-use crate::types::{level_amplitude, level_spec};
+use crate::types::{level_amplitude, level_spec, level_tier_label};
 use crate::units;
 
 /// Default trace ring-buffer capacity. At 60Hz physics tick with `min_step`
@@ -39,6 +39,8 @@ pub struct FocusParticle {
     linear_speed: f64,
     linear_offset: DVec3,
     linear_dir_preset: u8,
+    composed_pos: DVec3,
+    prev_composed_pos: DVec3,
     crest_markers: Vec<DVec3>,
     trough_markers: Vec<DVec3>,
     prev_outer_half_period: i64,
@@ -82,6 +84,8 @@ impl INode3D for FocusParticle {
             linear_speed: 0.0,
             linear_offset: DVec3::ZERO,
             linear_dir_preset: 0,
+            composed_pos: DVec3::ZERO,
+            prev_composed_pos: DVec3::ZERO,
             crest_markers: Vec::new(),
             trough_markers: Vec::new(),
             prev_outer_half_period: i64::MIN,
@@ -108,10 +112,17 @@ impl INode3D for FocusParticle {
         }
 
         let world_pos = local_pos + self.linear_offset;
-        self.path.record(world_pos, 1.0);
+        let vel = if delta > 1e-12 {
+            (world_pos - self.prev_composed_pos) / delta
+        } else {
+            DVec3::ZERO
+        };
+        self.prev_composed_pos = world_pos;
+        self.composed_pos = world_pos;
+        self.path.record(world_pos, 1.0, vel);
 
         let pole = rot * DVec3::Y;
-        self.surface_path.record(world_pos + pole, 1.0);
+        self.surface_path.record(world_pos + pole, 1.0, vel);
 
         if self.linear_enabled {
             if let Some(outer) = self.stack.outermost_orbital() {
@@ -208,6 +219,12 @@ impl FocusParticle {
         self.stack.effective_radius()
     }
 
+    /// Base solid radius (no spin envelope). Used for collision spheres.
+    #[func]
+    fn base_radius(&self) -> f64 {
+        1.0
+    }
+
     /// `time_scale` in natural-radians per real-second at v=c.
     /// TAU (~6.283) gives one revolution per second at level-1 saturation.
     #[func]
@@ -237,8 +254,7 @@ impl FocusParticle {
         if level <= 0 || level > 16 {
             return GString::default();
         }
-        let (_, t) = level_spec(level as u8);
-        GString::from(t.label())
+        GString::from(level_tier_label(level as u8))
     }
 
     /// UI helper: orbital amplitude in natural units for an absolute level.
@@ -278,6 +294,43 @@ impl FocusParticle {
             arr[i] = s.radius as f32 * WORLD_SCALE;
         }
         arr
+    }
+
+    #[func]
+    fn get_trace_segment_count(&self, max_segments: i32) -> i32 {
+        let n = self.path.samples_chronological().len();
+        if n < 2 { return 0; }
+        ((n - 1) as i32).min(max_segments.max(0))
+    }
+
+    #[func]
+    fn pack_trace_segments(&self, max_segments: i32) -> PackedFloat32Array {
+        let samples = self.path.samples_chronological();
+        let max_seg = max_segments.max(0) as usize;
+        if samples.len() < 2 {
+            return PackedFloat32Array::new();
+        }
+
+        let start = if samples.len() - 1 > max_seg {
+            samples.len() - 1 - max_seg
+        } else {
+            0
+        };
+        let seg_count = samples.len() - 1 - start;
+
+        let mut buf = Vec::with_capacity(seg_count * 16);
+        for i in start..samples.len() - 1 {
+            let a = &samples[i];
+            let b = &samples[i + 1];
+            buf.extend_from_slice(&[
+                a.pos.x as f32, a.pos.y as f32, a.pos.z as f32, a.radius as f32,
+                b.pos.x as f32, b.pos.y as f32, b.pos.z as f32, 0.0,
+                a.vel.x as f32, a.vel.y as f32, a.vel.z as f32, 0.0,
+                b.vel.x as f32, b.vel.y as f32, b.vel.z as f32, 0.0,
+            ]);
+        }
+
+        PackedFloat32Array::from(buf.as_slice())
     }
 
     #[func]
@@ -494,6 +547,27 @@ impl FocusParticle {
     fn get_wavelength_color(&self) -> Color {
         let (r, g, b) = units::wavelength_to_rgb(self.get_wavelength_nm());
         Color::from_rgb(r, g, b)
+    }
+
+    #[func]
+    fn pack_base_solid(&self) -> PackedFloat32Array {
+        let p = self.composed_pos;
+        let mut buf = PackedFloat32Array::new();
+        buf.resize(4);
+        buf[0] = p.x as f32;
+        buf[1] = p.y as f32;
+        buf[2] = p.z as f32;
+        buf[3] = 1.0;
+        buf
+    }
+
+    #[func]
+    fn get_composed_position(&self) -> Vector3 {
+        Vector3::new(
+            self.composed_pos.x as f32,
+            self.composed_pos.y as f32,
+            self.composed_pos.z as f32,
+        )
     }
 
     fn clear_all_traces(&mut self) {
