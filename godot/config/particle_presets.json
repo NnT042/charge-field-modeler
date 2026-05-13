@@ -10,7 +10,7 @@
     "time_scale_log": 0.0
   },
   {
-    "name": "Electron (rest)",
+    "name": "Electron (at rest)",
     "levels": [1, 1, 1, 1, 1, 1, 1, 1, 0.5],
     "time_scale_log": 1.0
   },
@@ -37,6 +37,16 @@
   {
     "name": "Anti-neutron (+a-x+y+z)",
     "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, 0.5],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Proton (2/3 ambient)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.667],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Anti-proton (-1/3 ambient)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -0.333],
     "time_scale_log": 2.0
   }
 ]

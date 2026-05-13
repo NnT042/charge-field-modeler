@@ -1,7 +1,7 @@
 extends CanvasLayer
-## M4 HUD: toolbar + tier-tabbed slider panel for the spin stack (levels 1-16).
+## M4 HUD: toolbar + tier-tabbed slider panel for the spin stack (levels 1-15).
 
-const PHASE_MAX_LEVEL: int = 16
+const PHASE_MAX_LEVEL: int = 15
 const LEVELS_PER_TIER: int = 4
 const TIER_COUNT: int = 4
 const BASE_TIME_SCALE: float = TAU
@@ -97,7 +97,7 @@ func _build_tier_tabs() -> void:
 	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Electron/Meson (9-12)", "Baryon (13-16)"]
+	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Electron/Meson (9-12)", "Uberon (13-15)"]
 
 	for tier in TIER_COUNT:
 		var tab_vbox: VBoxContainer = VBoxContainer.new()
@@ -112,6 +112,8 @@ func _build_tier_tabs() -> void:
 
 		for j in LEVELS_PER_TIER:
 			var level: int = tier * LEVELS_PER_TIER + j + 1
+			if level > PHASE_MAX_LEVEL:
+				break
 
 			var row: VBoxContainer = VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
@@ -244,7 +246,7 @@ func _process(_delta: float) -> void:
 
 
 func _on_slider_changed(value: float, level: int) -> void:
-	var snapped: float = _snap_to_targets(value, [-1.0, 0.0, 1.0], 0.02)
+	var snapped: float = _snap_to_targets(value, [-1.0, -2.0/3.0, -1.0/3.0, 0.0, 1.0/3.0, 2.0/3.0, 1.0], 0.02)
 	if snapped != value:
 		_sliders[level - 1].set_value_no_signal(snapped)
 		value = snapped

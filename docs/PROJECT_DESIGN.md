@@ -96,10 +96,9 @@ Spin level amplitudes (radius of the effective sphere at each level):
 | 10 | X-spin | 128 | Baryon |
 | 11 | Y-spin | 256 | Baryon |
 | 12 | Z-spin | 512 | Baryon |
-| 13 | Axial (a) | 512 | SuperBaryon |
-| 14 | X-spin | 1024 | SuperBaryon |
-| 15 | Y-spin | 2048 | SuperBaryon |
-| 16 | Z-spin | 4096 | SuperBaryon |
+| 13 | Axial (a) | 512 | Uberon |
+| 14 | X-spin | 1024 | Uberon |
+| 15 | Y-spin | 2048 | Uberon |
 
 **Note:** Each tier's axial amplitude equals the previous tier's Z amplitude, so nested tiers connect without gaps. The geometric ratio (512/64 = 8) is far from the known proton/electron mass ratio (~1820). From Mathis (elecpro.html): the 1820 ratio comes from *energy* scaling, not radius. A particle with spins a+x+y+z has energy 16385 vs 9 for a-spin only (ratio 1820.56). Geometric amplitudes define the spin *path*; the energy formula governs mass/energy readouts.
 
@@ -119,9 +118,9 @@ Display values: effective radius (m), wavelength (m), energy (eV or J), velocity
 
 ```plaintext
 struct SpinLevel {
-    level: u8,              // 1-16
+    level: u8,              // 1-15
     spin_type: SpinType,    // Axial, X, Y, Z
-    tier: Tier,             // Photon, Electron, Baryon, SuperBaryon
+    tier: Tier,             // Photon, Electron, Baryon, Uberon
     chirality: Chirality,   // CW (+) or CCW (-)
     angular_velocity: f64,  // current spin rate, range [0.0, 1.0] where 1.0 = c
     current_angle: f64,     // current rotation angle in radians
@@ -364,7 +363,7 @@ Each frame, the focus particle's position is computed by summing every active sp
 - [x] *Particle classification (B-photon → charge photon → high photon → electron → meson → muon → baryon)*
 
 ### *M3.5: Baryon Extension (Levels 13-16)*
-- [x] *Extend spin stack to 16 levels (4 tiers, SuperBaryon tier)*
+- [x] *Extend spin stack to 15 levels (4 tiers, Uberon tier capped at y₄)*
 - [x] *Baryon tab with dark red/brown ghost sphere palette*
 - [x] *Chirality-based classification (proton/neutron/anti-proton/anti-neutron from ± sign pattern)*
 - [x] *D meson and uberon labels for suprabaryon levels*

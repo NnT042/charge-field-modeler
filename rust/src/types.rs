@@ -1,11 +1,13 @@
 //! Shared types for the spin stack: spin axis kinds, tier hierarchy, and the
 //! geometric mappings (level → spin type, level → tier, level → amplitude).
 //!
-//! Per Mathis, levels 1..=16 cycle Axial / X / Y / Z four times across four
-//! tiers. Levels 1-8 are all photon spins (charge photon + high photon).
+//! Per Mathis, levels 1..=15 cycle Axial / X / Y / Z across four tiers.
+//! Levels 1-8 are all photon spins (charge photon + high photon).
 //! Levels 9-12 span electron → meson → baryon-at-rest.
-//! Levels 13-16 are suprabaryon: 13 is the proton engine starter,
-//! 14-16 are unstable uberon territory (D meson and above).
+//! Levels 13-15 are suprabaryon (uberon): 13 is the proton engine
+//! starter, 14 is D meson, 15 is unstable uberon territory.
+//! Level 16 (z₄) is excluded — amplitude 4096 overflows display and
+//! per Mathis super-baryon z-spins are collision-only transients.
 
 use glam::{DQuat, DVec3};
 
@@ -98,7 +100,7 @@ impl Tier {
     }
 }
 
-/// For an absolute level index 1..=16, return the (spin type, tier) pair.
+/// For an absolute level index 1..=15, return the (spin type, tier) pair.
 /// Levels outside this range are clamped at the super-baryon tier.
 pub fn level_spec(level: u8) -> (SpinType, Tier) {
     let tier = match level {
@@ -124,7 +126,7 @@ pub fn level_tier_label(level: u8) -> &'static str {
         5..=8 => "high photon",
         9 => "electron",
         10..=12 => "meson",
-        13..=16 => "baryon",
+        13..=15 => "uberon",
         _ => "(unknown)",
     }
 }
@@ -137,7 +139,7 @@ pub fn level_tier_label(level: u8) -> &'static str {
 ///   Tier 1 (charge photon):    1,   2,   4,    8
 ///   Tier 2 (high photon):      8,  16,  32,   64
 ///   Tier 3 (meson):           64, 128, 256,  512
-///   Tier 4 (baryon):         512,1024,2048, 4096
+///   Tier 4 (uberon):         512,1024,2048  (capped at level 15)
 pub fn level_amplitude(level: u8) -> f64 {
     if level == 0 || level > 16 {
         return 0.0;

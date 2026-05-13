@@ -43,7 +43,20 @@ When a particle with stacked spins has linear motion, the outermost spin traces 
 
 ### Chirality
 
-Each spin level can be clockwise (+) or counterclockwise (-). The combination of chiralities across all levels determines the particle type (proton vs neutron vs anti-proton vs anti-neutron) at the baryon scale.
+Each spin level can be clockwise (+) or counterclockwise (-). Per Mathis (quark.html): "I assign clockwise to +a, and I do this simply to keep the right-hand rule." Our implementation matches: `DQuat::from_axis_angle` with positive angle produces CW rotation when viewed from behind the direction of travel.
+
+The combination of chiralities across all levels determines the particle type (proton vs neutron vs anti-proton vs anti-neutron) at the baryon scale.
+
+### Angular Velocity Convention
+
+Our sliders use `v` in natural units where `|v| = 1.0` is c (speed of light). The simulation computes `ω = v / orbit_radius`, so outer levels rotate slower. This uses the standard v=ωr formula. Mathis corrects this to v=ω/r for quantum particles, but the correction only affects absolute SI rates (absorbed by the time_scale slider) — the relative scaling between levels is preserved either way.
+
+### Pi = 4 (Kinematic vs Geometric)
+
+Mathis argues kinematic circumference is 8r, not 2πr. We use both correctly:
+- **Energy formula**: uses 8r per level (kinematic — measures energy from motion through the orbit)
+- **Wavelength readout**: uses 2πr (geometric — the spatial period of the traced wave)
+- **advance()**: uses standard angular rate (the ratio between levels is unchanged by the π correction)
 
 ---
 
@@ -53,10 +66,12 @@ Each spin level can be clockwise (+) or counterclockwise (-). The combination of
 A base photon with 1-4 spin levels. Travels at c. The z-spin creates the electrical wavelength. Higher-energy photons have more spin levels active. A 4-level photon is a high-energy photon (UV range and above, depending on base radius).
 
 ### Electron Tier (Levels 5-8)
-The 4-level photon structure is treated as a new effective sphere, and a second set of four spins is stacked on top. By level 8, the structure is too large and complex to sustain travel at c. It has rest mass. It is an electron. The electron's charge is about 1/1836 of the proton's charge, proportional to its smaller surface area.
+The 4-level photon structure is treated as a new effective sphere, and a second set of four spins is stacked on top. Level 8 (z₂) completes the "non-spinning electron" — all photon-tier spins saturated, but no baryon-level spin yet. From Mathis (mit.pdf): spin levels exist structurally but can be "torpid" (not energized), which maps to our ω=0 mechanic.
 
 ### Baryon Tier (Levels 9-12)
-A third set of four spins on top of the electron-tier structure. This produces protons and neutrons. The difference between them is the combination of spin chiralities:
+Level 9 is the **electron at rest** — it adds baryon-tier axial spin (energy = 9 in natural units). From Mathis (photon.html): "The electron is spinning axially; the proton is spinning axially plus x, y, and z." The proton adds x, y, z spins at the baryon tier (levels 10-12), giving energy 16385. Ratio: 16385/9 = 1820.56 ≈ the measured nucleon/electron mass ratio.
+
+The difference between proton and neutron is the combination of spin chiralities:
 
 **Proton spin states (from QCD overhaul paper):**
 - +a+x+y+z
@@ -89,6 +104,9 @@ Emission escapes but upside-down (reversed chirality relative to proton emission
 - -a+x-y-z
 
 Emission is trapped but does not fully cancel — spin energy of the trapped photons is not reversed, leading to a slight mass difference from the neutron.
+
+### Uberon Tier (Levels 13-15)
+Levels above the baryon z-spin. From Mathis (meson.html): "'Meson' is not a logical term for a particle above the baryon mass, so I will call these particles 'uberons.'" Level 13 is the proton engine starter (baryon-tier axial precession). Level 14 is D meson territory (~1860 MeV). Level 15 is unstable uberon. These are collision-only transients — "The proton cannot add extra spins above the z-spin without creating instability." Level 16 (z₄, amplitude 4096) is excluded from the simulation: it overflows the display and has no stable physical analogue.
 
 ---
 
@@ -166,6 +184,19 @@ The "Earth ground level" preset should use:
 - 67% CW / 33% CCW photon ratio
 - A net field direction in one plane (representing the summed proton emission direction of nearby matter)
 - Thermal energy distribution
+
+### Chirality-Dependent Collisions (Not Yet Implemented)
+
+Per Mathis, charge photon collisions are mechanically spin-dependent. From neut2.pdf: "collisions affect only the outer spins... The spins offset, like little gears." Two distinct outcomes depending on chirality match:
+
+- **Same chirality, opposing travel** (double-negative): spins augment. Energy transfers from linear to spin. Softer bounce, photon exits slower with more spin energy. (Inverse Compton scattering.)
+- **Opposite chirality, opposing travel** (single-negative): spins cancel. Energy transfers from spin to linear. Harder bounce, photon exits faster with less spin. (Compton scattering.)
+
+From halbach.pdf: "think of them as cogs — they don't match, they catch, and force one another apart... repulsion implies a real loss of local spin. Energy has transferred from spin energy to linear."
+
+The exit angle is affected because collisions are tangential edge hits. Same-spin deflects along the spin direction; opposite-spin deflects against it.
+
+Our field sim currently uses pure specular reflection (no chirality dependence). Implementing this requires: (1) reading the existing chirality bit during collision, (2) modifying exit velocity based on match/mismatch, (3) coupling collision statistics back into the spin stack to allow outer-level velocity to equilibrate.
 
 ---
 

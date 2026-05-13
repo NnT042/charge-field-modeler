@@ -120,11 +120,12 @@ impl SpinStack {
     }
 
     /// Push the next level onto the stack if the topmost is saturated and
-    /// we're not already at level 16. Returns the new level index, or None.
-    /// The new level starts at ω=0 so the user can bring it up manually.
+    /// we're not already at level 15. Level 16 (z₄) is excluded: its
+    /// amplitude (4096) overflows the display, and per Mathis super-baryon
+    /// z-spins are collision-only transients that don't persist.
     pub fn activate_next(&mut self) -> Option<u8> {
         let top = self.levels.last()?;
-        if !top.is_at_c() || top.level >= 16 {
+        if !top.is_at_c() || top.level >= 15 {
             return None;
         }
         let next = top.level + 1;
@@ -135,7 +136,7 @@ impl SpinStack {
     pub fn can_activate_next(&self) -> bool {
         self.levels
             .last()
-            .map_or(false, |l| l.is_at_c() && l.level < 16)
+            .map_or(false, |l| l.is_at_c() && l.level < 15)
     }
 
     /// World-position of the outermost ghost sphere's center. In the
@@ -318,15 +319,14 @@ impl SpinStack {
             1..=3 => "Charge photon (partial)",
             4 => "Charge photon",
             5..=7 => "High photon",
-            8 => "Electron (at rest)",
-            9 => "Electron (a-spin)",
+            8 => "Non-spinning electron",
+            9 => "Electron (at rest)",
             10 => "Meson (a+x)",
             11 => "Muon (a+x+y)",
             12 => self.baryon_type(),
-            13 => "D meson (a\u{2084})",
-            14 => "Uberon (a+x)",
-            15 => "Uberon (a+x+y)",
-            16 => "Uberon (a+x+y+z)",
+            13 => "Baryon (a\u{2084})",
+            14 => "D meson (a\u{2084}+x\u{2084})",
+            15 => "Uberon (a\u{2084}+x\u{2084}+y\u{2084})",
             _ => "(unknown)",
         }
     }
