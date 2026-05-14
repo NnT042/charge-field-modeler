@@ -43,11 +43,21 @@ var _running: bool = false
 var _net_impulse: Vector3 = Vector3.ZERO
 var _collision_count: int = 0
 var _show_exit_holes: bool = false
+var _show_collision_pointers: bool = false
+var _show_heatmap: bool = false
 var _cloud_blanked: bool = false
 var _stream_mode: bool = false
 
 var _hole_multimesh: MultiMesh
 var _hole_instance: MultiMeshInstance3D
+
+var _pointer_multimesh: MultiMesh
+var _pointer_instance: MultiMeshInstance3D
+
+var _heatmap_sphere: MeshInstance3D
+var _heatmap_image: Image
+var _heatmap_texture: ImageTexture
+var _heatmap_material: ShaderMaterial
 
 
 func _ready() -> void:
@@ -62,6 +72,8 @@ func _ready() -> void:
 		_rust_sim.call("adapt_sim_radius", eff_r)
 
 	_setup_exit_hole_renderer()
+	_setup_pointer_renderer()
+	_setup_heatmap_sphere()
 
 	_rd = RenderingServer.create_local_rendering_device()
 	_update_shader = _load_shader("res://shaders/compute/field_update.glsl")
@@ -105,9 +117,9 @@ func _physics_process(delta: float) -> void:
 
 		var seg_count: int = 0
 		if _focus:
-			seg_count = int(_focus.call("get_trace_segment_count", 1024))
+			seg_count = int(_focus.call("get_trace_segment_count", 4096))
 			if seg_count > 0:
-				var trace_buf: PackedFloat32Array = _focus.call("pack_trace_segments", 1024)
+				var trace_buf: PackedFloat32Array = _focus.call("pack_trace_segments", 4096)
 				var trace_bytes: PackedByteArray = trace_buf.to_byte_array()
 				_rd.buffer_update(_trace_segments_buffer, 0, trace_bytes.size(), trace_bytes)
 
@@ -145,7 +157,7 @@ func _physics_process(delta: float) -> void:
 		var output: PackedByteArray = _rd.buffer_get_data(_photon_buffer)
 		_rust_sim.call("parse_readback", output)
 
-		if _show_exit_holes:
+		if _show_exit_holes or _show_collision_pointers or _show_heatmap:
 			var impulse_raw: PackedByteArray = _rd.buffer_get_data(_impulse_buffer)
 			_rust_sim.call("detect_exit_holes_from_impulses", impulse_raw)
 
@@ -157,8 +169,8 @@ func _physics_process(delta: float) -> void:
 	if _focus:
 		eff_r = float(_focus.call("effective_radius"))
 
-	# Render cloud (skip buffer build when blanked to save CPU)
-	if not _cloud_blanked:
+	# Render cloud (only rebuild buffer when sim is running and not blanked)
+	if _running and not _cloud_blanked:
 		var total: int = int(_rust_sim.call("get_total_display_count"))
 		if _renderer and total > 0:
 			_renderer.call("set_instance_count", total)
@@ -167,8 +179,8 @@ func _physics_process(delta: float) -> void:
 		elif _renderer:
 			_renderer.call("set_instance_count", 0)
 
-	# Render exit holes on ghost sphere
-	if _show_exit_holes:
+	# Render exit holes on ghost sphere (only rebuild while sim produces new data)
+	if _show_exit_holes and _running:
 		var hole_count: int = int(_rust_sim.call("get_exit_hole_count"))
 		if hole_count > 0:
 			_hole_multimesh.instance_count = hole_count
@@ -176,8 +188,24 @@ func _physics_process(delta: float) -> void:
 			_hole_multimesh.set_buffer(hole_buf)
 		else:
 			_hole_multimesh.instance_count = 0
-	else:
+	elif not _show_exit_holes:
 		_hole_multimesh.instance_count = 0
+
+	# Render collision pointers (only rebuild while sim produces new data)
+	if _show_collision_pointers and _running:
+		var ptr_count: int = int(_rust_sim.call("get_collision_pointer_count"))
+		if ptr_count > 0:
+			_pointer_multimesh.instance_count = ptr_count * 2
+			var ptr_buf: PackedFloat32Array = _rust_sim.call("build_collision_pointers_buffer", eff_r)
+			_pointer_multimesh.set_buffer(ptr_buf)
+		else:
+			_pointer_multimesh.instance_count = 0
+	elif not _show_collision_pointers:
+		_pointer_multimesh.instance_count = 0
+
+	# Update heatmap sphere (every 10 frames to save CPU)
+	if _show_heatmap and _running and _frame_number % 10 == 0:
+		_update_heatmap_texture(eff_r)
 
 
 func start_field(count: int = -1) -> void:
@@ -201,10 +229,14 @@ func start_field(count: int = -1) -> void:
 
 	_running = true
 	_frame_number = 0
+	if _focus:
+		_focus.call("freeze_trace")
 
 
 func stop_field() -> void:
 	_running = false
+	if _focus:
+		_focus.call("unfreeze_trace")
 
 
 func reset_field() -> void:
@@ -217,6 +249,9 @@ func reset_field() -> void:
 	_rust_sim.call("clear_field")
 	if _renderer:
 		_renderer.call("set_instance_count", 0)
+	if _focus:
+		_focus.call("unfreeze_trace")
+	_clear_heatmap_visual()
 
 
 func is_running() -> bool:
@@ -279,6 +314,45 @@ func set_show_exit_holes(show: bool) -> void:
 		_rust_sim.call("clear_exit_holes")
 
 
+func set_show_collision_pointers(show: bool) -> void:
+	_show_collision_pointers = show
+	if not show:
+		_pointer_multimesh.instance_count = 0
+		_rust_sim.call("clear_collision_pointers")
+
+
+func set_show_heatmap(show: bool) -> void:
+	_show_heatmap = show
+	_heatmap_sphere.visible = show
+	if not show:
+		_rust_sim.call("clear_heatmap")
+
+
+func get_mean_emission_angle() -> float:
+	return float(_rust_sim.call("get_mean_emission_angle"))
+
+
+func get_heatmap_total_hits() -> int:
+	return int(_rust_sim.call("get_heatmap_total_hits"))
+
+
+func _update_heatmap_texture(eff_r: float) -> void:
+	var buf: PackedFloat32Array = _rust_sim.call("get_heatmap_buffer")
+	if buf.size() == 0:
+		return
+	var dims: Vector2 = _rust_sim.call("get_heatmap_dimensions")
+	var w: int = int(dims.x)
+	var h: int = int(dims.y)
+
+	var byte_buf: PackedByteArray = buf.to_byte_array()
+	_heatmap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGBF, byte_buf)
+	_heatmap_texture.update(_heatmap_image)
+
+	# Scale sphere to match ghost sphere outer radius
+	var scale: float = eff_r * 0.5 + 0.05
+	_heatmap_sphere.scale = Vector3(scale, scale, scale)
+
+
 func _create_buffers() -> void:
 	_cleanup_buffers()
 
@@ -308,8 +382,8 @@ func _create_buffers() -> void:
 	rp.encode_u32(0, _photon_count)
 	_reduce_params_buffer = _rd.uniform_buffer_create(16, rp)
 
-	# Trace segments buffer: 1024 segments * 64 bytes = 64KB
-	var trace_size: int = 1024 * 64
+	# Trace segments buffer: 4096 segments * 64 bytes = 256KB
+	var trace_size: int = 4096 * 64
 	_trace_segments_buffer = _rd.storage_buffer_create(trace_size)
 
 	# --- Uniform sets ---
@@ -416,6 +490,55 @@ func _setup_exit_hole_renderer() -> void:
 	_hole_instance = MultiMeshInstance3D.new()
 	_hole_instance.multimesh = _hole_multimesh
 	add_child(_hole_instance)
+
+
+func _setup_pointer_renderer() -> void:
+	var shader: Shader = load("res://shaders/visual/field_dot.gdshader")
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.0, 1.0)
+	quad.material = mat
+
+	_pointer_multimesh = MultiMesh.new()
+	_pointer_multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	_pointer_multimesh.use_colors = true
+	_pointer_multimesh.mesh = quad
+	_pointer_multimesh.instance_count = 0
+
+	_pointer_instance = MultiMeshInstance3D.new()
+	_pointer_instance.multimesh = _pointer_multimesh
+	add_child(_pointer_instance)
+
+
+func _setup_heatmap_sphere() -> void:
+	var shader: Shader = load("res://shaders/visual/heatmap_sphere.gdshader")
+	_heatmap_material = ShaderMaterial.new()
+	_heatmap_material.shader = shader
+
+	_heatmap_image = Image.create(64, 32, false, Image.FORMAT_RGBF)
+	_heatmap_texture = ImageTexture.create_from_image(_heatmap_image)
+	_heatmap_material.set_shader_parameter("heatmap_texture", _heatmap_texture)
+
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = 48
+	sphere.rings = 24
+
+	_heatmap_sphere = MeshInstance3D.new()
+	_heatmap_sphere.mesh = sphere
+	_heatmap_sphere.material_override = _heatmap_material
+	_heatmap_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_heatmap_sphere.visible = false
+	add_child(_heatmap_sphere)
+
+
+func _clear_heatmap_visual() -> void:
+	_heatmap_image = Image.create(64, 32, false, Image.FORMAT_RGBF)
+	_heatmap_texture.update(_heatmap_image)
+	_heatmap_sphere.visible = _show_heatmap
 
 
 func _cleanup_buffers() -> void:

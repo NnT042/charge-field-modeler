@@ -23,21 +23,24 @@ var _field_start_btn: Button
 var _field_stop_btn: Button
 var _field_reset_btn: Button
 var _field_count_label: Label
-var _collision_label: Label
 var _field_count_spin: SpinBox
 var _anticharge_slider: HSlider
 var _anticharge_label: Label
 var _dir_buttons: Dictionary = {}
-var _parallel_btn: Button
 var _exit_holes_btn: Button
+var _pointer_btn: Button
+var _heatmap_btn: Button
+var _chirality_btn: Button
 var _blank_btn: Button
 var _stream_btn: Button
+var _emission_label: Label
 var _preset_dropdown: OptionButton
 var _presets: Array = []
 var _tab_container: TabContainer
 var _level_labels: Array[Label] = []
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
+var _spinboxes: Array[SpinBox] = []
 var _reverse_buttons: Array[Button] = []
 var _annul_buttons: Array[Button] = []
 var _paused: bool = false
@@ -62,6 +65,7 @@ func _ready() -> void:
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
 		_sliders[i].value_changed.connect(_on_slider_changed.bind(level))
+		_spinboxes[i].value_changed.connect(_on_spinbox_changed.bind(level))
 		_reverse_buttons[i].pressed.connect(_on_reverse_pressed.bind(level))
 		_annul_buttons[i].pressed.connect(_on_annul_pressed.bind(level))
 
@@ -151,11 +155,22 @@ func _build_tier_tabs() -> void:
 			_sliders.append(slider)
 
 			var val_lbl: Label = Label.new()
-			val_lbl.custom_minimum_size = Vector2(80, 0)
+			val_lbl.custom_minimum_size = Vector2(48, 0)
 			val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			val_lbl.text = "—"
 			slider_row.add_child(val_lbl)
 			_value_labels.append(val_lbl)
+
+			var spinbox: SpinBox = SpinBox.new()
+			spinbox.min_value = -1.0
+			spinbox.max_value = 1.0
+			spinbox.step = 0.001
+			spinbox.custom_minimum_size = Vector2(80, 0)
+			spinbox.allow_greater = false
+			spinbox.allow_lesser = false
+			spinbox.tooltip_text = "Type exact velocity (c units)"
+			slider_row.add_child(spinbox)
+			_spinboxes.append(spinbox)
 
 			row.add_child(slider_row)
 			tab_vbox.add_child(row)
@@ -184,6 +199,8 @@ func _process(_delta: float) -> void:
 			var v: float = float(_focus.call("get_level_velocity", level))
 			if not _sliders[i].has_focus():
 				_sliders[i].set_value_no_signal(v)
+			if not _spinboxes[i].get_line_edit().has_focus():
+				_spinboxes[i].set_value_no_signal(v)
 			_value_labels[i].text = "%+0.3f c" % v
 		else:
 			_value_labels[i].text = "—"
@@ -246,10 +263,30 @@ func _process(_delta: float) -> void:
 
 
 func _on_slider_changed(value: float, level: int) -> void:
-	var snapped: float = _snap_to_targets(value, [-1.0, -2.0/3.0, -1.0/3.0, 0.0, 1.0/3.0, 2.0/3.0, 1.0], 0.02)
+	var snapped: float = _snap_to_targets(value, [-1.0, -0.5, 0.0, 0.5, 1.0], 0.02)
 	if snapped != value:
 		_sliders[level - 1].set_value_no_signal(snapped)
 		value = snapped
+	_spinboxes[level - 1].set_value_no_signal(value)
+	if _focus == null:
+		return
+	var active: int = int(_focus.call("level_count"))
+	if level > active:
+		for prev in range(1, level):
+			if prev > active:
+				_focus.call("activate_next")
+			_focus.call("set_level_velocity", prev, 1.0)
+			_sliders[prev - 1].set_value_no_signal(1.0)
+		if int(_focus.call("level_count")) < level:
+			_focus.call("activate_next")
+		if _field_sim:
+			_field_sim.clear_exit_holes()
+		_refresh_row_states()
+	_focus.call("set_level_velocity", level, value)
+
+
+func _on_spinbox_changed(value: float, level: int) -> void:
+	_sliders[level - 1].set_value_no_signal(value)
 	if _focus == null:
 		return
 	var active: int = int(_focus.call("level_count"))
@@ -276,6 +313,7 @@ func _on_reverse_pressed(level: int) -> void:
 	var v: float = float(_focus.call("get_level_velocity", level))
 	_focus.call("set_level_velocity", level, -v)
 	_sliders[level - 1].set_value_no_signal(-v)
+	_spinboxes[level - 1].set_value_no_signal(-v)
 
 
 func _on_annul_pressed(level: int) -> void:
@@ -287,6 +325,7 @@ func _on_annul_pressed(level: int) -> void:
 	_focus.call("truncate_to_level", level)
 	for i in range(level - 1, PHASE_MAX_LEVEL):
 		_sliders[i].set_value_no_signal(0.0)
+		_spinboxes[i].set_value_no_signal(0.0)
 	var target_level: int = max(1, level - 1)
 	var target_tier: int = (target_level - 1) / LEVELS_PER_TIER
 	_tab_container.current_tab = target_tier
@@ -380,6 +419,7 @@ func _on_reset_pressed() -> void:
 	_focus.call("reset_stack")
 	for i in PHASE_MAX_LEVEL:
 		_sliders[i].set_value_no_signal(0.0)
+		_spinboxes[i].set_value_no_signal(0.0)
 	%TimeScaleSlider.set_value_no_signal(0.0)
 	_apply_time_scale(0.0)
 	%LinearSpeedSlider.set_value_no_signal(0.0)
@@ -409,6 +449,8 @@ func _refresh_row_states() -> void:
 		var level: int = i + 1
 		var is_active: bool = level <= active
 		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
+		_spinboxes[i].editable = true
+		_spinboxes[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
 		_reverse_buttons[i].disabled = not is_active
 		_annul_buttons[i].disabled = not is_active
 
@@ -444,12 +486,6 @@ func _build_field_controls() -> VBoxContainer:
 	_field_count_label = Label.new()
 	_field_count_label.text = "Field: off"
 	row1.add_child(_field_count_label)
-
-	_collision_label = Label.new()
-	_collision_label.text = ""
-	_collision_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_collision_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	row1.add_child(_collision_label)
 
 	wrapper.add_child(row1)
 
@@ -516,17 +552,6 @@ func _build_field_controls() -> VBoxContainer:
 	var sep2: VSeparator = VSeparator.new()
 	row3.add_child(sep2)
 
-	_parallel_btn = Button.new()
-	_parallel_btn.text = "Scatter"
-	_parallel_btn.toggle_mode = true
-	_parallel_btn.button_pressed = true
-	_parallel_btn.tooltip_text = "ON = mostly-parallel (some scatter). OFF = all-parallel (exact direction)"
-	_parallel_btn.pressed.connect(_on_parallel_toggled)
-	row3.add_child(_parallel_btn)
-
-	var sep3: VSeparator = VSeparator.new()
-	row3.add_child(sep3)
-
 	_exit_holes_btn = Button.new()
 	_exit_holes_btn.text = "Exit dots"
 	_exit_holes_btn.toggle_mode = true
@@ -551,7 +576,36 @@ func _build_field_controls() -> VBoxContainer:
 	_stream_btn.pressed.connect(_on_stream_toggled)
 	row3.add_child(_stream_btn)
 
+	_pointer_btn = Button.new()
+	_pointer_btn.text = "Hits"
+	_pointer_btn.toggle_mode = true
+	_pointer_btn.button_pressed = false
+	_pointer_btn.tooltip_text = "Show collision hit points with outgoing direction"
+	_pointer_btn.pressed.connect(_on_pointer_toggled)
+	row3.add_child(_pointer_btn)
+
+	_heatmap_btn = Button.new()
+	_heatmap_btn.text = "Heatmap"
+	_heatmap_btn.toggle_mode = true
+	_heatmap_btn.button_pressed = false
+	_heatmap_btn.tooltip_text = "Accumulate emission pattern as heatmap on sphere"
+	_heatmap_btn.pressed.connect(_on_heatmap_toggled)
+	row3.add_child(_heatmap_btn)
+
+	_chirality_btn = Button.new()
+	_chirality_btn.text = "Chiral"
+	_chirality_btn.toggle_mode = true
+	_chirality_btn.button_pressed = true
+	_chirality_btn.tooltip_text = "Chirality-dependent collision angles (same-spin=soft, opposite=hard)"
+	_chirality_btn.pressed.connect(_on_chirality_toggled)
+	row3.add_child(_chirality_btn)
+
 	wrapper.add_child(row3)
+
+	_emission_label = Label.new()
+	_emission_label.text = ""
+	wrapper.add_child(_emission_label)
+
 	return wrapper
 
 
@@ -584,9 +638,9 @@ func _on_field_reset_pressed() -> void:
 func _reset_field_controls() -> void:
 	for key: String in _dir_buttons:
 		_dir_buttons[key].button_pressed = false
-	_parallel_btn.button_pressed = true
-	_parallel_btn.text = "Scatter"
 	_exit_holes_btn.button_pressed = false
+	_pointer_btn.button_pressed = false
+	_heatmap_btn.button_pressed = false
 	_blank_btn.button_pressed = false
 	_stream_btn.button_pressed = false
 	_anticharge_slider.set_value_no_signal(33.0)
@@ -594,9 +648,11 @@ func _reset_field_controls() -> void:
 	if _field_sim:
 		_field_sim.set_direction_mask(0)
 		_field_sim.set_direction_strength(0.0)
-		_field_sim.set_direction_scatter(0.3)
+		_field_sim.set_direction_scatter(0.0)
 		_field_sim.set_photon_ratio(0.67)
 		_field_sim.set_show_exit_holes(false)
+		_field_sim.set_show_collision_pointers(false)
+		_field_sim.set_show_heatmap(false)
 		_field_sim.set_cloud_blanked(false)
 		_field_sim.set_stream_mode(false)
 
@@ -609,11 +665,6 @@ func _on_anticharge_changed(value: float) -> void:
 
 
 func _on_direction_toggled() -> void:
-	_apply_field_direction()
-
-
-func _on_parallel_toggled() -> void:
-	_parallel_btn.text = "Scatter" if _parallel_btn.button_pressed else "Parallel"
 	_apply_field_direction()
 
 
@@ -632,6 +683,22 @@ func _on_stream_toggled() -> void:
 		_field_sim.set_stream_mode(_stream_btn.button_pressed)
 
 
+func _on_pointer_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_show_collision_pointers(_pointer_btn.button_pressed)
+
+
+func _on_heatmap_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_show_heatmap(_heatmap_btn.button_pressed)
+
+
+func _on_chirality_toggled() -> void:
+	if _field_sim:
+		var strength: float = 0.15 if _chirality_btn.button_pressed else 0.0
+		_field_sim.call("set_chirality_strength", strength)
+
+
 func _apply_field_direction() -> void:
 	if not _field_sim:
 		return
@@ -647,13 +714,13 @@ func _apply_field_direction() -> void:
 
 	if mask == 0:
 		_field_sim.set_direction_strength(0.0)
-		_field_sim.set_direction_scatter(0.3)
 	else:
 		_field_sim.set_direction_strength(1.0)
-		if _parallel_btn.button_pressed:
-			_field_sim.set_direction_scatter(0.3)
-		else:
-			_field_sim.set_direction_scatter(0.0)
+	_field_sim.set_direction_scatter(0.0)
+
+
+func _show_heatmap_readout() -> bool:
+	return _heatmap_btn.button_pressed or _exit_holes_btn.button_pressed
 
 
 func _update_field_readout() -> void:
@@ -663,12 +730,15 @@ func _update_field_readout() -> void:
 	if _field_sim.is_running():
 		var count: int = _field_sim.get_photon_count()
 		_field_count_label.text = "Field: %dK" % (count / 1000)
-		var collisions: int = _field_sim.get_collision_count()
-		var impulse: Vector3 = _field_sim.get_net_impulse()
-		_collision_label.text = "Cloud hits: %d  |F|: %.3f" % [collisions, impulse.length()]
+		if _show_heatmap_readout():
+			var angle: float = _field_sim.get_mean_emission_angle()
+			var hits: int = _field_sim.get_heatmap_total_hits()
+			_emission_label.text = "Mean exit angle: %.1f°  (n=%d)" % [angle, hits]
+		else:
+			_emission_label.text = ""
 	else:
 		_field_count_label.text = "Field: off"
-		_collision_label.text = ""
+		_emission_label.text = ""
 
 
 func _format_level_label(level: int) -> String:
@@ -735,6 +805,7 @@ func _on_preset_selected(index: int) -> void:
 	_focus.call("reset_stack")
 	for i in PHASE_MAX_LEVEL:
 		_sliders[i].set_value_no_signal(0.0)
+		_spinboxes[i].set_value_no_signal(0.0)
 
 	var count: int = mini(levels.size(), PHASE_MAX_LEVEL)
 	for i in count:
@@ -750,6 +821,7 @@ func _on_preset_selected(index: int) -> void:
 			_focus.call("activate_next")
 		_focus.call("set_level_velocity", level, v)
 		_sliders[i].set_value_no_signal(v)
+		_spinboxes[i].set_value_no_signal(v)
 
 	if preset.has("time_scale_log"):
 		var ts_log: float = float(preset["time_scale_log"])

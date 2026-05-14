@@ -374,12 +374,19 @@ Each frame, the focus particle's position is computed by summing every active sp
 - [ ] *GPU-accelerated position computation (for future field sim at scale)*
 
 ### *M4: Field Simulation*
-- [ ] *GPU compute pipeline for field photon updates*
-- [ ] *Collision detection against focus particle*
-- [ ] *Impulse tracking and net force computation*
+- [x] *GPU compute pipeline for field photon updates*
+- [x] *Collision detection against focus particle (trace capsule + ghost sphere)*
+- [x] *Impulse tracking and net force computation*
+- [x] *Point sprite rendering for field photons (MultiMesh + billboard shader)*
+- [x] *Collision statistics display*
+- [x] *Rain mode, stream mode, exit hole visualization*
+- [x] *Direction controls (axis buttons, strength, scatter)*
+- [x] *Chirality ratio slider (anti-charge mixing)*
+- [x] *Exit hole ring-buffer cap (perf fix: capped at photon_count)*
+- [x] *Trace freeze during field sim (perf fix: no geometry growth during sim)*
+- [x] *Velocity SpinBox for fine-tuning outer spin values*
+- [x] *Trace capsule radius scales with effective_radius*
 - [ ] *Field presets (Earth, Solar Wind, Vacuum, Custom)*
-- [ ] *Point sprite rendering for field photons*
-- [ ] *Collision statistics display*
 
 ### *M5: Multi-Particle Interactions*
 - [ ] *Support multiple focus particles (each with full spin stack)*

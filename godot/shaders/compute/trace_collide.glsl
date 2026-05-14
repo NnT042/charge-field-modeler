@@ -85,6 +85,19 @@ void main() {
             if (vn < 0.0) {
                 v_rel = v_rel - 2.0 * vn * best_normal;
                 vel = v_rel + best_surf_vel;
+
+                // Chirality-dependent tangent deflection
+                float chi_str = spawn_params.z;
+                if (chi_str > 0.0) {
+                    float surf_speed = length(best_surf_vel);
+                    if (surf_speed > 1e-6) {
+                        vec3 tangent = best_surf_vel / surf_speed;
+                        // Photon chirality: bit 0. CW=0 deflects along tangent, CCW=1 against.
+                        float chi_sign = ((flags & 1u) == 0u) ? 1.0 : -1.0;
+                        vel += chi_sign * tangent * chi_str;
+                    }
+                }
+
                 vel = normalize(vel);
                 pos = best_closest + best_normal * (best_radius + 0.01);
                 impulse = vec4(-2.0 * vn * best_normal * energy, 1.0);

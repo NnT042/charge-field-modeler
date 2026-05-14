@@ -16,6 +16,9 @@ const PATH_TRACE_CAPACITY: usize = 8192;
 /// Default minimum movement (natural units) between consecutive recorded
 /// samples. The base photon has radius 1, so 0.005 r is fine but not absurd.
 const PATH_TRACE_MIN_STEP: f64 = 0.005;
+/// Fraction of effective_radius used as trace capsule collision radius.
+/// Balances hit rate (~2-8% in rain mode) against spirograph structure.
+const TRACE_CAPSULE_SCALE: f32 = 0.05;
 /// Natural-to-world-unit scale factor. The photon mesh has Godot radius 0.5,
 /// representing a photon of natural radius 1 — so 1 natural unit = 0.5 world
 /// units. All positions returned to GDScript are multiplied by this factor.
@@ -119,10 +122,11 @@ impl INode3D for FocusParticle {
         };
         self.prev_composed_pos = world_pos;
         self.composed_pos = world_pos;
-        self.path.record(world_pos, 1.0, vel);
+        let trace_radius = eff_r * TRACE_CAPSULE_SCALE as f64;
+        self.path.record(world_pos, trace_radius, vel);
 
         let pole = rot * DVec3::Y;
-        self.surface_path.record(world_pos + pole, 1.0, vel);
+        self.surface_path.record(world_pos + pole, trace_radius, vel);
 
         if self.linear_enabled {
             if let Some(outer) = self.stack.outermost_orbital() {
@@ -318,12 +322,15 @@ impl FocusParticle {
         };
         let seg_count = samples.len() - 1 - start;
 
+        let eff_r = self.stack.effective_radius().max(1.0) as f32;
+        let collision_radius = (eff_r * TRACE_CAPSULE_SCALE).max(1.0);
+
         let mut buf = Vec::with_capacity(seg_count * 16);
         for i in start..samples.len() - 1 {
             let a = &samples[i];
             let b = &samples[i + 1];
             buf.extend_from_slice(&[
-                a.pos.x as f32, a.pos.y as f32, a.pos.z as f32, a.radius as f32,
+                a.pos.x as f32, a.pos.y as f32, a.pos.z as f32, collision_radius,
                 b.pos.x as f32, b.pos.y as f32, b.pos.z as f32, 0.0,
                 a.vel.x as f32, a.vel.y as f32, a.vel.z as f32, 0.0,
                 b.vel.x as f32, b.vel.y as f32, b.vel.z as f32, 0.0,
@@ -331,6 +338,63 @@ impl FocusParticle {
         }
 
         PackedFloat32Array::from(buf.as_slice())
+    }
+
+    #[func]
+    fn build_capsule_debug_buffer(&self, max_segments: i32) -> PackedFloat32Array {
+        let samples = self.path.samples_chronological();
+        let max_seg = max_segments.max(0) as usize;
+        if samples.len() < 2 {
+            return PackedFloat32Array::new();
+        }
+
+        let start = if samples.len() - 1 > max_seg {
+            samples.len() - 1 - max_seg
+        } else {
+            0
+        };
+        let seg_count = samples.len() - 1 - start;
+        let eff_r = self.stack.effective_radius().max(1.0) as f32;
+        let collision_radius = (eff_r * TRACE_CAPSULE_SCALE).max(1.0) * WORLD_SCALE;
+
+        let floats_per = 16usize;
+        let mut vec: Vec<f32> = Vec::with_capacity(seg_count * 2 * floats_per);
+
+        for i in start..samples.len() - 1 {
+            let a = &samples[i];
+            let b = &samples[i + 1];
+            let ax = a.pos.x as f32 * WORLD_SCALE;
+            let ay = a.pos.y as f32 * WORLD_SCALE;
+            let az = a.pos.z as f32 * WORLD_SCALE;
+            let bx = b.pos.x as f32 * WORLD_SCALE;
+            let by = b.pos.y as f32 * WORLD_SCALE;
+            let bz = b.pos.z as f32 * WORLD_SCALE;
+            let s = collision_radius;
+            // Endpoint A (cyan)
+            vec.extend_from_slice(&[
+                s, 0.0, 0.0, ax,
+                0.0, s, 0.0, ay,
+                0.0, 0.0, s, az,
+                0.0, 1.0, 1.0, 0.5,
+            ]);
+            // Endpoint B (cyan)
+            vec.extend_from_slice(&[
+                s, 0.0, 0.0, bx,
+                0.0, s, 0.0, by,
+                0.0, 0.0, s, bz,
+                0.0, 1.0, 1.0, 0.5,
+            ]);
+        }
+
+        PackedFloat32Array::from(vec.as_slice())
+    }
+
+    #[func]
+    fn get_capsule_debug_count(&self, max_segments: i32) -> i32 {
+        let n = self.path.samples_chronological().len();
+        if n < 2 { return 0; }
+        let seg = ((n - 1) as i32).min(max_segments.max(0));
+        seg * 2
     }
 
     #[func]
@@ -345,6 +409,18 @@ impl FocusParticle {
         if !e {
             self.clear_all_traces();
         }
+    }
+
+    #[func]
+    fn freeze_trace(&mut self) {
+        self.path.set_enabled(false);
+        self.surface_path.set_enabled(false);
+    }
+
+    #[func]
+    fn unfreeze_trace(&mut self) {
+        self.path.set_enabled(true);
+        self.surface_path.set_enabled(true);
     }
 
     #[func]
@@ -552,12 +628,14 @@ impl FocusParticle {
     #[func]
     fn pack_base_solid(&self) -> PackedFloat32Array {
         let p = self.composed_pos;
+        let eff_r = self.stack.effective_radius().max(1.0) as f32;
+        let solid_r = (eff_r * TRACE_CAPSULE_SCALE).max(1.0);
         let mut buf = PackedFloat32Array::new();
         buf.resize(4);
         buf[0] = p.x as f32;
         buf[1] = p.y as f32;
         buf[2] = p.z as f32;
-        buf[3] = 1.0;
+        buf[3] = solid_r;
         buf
     }
 

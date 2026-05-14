@@ -97,7 +97,7 @@ void main() {
             else if (axis == 1u) { perp1 = vec3(1,0,0); perp2 = vec3(0,0,1); }
             else                 { perp1 = vec3(1,0,0); perp2 = vec3(0,1,0); }
 
-            float disc_r = spawn_params.x * 1.1 * sqrt(rand01(seed));
+            float disc_r = spawn_params.x * 0.75 * sqrt(rand01(seed));
             float angle = rand01(seed) * 6.2831853;
             vec3 disc_offset = (cos(angle) * perp1 + sin(angle) * perp2) * disc_r;
             float R = sim_center_radius.w;
