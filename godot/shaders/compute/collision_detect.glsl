@@ -19,6 +19,9 @@ layout(std140, set = 0, binding = 1) uniform SimParams {
     uint segment_count;
     uint direction_mask;
     vec4 spawn_params;
+    vec4 spin_axis_emit;
+    vec4 focus_pos_r;
+    vec4 focus_vel_rate;
 };
 
 layout(std140, set = 0, binding = 2) uniform FocusState {

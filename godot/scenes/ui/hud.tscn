@@ -114,8 +114,8 @@ text = "Reset"
 [node name="ControlPanel" type="PanelContainer" parent="."]
 offset_left = 16.0
 offset_top = 52.0
-offset_right = 440.0
-offset_bottom = 570.0
+offset_right = 400.0
+offset_bottom = 500.0
 mouse_filter = 0
 
 [node name="Margin" type="MarginContainer" parent="ControlPanel"]
@@ -203,10 +203,10 @@ text = ""
 [node name="ReadoutPanel" type="PanelContainer" parent="."]
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -400.0
+offset_left = -340.0
 offset_top = 52.0
 offset_right = -16.0
-offset_bottom = 430.0
+offset_bottom = 380.0
 mouse_filter = 0
 
 [node name="Margin" type="MarginContainer" parent="ReadoutPanel"]

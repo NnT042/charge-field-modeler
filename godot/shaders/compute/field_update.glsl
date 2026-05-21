@@ -18,7 +18,10 @@ layout(std140, set = 0, binding = 1) uniform SimParams {
     uint frame_number;
     uint segment_count;
     uint direction_mask;
-    vec4 spawn_params; // .x = effective_radius
+    vec4 spawn_params;
+    vec4 spin_axis_emit;   // .xyz = spin axis, .w = emit_enabled
+    vec4 focus_pos_r;      // .xyz = focus pos, .w = collision_radius
+    vec4 focus_vel_rate;   // .xyz = focus vel, .w = emit_rate
 };
 
 uint hash(uint x) {
@@ -62,59 +65,93 @@ void main() {
         uint seed = hash(idx ^ (frame_number * 1999u));
         vec3 rand_vel = random_direction(seed);
 
-        vec3 chosen_dir = field_direction.xyz;
-        bool has_mask = (direction_mask != 0u);
+        // Pole emission: spawn charge at ghost sphere poles, traveling inward
+        bool emitted = false;
+        if (focus_vel_rate.w > 0.0 && rand01(seed) < focus_vel_rate.w) {
+            vec3 axis = spin_axis_emit.xyz;
+            float axis_len = length(axis);
+            if (axis_len > 1e-6) {
+                axis = axis / axis_len;
+                float ghost_r = spawn_params.x;
 
-        if (has_mask) {
-            // Pick one of the active cardinal directions at random
-            int count = 0;
-            for (uint b = 0u; b < 6u; b++) {
-                if ((direction_mask & (1u << b)) != 0u) count++;
-            }
-            int pick = int(rand01(seed) * float(count));
-            pick = min(pick, count - 1);
+                // Pick north or south pole
+                float pole_sign = (rand01(seed) > 0.5) ? 1.0 : -1.0;
 
-            int seen = 0;
-            uint chosen = 0u;
-            for (uint b = 0u; b < 6u; b++) {
-                if ((direction_mask & (1u << b)) != 0u) {
-                    if (seen == pick) { chosen = b; break; }
-                    seen++;
+                // Cone spread around pole (~30° half-angle = polar cap)
+                vec3 perp1, perp2;
+                if (abs(axis.y) < 0.9) {
+                    perp1 = normalize(cross(axis, vec3(0.0, 1.0, 0.0)));
+                } else {
+                    perp1 = normalize(cross(axis, vec3(1.0, 0.0, 0.0)));
                 }
+                perp2 = cross(axis, perp1);
+
+                float spread = sqrt(rand01(seed)) * 0.52;  // ~30° cone, sqrt for uniform area
+                float phi = rand01(seed) * 6.2831853;
+                float sa = sin(spread);
+                vec3 spawn_dir = normalize(
+                    axis * pole_sign * cos(spread)
+                    + (perp1 * cos(phi) + perp2 * sin(phi)) * sa
+                );
+
+                pos = focus_pos_r.xyz + spawn_dir * ghost_r;
+                vel = normalize(-axis * pole_sign + random_direction(seed) * 0.08);
+                emitted = true;
             }
-
-            // +X=0, -X=1, +Y=2, -Y=3, +Z=4, -Z=5
-            float sign_val = ((chosen & 1u) == 0u) ? 1.0 : -1.0;
-            uint axis = chosen >> 1u;
-            chosen_dir = vec3(0.0);
-            if (axis == 0u) chosen_dir.x = sign_val;
-            else if (axis == 1u) chosen_dir.y = sign_val;
-            else chosen_dir.z = sign_val;
-
-            // Spawn on a disc perpendicular to chosen_dir at sim boundary
-            vec3 perp1, perp2;
-            if (axis == 0u)      { perp1 = vec3(0,1,0); perp2 = vec3(0,0,1); }
-            else if (axis == 1u) { perp1 = vec3(1,0,0); perp2 = vec3(0,0,1); }
-            else                 { perp1 = vec3(1,0,0); perp2 = vec3(0,1,0); }
-
-            float disc_r = spawn_params.x * 0.75 * sqrt(rand01(seed));
-            float angle = rand01(seed) * 6.2831853;
-            vec3 disc_offset = (cos(angle) * perp1 + sin(angle) * perp2) * disc_r;
-            float R = sim_center_radius.w;
-            float axis_dist = sqrt(max(R * R - disc_r * disc_r, 1.0));
-            pos = sim_center_radius.xyz + chosen_dir * axis_dist + disc_offset;
-        } else {
-            vec3 spawn_dir = random_direction(seed);
-            pos = sim_center_radius.xyz + spawn_dir * sim_center_radius.w;
         }
 
-        vec3 inward = normalize(sim_center_radius.xyz - pos);
-        vec3 travel_dir = has_mask ? -chosen_dir : chosen_dir;
-        vec3 base_dir = mix(inward, travel_dir, direction_strength);
-        vel = normalize(mix(base_dir, rand_vel, field_direction.w));
+        if (!emitted) {
+            vec3 chosen_dir = field_direction.xyz;
+            bool has_mask = (direction_mask != 0u);
 
-        if (spawn_params.y > 0.0) {
-            pos += vel * rand01(seed) * 2.0 * sim_center_radius.w;
+            if (has_mask) {
+                int count = 0;
+                for (uint b = 0u; b < 6u; b++) {
+                    if ((direction_mask & (1u << b)) != 0u) count++;
+                }
+                int pick = int(rand01(seed) * float(count));
+                pick = min(pick, count - 1);
+
+                int seen = 0;
+                uint chosen = 0u;
+                for (uint b = 0u; b < 6u; b++) {
+                    if ((direction_mask & (1u << b)) != 0u) {
+                        if (seen == pick) { chosen = b; break; }
+                        seen++;
+                    }
+                }
+
+                float sign_val = ((chosen & 1u) == 0u) ? 1.0 : -1.0;
+                uint axis = chosen >> 1u;
+                chosen_dir = vec3(0.0);
+                if (axis == 0u) chosen_dir.x = sign_val;
+                else if (axis == 1u) chosen_dir.y = sign_val;
+                else chosen_dir.z = sign_val;
+
+                vec3 perp1, perp2;
+                if (axis == 0u)      { perp1 = vec3(0,1,0); perp2 = vec3(0,0,1); }
+                else if (axis == 1u) { perp1 = vec3(1,0,0); perp2 = vec3(0,0,1); }
+                else                 { perp1 = vec3(1,0,0); perp2 = vec3(0,1,0); }
+
+                float disc_r = spawn_params.x * 0.75 * sqrt(rand01(seed));
+                float angle = rand01(seed) * 6.2831853;
+                vec3 disc_offset = (cos(angle) * perp1 + sin(angle) * perp2) * disc_r;
+                float R = sim_center_radius.w;
+                float axis_dist = sqrt(max(R * R - disc_r * disc_r, 1.0));
+                pos = sim_center_radius.xyz + chosen_dir * axis_dist + disc_offset;
+            } else {
+                vec3 spawn_dir = random_direction(seed);
+                pos = sim_center_radius.xyz + spawn_dir * sim_center_radius.w;
+            }
+
+            vec3 inward = normalize(sim_center_radius.xyz - pos);
+            vec3 travel_dir = has_mask ? -chosen_dir : chosen_dir;
+            vec3 base_dir = mix(inward, travel_dir, direction_strength);
+            vel = normalize(mix(base_dir, rand_vel, field_direction.w));
+
+            if (spawn_params.y > 0.0) {
+                pos += vel * rand01(seed) * 2.0 * sim_center_radius.w;
+            }
         }
 
         uint flags = floatBitsToUint(vel_f.w);

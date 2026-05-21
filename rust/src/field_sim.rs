@@ -60,14 +60,27 @@ pub struct FieldSim {
     collision_pointers: Vec<CollisionPointer>,
     collision_ptr_head: usize,
     mm_buffer: Vec<f32>,
-    heatmap_cw: Vec<u32>,
-    heatmap_ccw: Vec<u32>,
+    heatmap_cw: Vec<f32>,
+    heatmap_ccw: Vec<f32>,
     heatmap_lon_bins: usize,
     heatmap_lat_bins: usize,
-    heatmap_max: u32,
+    heatmap_decay: f32,
+    heatmap_decay_enabled: bool,
     emission_angle_sum: f64,
     emission_angle_count: u64,
+    /// Accumulated histogram of exit POSITION latitude (matches heatmap).
+    /// 90 bins, 1° each: bin 0 = equator (0°), bin 89 = pole (89°).
+    exit_angle_bins: [u64; 90],
+    exit_angle_total: u64,
+    /// Sum of position-based exit latitudes (degrees) for mean calculation.
+    exit_latitude_sum: f64,
     chirality_strength: f32,
+    spin_axis: [f32; 3],
+    focus_pos: [f32; 3],
+    focus_vel: [f32; 3],
+    zone_collision_enabled: bool,
+    sprinkler_enabled: bool,
+    emit_rate: f32,
 }
 
 #[godot_api]
@@ -98,14 +111,24 @@ impl INode for FieldSim {
             collision_pointers: Vec::new(),
             collision_ptr_head: 0,
             mm_buffer: Vec::new(),
-            heatmap_cw: vec![0u32; 64 * 32],
-            heatmap_ccw: vec![0u32; 64 * 32],
-            heatmap_lon_bins: 64,
-            heatmap_lat_bins: 32,
-            heatmap_max: 0,
+            heatmap_cw: vec![0.0f32; 128 * 64],
+            heatmap_ccw: vec![0.0f32; 128 * 64],
+            heatmap_lon_bins: 128,
+            heatmap_lat_bins: 64,
+            heatmap_decay: 0.9999,
+            heatmap_decay_enabled: false,
             emission_angle_sum: 0.0,
             emission_angle_count: 0,
+            exit_angle_bins: [0u64; 90],
+            exit_angle_total: 0,
+            exit_latitude_sum: 0.0,
             chirality_strength: 0.15,
+            spin_axis: [0.0, 1.0, 0.0],
+            focus_pos: [0.0; 3],
+            focus_vel: [0.0; 3],
+            zone_collision_enabled: false,
+            sprinkler_enabled: false,
+            emit_rate: 0.40,
         }
     }
 }
@@ -365,6 +388,23 @@ impl FieldSim {
     }
 
     #[func]
+    fn set_focus_state(&mut self, spin_axis: Vector3, pos: Vector3, vel: Vector3) {
+        self.spin_axis = [spin_axis.x, spin_axis.y, spin_axis.z];
+        self.focus_pos = [pos.x, pos.y, pos.z];
+        self.focus_vel = [vel.x, vel.y, vel.z];
+    }
+
+    #[func]
+    fn set_zone_collision(&mut self, enabled: bool) {
+        self.zone_collision_enabled = enabled;
+    }
+
+    #[func]
+    fn set_sprinkler_emission(&mut self, enabled: bool) {
+        self.sprinkler_enabled = enabled;
+    }
+
+    #[func]
     fn get_chirality_strength(&self) -> f64 {
         self.chirality_strength as f64
     }
@@ -376,10 +416,12 @@ impl FieldSim {
         self.exit_holes.clear();
         self.collision_pointers.clear();
         self.collision_ptr_head = 0;
-        self.heatmap_cw.fill(0);
-        self.heatmap_ccw.fill(0);
-        self.heatmap_max = 0;
+        self.heatmap_cw.fill(0.0);
+        self.heatmap_ccw.fill(0.0);
         self.emission_angle_sum = 0.0;
+        self.exit_angle_bins = [0u64; 90];
+        self.exit_angle_total = 0;
+        self.exit_latitude_sum = 0.0;
         self.emission_angle_count = 0;
         self.targeted_accum = 0.0;
         self.targeted_impulse = [0.0; 3];
@@ -565,12 +607,37 @@ impl FieldSim {
         PackedFloat32Array::from(vec.as_slice())
     }
 
+    fn heatmap_frame(&self) -> ([f32; 3], [f32; 3], [f32; 3]) {
+        let up = self.spin_axis;
+        // cross(up, ref) where ref avoids near-parallel
+        let ref_v: [f32; 3] = if up[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+        let rx = up[1] * ref_v[2] - up[2] * ref_v[1];
+        let ry = up[2] * ref_v[0] - up[0] * ref_v[2];
+        let rz = up[0] * ref_v[1] - up[1] * ref_v[0];
+        let rlen = (rx * rx + ry * ry + rz * rz).sqrt().max(1e-12);
+        let right = [rx / rlen, ry / rlen, rz / rlen];
+        let fwd = [
+            right[1] * up[2] - right[2] * up[1],
+            right[2] * up[0] - right[0] * up[2],
+            right[0] * up[1] - right[1] * up[0],
+        ];
+        (up, right, fwd)
+    }
+
     #[func]
     fn detect_exit_holes_from_impulses(&mut self, impulse_data: PackedByteArray) {
         let src = impulse_data.as_slice();
         let vec4_size = 16usize;
         let lon_bins = self.heatmap_lon_bins;
         let lat_bins = self.heatmap_lat_bins;
+
+        if self.heatmap_decay_enabled {
+            let decay = self.heatmap_decay;
+            for v in self.heatmap_cw.iter_mut() { *v *= decay; }
+            for v in self.heatmap_ccw.iter_mut() { *v *= decay; }
+        }
+
+        let (up, right, fwd) = self.heatmap_frame();
 
         for i in 0..self.photons.len() {
             let offset = i * vec4_size;
@@ -581,15 +648,23 @@ impl FieldSim {
             if w > 0.5 {
                 let pos = self.photons[i].position;
                 let vel = self.photons[i].velocity;
-                let d2 = pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2];
+                // Direction from focus center, not origin
+                let dx = pos[0] - self.focus_pos[0];
+                let dy = pos[1] - self.focus_pos[1];
+                let dz = pos[2] - self.focus_pos[2];
+                let d2 = dx * dx + dy * dy + dz * dz;
                 if d2 > 0.01 {
                     let inv = 1.0 / d2.sqrt();
-                    let dir = [pos[0] * inv, pos[1] * inv, pos[2] * inv];
+                    let dir = [dx * inv, dy * inv, dz * inv];
                     self.push_exit_hole(dir);
 
-                    // Heatmap: direction -> lat/lon bin
-                    let lat = dir[1].asin(); // -PI/2..PI/2
-                    let lon = dir[2].atan2(dir[0]); // -PI..PI
+                    // Project direction into spin-axis-aligned frame
+                    let d_up = dir[0] * up[0] + dir[1] * up[1] + dir[2] * up[2];
+                    let d_right = dir[0] * right[0] + dir[1] * right[1] + dir[2] * right[2];
+                    let d_fwd = dir[0] * fwd[0] + dir[1] * fwd[1] + dir[2] * fwd[2];
+                    let lat = d_up.clamp(-1.0, 1.0).asin();
+                    let lon = d_right.atan2(d_fwd);
+
                     let lat_idx = (((lat + std::f32::consts::FRAC_PI_2) / std::f32::consts::PI) * lat_bins as f32) as usize;
                     let lon_idx = (((lon + std::f32::consts::PI) / std::f32::consts::TAU) * lon_bins as f32) as usize;
                     let li = lat_idx.min(lat_bins - 1);
@@ -597,21 +672,25 @@ impl FieldSim {
                     let bin = li * lon_bins + lo;
                     let is_ccw = self.photons[i].flags & FLAG_CHIRALITY != 0;
                     if is_ccw {
-                        self.heatmap_ccw[bin] += 1;
+                        self.heatmap_ccw[bin] += 1.0;
                     } else {
-                        self.heatmap_cw[bin] += 1;
-                    }
-                    let total = self.heatmap_cw[bin] + self.heatmap_ccw[bin];
-                    if total > self.heatmap_max {
-                        self.heatmap_max = total;
+                        self.heatmap_cw[bin] += 1.0;
                     }
 
-                    // Emission angle: angle from equatorial plane (0° = equator, 90° = pole)
+                    // Position-based histogram: bin by exit latitude
+                    // (matches heatmap — 0° = equator, 89° = near pole)
+                    let lat_deg = lat.abs().to_degrees();
+                    let hist_bin = (lat_deg as usize).min(89);
+                    self.exit_angle_bins[hist_bin] += 1;
+                    self.exit_angle_total += 1;
+                    self.exit_latitude_sum += lat_deg as f64;
+
+                    // Velocity-based mean angle (legacy readout)
                     let vlen2 = vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2];
                     if vlen2 > 0.01 {
                         let vlen = vlen2.sqrt();
-                        let cos_pole_angle = vel[1] / vlen; // dot(vel, Y) / |vel|
-                        let lat_angle = cos_pole_angle.abs().asin(); // 0 = equator, PI/2 = pole
+                        let cos_pole_angle = vel[1] / vlen;
+                        let lat_angle = cos_pole_angle.abs().asin();
                         self.emission_angle_sum += lat_angle as f64;
                         self.emission_angle_count += 1;
                     }
@@ -698,11 +777,15 @@ impl FieldSim {
     #[func]
     fn get_heatmap_buffer(&self) -> PackedFloat32Array {
         let total = self.heatmap_lat_bins * self.heatmap_lon_bins;
-        let mut vec: Vec<f32> = Vec::with_capacity(total * 3);
-        let max_val = self.heatmap_max.max(1) as f32;
+        let mut max_val: f32 = 1.0;
         for i in 0..total {
-            let cw = self.heatmap_cw[i] as f32 / max_val;
-            let ccw = self.heatmap_ccw[i] as f32 / max_val;
+            let t = self.heatmap_cw[i] + self.heatmap_ccw[i];
+            if t > max_val { max_val = t; }
+        }
+        let mut vec: Vec<f32> = Vec::with_capacity(total * 3);
+        for i in 0..total {
+            let cw = self.heatmap_cw[i] / max_val;
+            let ccw = self.heatmap_ccw[i] / max_val;
             vec.push(cw);
             vec.push(ccw);
             vec.push(0.0);
@@ -717,9 +800,7 @@ impl FieldSim {
 
     #[func]
     fn get_heatmap_total_hits(&self) -> i32 {
-        let cw: u32 = self.heatmap_cw.iter().sum();
-        let ccw: u32 = self.heatmap_ccw.iter().sum();
-        (cw + ccw) as i32
+        self.emission_angle_count as i32
     }
 
     #[func]
@@ -730,13 +811,54 @@ impl FieldSim {
         (self.emission_angle_sum / self.emission_angle_count as f64).to_degrees()
     }
 
+    /// Mean exit latitude (position-based, matches heatmap/histogram).
+    /// 0° = equator, 90° = pole.
+    #[func]
+    fn get_mean_exit_latitude(&self) -> f64 {
+        if self.exit_angle_total == 0 {
+            return 0.0;
+        }
+        self.exit_latitude_sum / self.exit_angle_total as f64
+    }
+
+    /// Returns 90-element array: percentage of all exits in each 1° bin
+    /// from 0° (equator) to 89° (near pole). Based on exit POSITION latitude
+    /// (same projection as the heatmap), so peaks correspond to bright bands.
+    #[func]
+    fn get_exit_angle_histogram(&self) -> PackedFloat32Array {
+        let mut arr = PackedFloat32Array::new();
+        arr.resize(90);
+        let total = self.exit_angle_total;
+        if total == 0 {
+            return arr;
+        }
+        let inv_n = 100.0 / total as f32;
+        for i in 0..90 {
+            arr[i] = self.exit_angle_bins[i] as f32 * inv_n;
+        }
+        arr
+    }
+
+    /// Total number of exits accumulated in the histogram.
+    #[func]
+    fn get_exit_angle_sample_count(&self) -> i32 {
+        self.exit_angle_total as i32
+    }
+
+    #[func]
+    fn set_heatmap_decay(&mut self, enabled: bool) {
+        self.heatmap_decay_enabled = enabled;
+    }
+
     #[func]
     fn clear_heatmap(&mut self) {
-        self.heatmap_cw.fill(0);
-        self.heatmap_ccw.fill(0);
-        self.heatmap_max = 0;
+        self.heatmap_cw.fill(0.0);
+        self.heatmap_ccw.fill(0.0);
         self.emission_angle_sum = 0.0;
         self.emission_angle_count = 0;
+        self.exit_angle_bins = [0u64; 90];
+        self.exit_angle_total = 0;
+        self.exit_latitude_sum = 0.0;
     }
 
     #[func]
@@ -758,7 +880,7 @@ impl FieldSim {
         segment_count: i32,
     ) -> PackedFloat32Array {
         let mut buf = PackedFloat32Array::new();
-        buf.resize(20);
+        buf.resize(32);
 
         buf[0] = center.x;
         buf[1] = center.y;
@@ -784,6 +906,22 @@ impl FieldSim {
         buf[17] = self.stream_jitter;
         buf[18] = self.chirality_strength;
         buf[19] = 0.0;
+
+        // Sprinkler emission + zone collision params
+        buf[20] = self.spin_axis[0];
+        buf[21] = self.spin_axis[1];
+        buf[22] = self.spin_axis[2];
+        buf[23] = if self.zone_collision_enabled { 1.0 } else { 0.0 };
+
+        buf[24] = self.focus_pos[0];
+        buf[25] = self.focus_pos[1];
+        buf[26] = self.focus_pos[2];
+        buf[27] = (self.effective_radius * 0.05f32).max(1.0); // collision_radius
+
+        buf[28] = self.focus_vel[0];
+        buf[29] = self.focus_vel[1];
+        buf[30] = self.focus_vel[2];
+        buf[31] = if self.sprinkler_enabled { self.emit_rate } else { 0.0 };
 
         buf
     }

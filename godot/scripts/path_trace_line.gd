@@ -1,27 +1,20 @@
 extends Node3D
-## Renders the focus particle's worldline.
+## Renders the focus particle's worldline as a fading line strip.
 ##
-## Five display modes cycled by T:
-##   0 = OFF     — tracing disabled, nothing drawn
-##   1 = LINE    — unshaded line-strip of the center point's path
-##   2 = TUBE    — triangle-strip tube showing the full swept volume
-##   3 = SURFACE — line-strip following a point on the particle's pole
-##   4 = SNAKE   — fading tube tail showing 1/4 rotation of the outermost ghost
+## Two display states toggled by T:
+##   false = OFF — tracing disabled, nothing drawn
+##   true  = ON  — unshaded line-strip of the center point's path
 ##
-## C clears the trace in any active mode.
+## C clears the trace.
 
 @export var focus_particle_path: NodePath
 @export var color: Color = Color(1.0, 0.95, 0.85, 1.0)
-@export var tube_color: Color = Color(0.6, 0.55, 0.45, 0.35)
-@export var surface_color: Color = Color(0.4, 0.8, 1.0, 0.9)
 @export var crest_color: Color = Color(1.0, 0.4, 0.1, 0.9)
 @export var trough_color: Color = Color(0.2, 0.6, 1.0, 0.9)
 @export var marker_size: float = 0.1
 @export var tail_min_alpha: float = 0.05
-@export var tube_segments: int = 10
 
-## 0 = off, 1 = line, 2 = tube, 3 = surface, 4 = snake
-var _display_mode: int = 1
+var _enabled: bool = true
 var _show_marker_lines: bool = false
 var _focus: Node3D
 var _mesh_instance: MeshInstance3D
@@ -47,17 +40,11 @@ func _ready() -> void:
 	_mesh_instance.mesh = _mesh
 	add_child(_mesh_instance)
 
-	_focus.call("set_path_enabled", _display_mode > 0)
+	_focus.call("set_path_enabled", _enabled)
 
 
 func display_mode_label() -> String:
-	match _display_mode:
-		0: return "off"
-		1: return "line"
-		2: return "tube"
-		3: return "surface"
-		4: return "snake"
-		_: return "off"
+	return "on" if _enabled else "off"
 
 
 func _process(_delta: float) -> void:
@@ -66,7 +53,7 @@ func _process(_delta: float) -> void:
 
 	_mesh.clear_surfaces()
 
-	if _display_mode == 0:
+	if not _enabled:
 		return
 
 	var points: PackedVector3Array = _focus.call("get_path_points")
@@ -76,33 +63,20 @@ func _process(_delta: float) -> void:
 	var spectral: Color = Color(_focus.call("get_wavelength_color"))
 	var in_visible: bool = not spectral.is_equal_approx(Color(0.5, 0.5, 0.5))
 	var line_c: Color = Color(spectral.r, spectral.g, spectral.b, color.a) if in_visible else color
-	var tube_c: Color = Color(spectral.r, spectral.g, spectral.b, tube_color.a) if in_visible else tube_color
-	var surf_c: Color = Color(spectral.r, spectral.g, spectral.b, surface_color.a) if in_visible else surface_color
 
-	if _display_mode == 1:
-		_draw_line(points, line_c)
-	elif _display_mode == 2:
-		_draw_tube_from_rust(tube_c, -1)
-	elif _display_mode == 3:
-		var surface_pts: PackedVector3Array = _focus.call("get_surface_path_points")
-		if surface_pts.size() >= 2:
-			_draw_line(surface_pts, surf_c)
-	elif _display_mode == 4:
-		var snake_len: int = int(_focus.call("snake_trace_length"))
-		_draw_tube_from_rust(tube_c, snake_len)
+	_draw_line(points, line_c)
 
-	if _display_mode > 0:
-		var crests: PackedVector3Array = _focus.call("get_crest_markers")
-		var troughs: PackedVector3Array = _focus.call("get_trough_markers")
-		if crests.size() > 0:
-			_draw_markers(crests, crest_color)
-		if troughs.size() > 0:
-			_draw_markers(troughs, trough_color)
-		if _show_marker_lines:
-			if crests.size() > 1:
-				_draw_marker_chain(crests, Color(crest_color.r, crest_color.g, crest_color.b, 0.5))
-			if troughs.size() > 1:
-				_draw_marker_chain(troughs, Color(trough_color.r, trough_color.g, trough_color.b, 0.5))
+	var crests: PackedVector3Array = _focus.call("get_crest_markers")
+	var troughs: PackedVector3Array = _focus.call("get_trough_markers")
+	if crests.size() > 0:
+		_draw_markers(crests, crest_color)
+	if troughs.size() > 0:
+		_draw_markers(troughs, trough_color)
+	if _show_marker_lines:
+		if crests.size() > 1:
+			_draw_marker_chain(crests, Color(crest_color.r, crest_color.g, crest_color.b, 0.5))
+		if troughs.size() > 1:
+			_draw_marker_chain(troughs, Color(trough_color.r, trough_color.g, trough_color.b, 0.5))
 
 
 func _add_surface(primitive: Mesh.PrimitiveType, verts: PackedVector3Array, colors: PackedColorArray) -> void:
@@ -124,15 +98,6 @@ func _draw_line(points: PackedVector3Array, c: Color) -> void:
 		var a: float = lerp(tail_min_alpha, 1.0, t) * c.a
 		colors[i] = Color(c.r, c.g, c.b, a)
 	_add_surface(Mesh.PRIMITIVE_LINE_STRIP, points, colors)
-
-
-func _draw_tube_from_rust(c: Color, max_samples: int) -> void:
-	var count: int = int(_focus.call("build_tube_mesh", tube_segments, max_samples,
-		c.r, c.g, c.b, c.a, tail_min_alpha))
-	if count > 0:
-		_add_surface(Mesh.PRIMITIVE_TRIANGLES,
-			_focus.call("get_tube_vertices"),
-			_focus.call("get_tube_colors"))
 
 
 func _draw_markers(points: PackedVector3Array, c: Color) -> void:
@@ -170,10 +135,10 @@ func _draw_marker_chain(points: PackedVector3Array, c: Color) -> void:
 
 
 func cycle_display_mode() -> void:
-	_display_mode = (_display_mode + 1) % 5
+	_enabled = not _enabled
 	if _focus != null:
-		_focus.call("set_path_enabled", _display_mode > 0)
-	if _display_mode == 0 and _mesh != null:
+		_focus.call("set_path_enabled", _enabled)
+	if not _enabled and _mesh != null:
 		_mesh.clear_surfaces()
 
 

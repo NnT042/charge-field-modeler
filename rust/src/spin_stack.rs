@@ -179,6 +179,22 @@ impl SpinStack {
         }
     }
 
+    /// How many substeps are needed so no level advances more than `max_angle`
+    /// radians per substep. Returns 1..=max_substeps.
+    pub fn substeps_needed(&self, dt: f64, time_scale: f64, max_angle: f64) -> usize {
+        let scaled = dt * time_scale;
+        let mut biggest = 0.0f64;
+        for l in &self.levels {
+            if l.angular_velocity.abs() > 1e-12 {
+                let angle = (l.angular_velocity * scaled / l.orbit_radius()).abs();
+                if angle > biggest {
+                    biggest = angle;
+                }
+            }
+        }
+        ((biggest / max_angle).ceil() as usize).clamp(1, 64)
+    }
+
     /// Compose the stack into (world position of base particle, orientation).
     ///
     /// Three kinds of level:
@@ -251,6 +267,30 @@ impl SpinStack {
             .iter()
             .rev()
             .find(|l| l.is_orbital() && l.angular_velocity.abs() > 1e-12)
+    }
+
+    /// The orbital level just below the outermost spinning orbital.
+    /// For a level-12 proton, this returns level 11 (Y-orbital).
+    pub fn second_outermost_orbital(&self) -> Option<&SpinLevel> {
+        let mut found_first = false;
+        for l in self.levels.iter().rev() {
+            if l.is_orbital() && l.angular_velocity.abs() > 1e-12 {
+                if found_first {
+                    return Some(l);
+                }
+                found_first = true;
+            }
+        }
+        None
+    }
+
+    pub fn outermost_spin_axis(&self) -> DVec3 {
+        for l in self.levels.iter().rev() {
+            if l.is_orbital() {
+                return l.rotation_axis();
+            }
+        }
+        DVec3::Y
     }
 
     /// Effective radius = amplitude of the outermost active level.

@@ -47,6 +47,13 @@ var _show_collision_pointers: bool = false
 var _show_heatmap: bool = false
 var _cloud_blanked: bool = false
 var _stream_mode: bool = false
+var _locked_spin_axis: Vector3 = Vector3.UP
+var _zone_collision: bool = true
+var _sprinkler_emission: bool = true
+var _show_capsules: bool = false
+
+var _capsule_multimesh: MultiMesh
+var _capsule_instance: MultiMeshInstance3D
 
 var _hole_multimesh: MultiMesh
 var _hole_instance: MultiMeshInstance3D
@@ -74,6 +81,7 @@ func _ready() -> void:
 	_setup_exit_hole_renderer()
 	_setup_pointer_renderer()
 	_setup_heatmap_sphere()
+	_setup_capsule_debug_renderer()
 
 	_rd = RenderingServer.create_local_rendering_device()
 	_update_shader = _load_shader("res://shaders/compute/field_update.glsl")
@@ -116,12 +124,22 @@ func _physics_process(delta: float) -> void:
 		_frame_number += 1
 
 		var seg_count: int = 0
+		var _snake_max: int = 4096
 		if _focus:
-			seg_count = int(_focus.call("get_trace_segment_count", 4096))
+			var sl: int = int(_focus.call("snake_trace_length"))
+			if sl > 0:
+				_snake_max = sl
+			seg_count = int(_focus.call("get_trace_segment_count", _snake_max))
 			if seg_count > 0:
-				var trace_buf: PackedFloat32Array = _focus.call("pack_trace_segments", 4096)
+				var trace_buf: PackedFloat32Array = _focus.call("pack_trace_segments", _snake_max)
 				var trace_bytes: PackedByteArray = trace_buf.to_byte_array()
 				_rd.buffer_update(_trace_segments_buffer, 0, trace_bytes.size(), trace_bytes)
+
+		# Pass focus particle state for sprinkler emission + zone collision
+		if _focus:
+			var fpos: Vector3 = _focus.call("get_composed_position_natural")
+			var fvel: Vector3 = _focus.call("get_composed_velocity_natural")
+			_rust_sim.call("set_focus_state", _locked_spin_axis, fpos, fvel)
 
 		var center: Vector3 = Vector3.ZERO
 		var params: PackedFloat32Array = _rust_sim.call(
@@ -207,6 +225,20 @@ func _physics_process(delta: float) -> void:
 	if _show_heatmap and _running and _frame_number % 10 == 0:
 		_update_heatmap_texture(eff_r)
 
+	# Capsule debug rendering
+	if _show_capsules and _focus:
+		var cap_snake: int = int(_focus.call("snake_trace_length"))
+		var cap_max: int = cap_snake if cap_snake > 0 else 4096
+		var cap_count: int = int(_focus.call("get_capsule_debug_count", cap_max))
+		if cap_count > 0:
+			_capsule_multimesh.instance_count = cap_count
+			var cap_buf: PackedFloat32Array = _focus.call("build_capsule_debug_buffer", cap_max)
+			_capsule_multimesh.set_buffer(cap_buf)
+		else:
+			_capsule_multimesh.instance_count = 0
+	elif not _show_capsules:
+		_capsule_multimesh.instance_count = 0
+
 
 func start_field(count: int = -1) -> void:
 	if count > 0:
@@ -227,16 +259,20 @@ func start_field(count: int = -1) -> void:
 		var mm_buf: PackedFloat32Array = _rust_sim.call("build_multimesh_buffer")
 		_renderer.call("update_from_buffer", mm_buf)
 
+	_rust_sim.call("set_zone_collision", _zone_collision)
+	_rust_sim.call("set_sprinkler_emission", _sprinkler_emission)
 	_running = true
 	_frame_number = 0
 	if _focus:
-		_focus.call("freeze_trace")
+		var ax: Vector3 = _focus.call("get_spin_axis")
+		if ax.length_squared() > 0.01:
+			_locked_spin_axis = ax.normalized()
+		else:
+			_locked_spin_axis = Vector3.UP
 
 
 func stop_field() -> void:
 	_running = false
-	if _focus:
-		_focus.call("unfreeze_trace")
 
 
 func reset_field() -> void:
@@ -249,8 +285,6 @@ func reset_field() -> void:
 	_rust_sim.call("clear_field")
 	if _renderer:
 		_renderer.call("set_instance_count", 0)
-	if _focus:
-		_focus.call("unfreeze_trace")
 	_clear_heatmap_visual()
 
 
@@ -328,12 +362,49 @@ func set_show_heatmap(show: bool) -> void:
 		_rust_sim.call("clear_heatmap")
 
 
+func set_zone_collision(enabled: bool) -> void:
+	_zone_collision = enabled
+	_rust_sim.call("set_zone_collision", enabled)
+
+
+func set_sprinkler_emission(enabled: bool) -> void:
+	_sprinkler_emission = enabled
+	_rust_sim.call("set_sprinkler_emission", enabled)
+
+
+func set_heatmap_decay(enabled: bool) -> void:
+	_rust_sim.call("set_heatmap_decay", enabled)
+
+
+func set_chirality_strength(v: float) -> void:
+	_rust_sim.call("set_chirality_strength", v)
+
+
+func set_show_capsules(show: bool) -> void:
+	_show_capsules = show
+	_capsule_instance.visible = show
+	if not show:
+		_capsule_multimesh.instance_count = 0
+
+
 func get_mean_emission_angle() -> float:
 	return float(_rust_sim.call("get_mean_emission_angle"))
 
 
+func get_mean_exit_latitude() -> float:
+	return float(_rust_sim.call("get_mean_exit_latitude"))
+
+
 func get_heatmap_total_hits() -> int:
 	return int(_rust_sim.call("get_heatmap_total_hits"))
+
+
+func get_exit_angle_histogram() -> PackedFloat32Array:
+	return _rust_sim.call("get_exit_angle_histogram")
+
+
+func get_exit_angle_sample_count() -> int:
+	return int(_rust_sim.call("get_exit_angle_sample_count"))
 
 
 func _update_heatmap_texture(eff_r: float) -> void:
@@ -348,8 +419,15 @@ func _update_heatmap_texture(eff_r: float) -> void:
 	_heatmap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGBF, byte_buf)
 	_heatmap_texture.update(_heatmap_image)
 
-	# Scale sphere to match ghost sphere outer radius
+	# Orient sphere so Y-pole aligns with locked spin axis, then apply scale
 	var scale: float = eff_r * 0.5 + 0.05
+	var up: Vector3 = _locked_spin_axis
+	if up.length_squared() > 0.01:
+		up = up.normalized()
+		var ref_vec: Vector3 = Vector3.UP if abs(up.y) < 0.9 else Vector3.RIGHT
+		var right: Vector3 = up.cross(ref_vec).normalized()
+		var fwd: Vector3 = right.cross(up)
+		_heatmap_sphere.basis = Basis(right, up, fwd)
 	_heatmap_sphere.scale = Vector3(scale, scale, scale)
 
 
@@ -360,8 +438,8 @@ func _create_buffers() -> void:
 	_photon_buffer = _rd.storage_buffer_create(init_data.size(), init_data)
 
 	var params_init: PackedByteArray = PackedByteArray()
-	params_init.resize(80)
-	_params_buffer = _rd.uniform_buffer_create(80, params_init)
+	params_init.resize(128)
+	_params_buffer = _rd.uniform_buffer_create(128, params_init)
 
 	# Focus state: vec4 (16 bytes, but std140 needs 16-byte alignment)
 	var focus_init: PackedByteArray = PackedByteArray()
@@ -517,7 +595,7 @@ func _setup_heatmap_sphere() -> void:
 	_heatmap_material = ShaderMaterial.new()
 	_heatmap_material.shader = shader
 
-	_heatmap_image = Image.create(64, 32, false, Image.FORMAT_RGBF)
+	_heatmap_image = Image.create(128, 64, false, Image.FORMAT_RGBF)
 	_heatmap_texture = ImageTexture.create_from_image(_heatmap_image)
 	_heatmap_material.set_shader_parameter("heatmap_texture", _heatmap_texture)
 
@@ -535,8 +613,34 @@ func _setup_heatmap_sphere() -> void:
 	add_child(_heatmap_sphere)
 
 
+func _setup_capsule_debug_renderer() -> void:
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.0, 1.0, 1.0, 0.3)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.5
+	sphere.height = 1.0
+	sphere.radial_segments = 8
+	sphere.rings = 4
+	sphere.material = mat
+
+	_capsule_multimesh = MultiMesh.new()
+	_capsule_multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	_capsule_multimesh.use_colors = true
+	_capsule_multimesh.mesh = sphere
+	_capsule_multimesh.instance_count = 0
+
+	_capsule_instance = MultiMeshInstance3D.new()
+	_capsule_instance.multimesh = _capsule_multimesh
+	_capsule_instance.visible = false
+	add_child(_capsule_instance)
+
+
 func _clear_heatmap_visual() -> void:
-	_heatmap_image = Image.create(64, 32, false, Image.FORMAT_RGBF)
+	_heatmap_image = Image.create(128, 64, false, Image.FORMAT_RGBF)
 	_heatmap_texture.update(_heatmap_image)
 	_heatmap_sphere.visible = _show_heatmap
 

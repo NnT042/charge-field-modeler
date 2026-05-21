@@ -28,11 +28,12 @@ var _anticharge_slider: HSlider
 var _anticharge_label: Label
 var _dir_buttons: Dictionary = {}
 var _exit_holes_btn: Button
-var _pointer_btn: Button
 var _heatmap_btn: Button
-var _chirality_btn: Button
+var _zone_btn: Button
+var _sprinkler_btn: Button
+var _capsule_btn: Button
+var _decay_btn: Button
 var _blank_btn: Button
-var _stream_btn: Button
 var _emission_label: Label
 var _preset_dropdown: OptionButton
 var _presets: Array = []
@@ -45,6 +46,9 @@ var _reverse_buttons: Array[Button] = []
 var _annul_buttons: Array[Button] = []
 var _paused: bool = false
 var _prev_level_count: int = 0
+var _angle_graph: Control
+var _angle_graph_panel: PanelContainer
+var _graph_update_tick: int = 0
 
 
 func _ready() -> void:
@@ -91,9 +95,14 @@ func _ready() -> void:
 		%HomeBtn.pressed.connect(_camera_rig.snap_default)
 		%FitBtn.pressed.connect(_camera_rig.auto_fit)
 
-	var field_row: VBoxContainer = _build_field_controls()
-	var vbox_toolbar: VBoxContainer = $ControlPanel/Margin/VBox
-	vbox_toolbar.add_child(field_row)
+	_build_field_panel()
+	_build_angle_graph_panel()
+
+	# Sync default button states to field_sim
+	if _field_sim:
+		_apply_field_direction()
+		_field_sim.set_show_heatmap(true)
+		_field_sim.call("set_chirality_strength", 0.15)
 
 
 func _build_tier_tabs() -> void:
@@ -249,6 +258,7 @@ func _process(_delta: float) -> void:
 	%EMColorSwatch.color = em_color
 
 	_update_field_readout()
+	_update_angle_graph()
 
 	# Toolbar state labels
 	%PauseBtn.text = "Resume" if _paused else "Pause"
@@ -458,59 +468,85 @@ func _refresh_row_states() -> void:
 		_tab_container.set_tab_disabled(tier, false)
 
 
-func _build_field_controls() -> VBoxContainer:
-	var wrapper: VBoxContainer = VBoxContainer.new()
-	wrapper.add_theme_constant_override("separation", 4)
+func _build_field_panel() -> void:
+	var panel: PanelContainer = PanelContainer.new()
+	panel.anchor_left = 0.0
+	panel.anchor_right = 0.0
+	panel.anchor_top = 1.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left = 16
+	panel.offset_right = 340
+	panel.offset_top = -310
+	panel.offset_bottom = -16
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	panel.add_child(margin)
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	margin.add_child(vbox)
+
+	# Title
+	var title: Label = Label.new()
+	title.text = "Charge Field"
+	title.add_theme_font_size_override("font_size", 15)
+	vbox.add_child(title)
+
+	var sep_top: HSeparator = HSeparator.new()
+	vbox.add_child(sep_top)
 
 	# Row 1: Start / Stop / Reset + status
 	var row1: HBoxContainer = HBoxContainer.new()
-	row1.add_theme_constant_override("separation", 6)
+	row1.add_theme_constant_override("separation", 4)
 
 	_field_start_btn = Button.new()
-	_field_start_btn.text = "Start Field"
+	_field_start_btn.text = "Start"
 	_field_start_btn.pressed.connect(_on_field_start_pressed)
 	row1.add_child(_field_start_btn)
 
 	_field_stop_btn = Button.new()
-	_field_stop_btn.text = "Stop Field"
+	_field_stop_btn.text = "Stop"
 	_field_stop_btn.disabled = true
 	_field_stop_btn.pressed.connect(_on_field_stop_pressed)
 	row1.add_child(_field_stop_btn)
 
 	_field_reset_btn = Button.new()
-	_field_reset_btn.text = "Reset Field"
+	_field_reset_btn.text = "Reset"
 	_field_reset_btn.disabled = true
 	_field_reset_btn.pressed.connect(_on_field_reset_pressed)
 	row1.add_child(_field_reset_btn)
 
 	_field_count_label = Label.new()
-	_field_count_label.text = "Field: off"
+	_field_count_label.text = "off"
+	_field_count_label.modulate = Color(0.7, 0.8, 0.9, 1)
 	row1.add_child(_field_count_label)
 
-	wrapper.add_child(row1)
+	vbox.add_child(row1)
 
-	# Row 2: Count + Anticharge
+	# Row 2: Photon count
 	var row2: HBoxContainer = HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 6)
+	row2.add_theme_constant_override("separation", 4)
 
 	var count_lbl: Label = Label.new()
-	count_lbl.text = "Count:"
+	count_lbl.text = "Photons:"
 	row2.add_child(count_lbl)
 
 	_field_count_spin = SpinBox.new()
 	_field_count_spin.min_value = 50
 	_field_count_spin.max_value = 100000
 	_field_count_spin.step = 50
-	_field_count_spin.value = 5000
-	_field_count_spin.custom_minimum_size = Vector2(100, 0)
+	_field_count_spin.value = 10000
+	_field_count_spin.custom_minimum_size = Vector2(90, 0)
 	_field_count_spin.tooltip_text = "Number of charge photons (50-100k)"
 	row2.add_child(_field_count_spin)
 
-	var sep: VSeparator = VSeparator.new()
-	row2.add_child(sep)
-
 	var ac_lbl: Label = Label.new()
-	ac_lbl.text = "Anticharge:"
+	ac_lbl.text = "  AC:"
 	row2.add_child(ac_lbl)
 
 	_anticharge_slider = HSlider.new()
@@ -519,98 +555,137 @@ func _build_field_controls() -> VBoxContainer:
 	_anticharge_slider.step = 1.0
 	_anticharge_slider.value = 33.0
 	_anticharge_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_anticharge_slider.custom_minimum_size = Vector2(80, 0)
-	_anticharge_slider.tooltip_text = "Percentage of red (anti-charge) photons"
+	_anticharge_slider.custom_minimum_size = Vector2(50, 0)
+	_anticharge_slider.tooltip_text = "Percentage of anti-charge photons"
 	_anticharge_slider.value_changed.connect(_on_anticharge_changed)
 	row2.add_child(_anticharge_slider)
 
 	_anticharge_label = Label.new()
-	_anticharge_label.custom_minimum_size = Vector2(40, 0)
+	_anticharge_label.custom_minimum_size = Vector2(34, 0)
 	_anticharge_label.text = "33%"
 	row2.add_child(_anticharge_label)
 
-	wrapper.add_child(row2)
+	vbox.add_child(row2)
 
-	# Row 3: Direction toggles + Parallel switch
-	var row3: HBoxContainer = HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 4)
+	# Direction row
+	var dir_row: HBoxContainer = HBoxContainer.new()
+	dir_row.add_theme_constant_override("separation", 2)
 
 	var dir_lbl: Label = Label.new()
-	dir_lbl.text = "Direction:"
-	row3.add_child(dir_lbl)
+	dir_lbl.text = "Dir:"
+	dir_row.add_child(dir_lbl)
 
 	var axes: Array = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+	var default_dirs: Array = ["+Z", "-Z"]
 	for axis_name: String in axes:
 		var btn: Button = Button.new()
 		btn.text = axis_name
 		btn.toggle_mode = true
-		btn.custom_minimum_size = Vector2(36, 0)
+		btn.button_pressed = axis_name in default_dirs
+		btn.custom_minimum_size = Vector2(32, 0)
 		btn.pressed.connect(_on_direction_toggled)
-		row3.add_child(btn)
+		dir_row.add_child(btn)
 		_dir_buttons[axis_name] = btn
 
-	var sep2: VSeparator = VSeparator.new()
-	row3.add_child(sep2)
+	vbox.add_child(dir_row)
 
-	_exit_holes_btn = Button.new()
-	_exit_holes_btn.text = "Exit dots"
-	_exit_holes_btn.toggle_mode = true
-	_exit_holes_btn.button_pressed = false
-	_exit_holes_btn.tooltip_text = "Show exit points on ghost sphere"
-	_exit_holes_btn.pressed.connect(_on_exit_holes_toggled)
-	row3.add_child(_exit_holes_btn)
+	var sep_mid: HSeparator = HSeparator.new()
+	vbox.add_child(sep_mid)
 
-	_blank_btn = Button.new()
+	# Toggle grid: 2 columns of CheckButtons
+	var toggle_grid: GridContainer = GridContainer.new()
+	toggle_grid.columns = 2
+	toggle_grid.add_theme_constant_override("h_separation", 16)
+	toggle_grid.add_theme_constant_override("v_separation", 2)
+
+	_heatmap_btn = CheckButton.new()
+	_heatmap_btn.text = "Heatmap"
+	_heatmap_btn.button_pressed = true
+	_heatmap_btn.tooltip_text = "Accumulate emission pattern as heatmap on sphere"
+	_heatmap_btn.pressed.connect(_on_heatmap_toggled)
+	toggle_grid.add_child(_heatmap_btn)
+
+	_zone_btn = CheckButton.new()
+	_zone_btn.text = "Zone"
+	_zone_btn.button_pressed = true
+	_zone_btn.tooltip_text = "Zone collision: polar pass-through + equatorial deflection"
+	_zone_btn.pressed.connect(_on_zone_toggled)
+	toggle_grid.add_child(_zone_btn)
+
+	_sprinkler_btn = CheckButton.new()
+	_sprinkler_btn.text = "Emission"
+	_sprinkler_btn.button_pressed = true
+	_sprinkler_btn.tooltip_text = "Pole emission: charge enters at spin poles, exits equator"
+	_sprinkler_btn.pressed.connect(_on_sprinkler_toggled)
+	toggle_grid.add_child(_sprinkler_btn)
+
+	_decay_btn = CheckButton.new()
+	_decay_btn.text = "Decay"
+	_decay_btn.button_pressed = false
+	_decay_btn.tooltip_text = "Fade old heatmap hits over time (off = accumulate forever)"
+	_decay_btn.pressed.connect(_on_decay_toggled)
+	toggle_grid.add_child(_decay_btn)
+
+	_capsule_btn = CheckButton.new()
+	_capsule_btn.text = "Capsules"
+	_capsule_btn.button_pressed = false
+	_capsule_btn.tooltip_text = "Show trace capsule collision geometry"
+	_capsule_btn.pressed.connect(_on_capsule_toggled)
+	toggle_grid.add_child(_capsule_btn)
+
+	_blank_btn = CheckButton.new()
 	_blank_btn.text = "Blank"
-	_blank_btn.toggle_mode = true
 	_blank_btn.button_pressed = false
 	_blank_btn.tooltip_text = "Hide charge cloud (exit dots remain)"
 	_blank_btn.pressed.connect(_on_blank_toggled)
-	row3.add_child(_blank_btn)
+	toggle_grid.add_child(_blank_btn)
 
-	_stream_btn = Button.new()
-	_stream_btn.text = "Stream"
-	_stream_btn.toggle_mode = true
-	_stream_btn.button_pressed = false
-	_stream_btn.tooltip_text = "Continuous flow instead of synchronized waves"
-	_stream_btn.pressed.connect(_on_stream_toggled)
-	row3.add_child(_stream_btn)
+	_exit_holes_btn = CheckButton.new()
+	_exit_holes_btn.text = "Exit dots"
+	_exit_holes_btn.button_pressed = false
+	_exit_holes_btn.tooltip_text = "Show exit points on ghost sphere"
+	_exit_holes_btn.pressed.connect(_on_exit_holes_toggled)
+	toggle_grid.add_child(_exit_holes_btn)
 
-	_pointer_btn = Button.new()
-	_pointer_btn.text = "Hits"
-	_pointer_btn.toggle_mode = true
-	_pointer_btn.button_pressed = false
-	_pointer_btn.tooltip_text = "Show collision hit points with outgoing direction"
-	_pointer_btn.pressed.connect(_on_pointer_toggled)
-	row3.add_child(_pointer_btn)
-
-	_heatmap_btn = Button.new()
-	_heatmap_btn.text = "Heatmap"
-	_heatmap_btn.toggle_mode = true
-	_heatmap_btn.button_pressed = false
-	_heatmap_btn.tooltip_text = "Accumulate emission pattern as heatmap on sphere"
-	_heatmap_btn.pressed.connect(_on_heatmap_toggled)
-	row3.add_child(_heatmap_btn)
-
-	_chirality_btn = Button.new()
-	_chirality_btn.text = "Chiral"
-	_chirality_btn.toggle_mode = true
-	_chirality_btn.button_pressed = true
-	_chirality_btn.tooltip_text = "Chirality-dependent collision angles (same-spin=soft, opposite=hard)"
-	_chirality_btn.pressed.connect(_on_chirality_toggled)
-	row3.add_child(_chirality_btn)
-
-	wrapper.add_child(row3)
+	vbox.add_child(toggle_grid)
 
 	_emission_label = Label.new()
 	_emission_label.text = ""
-	wrapper.add_child(_emission_label)
+	_emission_label.modulate = Color(0.8, 0.9, 0.7, 1)
+	vbox.add_child(_emission_label)
 
-	return wrapper
+	add_child(panel)
+
+
+func _build_angle_graph_panel() -> void:
+	_angle_graph_panel = PanelContainer.new()
+	_angle_graph_panel.anchor_left = 1.0
+	_angle_graph_panel.anchor_right = 1.0
+	_angle_graph_panel.anchor_top = 1.0
+	_angle_graph_panel.anchor_bottom = 1.0
+	_angle_graph_panel.offset_left = -340
+	_angle_graph_panel.offset_right = -16
+	_angle_graph_panel.offset_top = -180
+	_angle_graph_panel.offset_bottom = -16
+	_angle_graph_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_angle_graph_panel.visible = false
+
+	var graph_script: GDScript = load("res://scripts/exit_angle_graph.gd")
+	_angle_graph = Control.new()
+	_angle_graph.set_script(graph_script)
+	_angle_graph.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_angle_graph_panel.add_child(_angle_graph)
+
+	add_child(_angle_graph_panel)
 
 
 func _on_field_start_pressed() -> void:
 	if _field_sim:
+		if _focus:
+			var outermost: int = int(_focus.call("get_outermost_level"))
+			if outermost < 9:
+				_emission_label.text = "Field requires baryon tier (level 9+)"
+				return
 		var count: int = int(_field_count_spin.value)
 		_field_sim.start_field(count)
 		_field_start_btn.disabled = true
@@ -631,30 +706,39 @@ func _on_field_reset_pressed() -> void:
 		_field_start_btn.disabled = false
 		_field_stop_btn.disabled = true
 		_field_reset_btn.disabled = true
-		_field_count_label.text = "Field: off"
+		_field_count_label.text = "off"
 	_reset_field_controls()
 
 
 func _reset_field_controls() -> void:
+	_field_start_btn.disabled = false
+	_field_stop_btn.disabled = true
+	_field_reset_btn.disabled = true
+	_field_count_label.text = "off"
+	var default_dirs: Array = ["+Z", "-Z"]
 	for key: String in _dir_buttons:
-		_dir_buttons[key].button_pressed = false
+		_dir_buttons[key].button_pressed = key in default_dirs
 	_exit_holes_btn.button_pressed = false
-	_pointer_btn.button_pressed = false
-	_heatmap_btn.button_pressed = false
+	_heatmap_btn.button_pressed = true
 	_blank_btn.button_pressed = false
-	_stream_btn.button_pressed = false
+	_zone_btn.button_pressed = true
+	_sprinkler_btn.button_pressed = true
+	_capsule_btn.button_pressed = false
+	_decay_btn.button_pressed = false
 	_anticharge_slider.set_value_no_signal(33.0)
 	_anticharge_label.text = "33%"
 	if _field_sim:
-		_field_sim.set_direction_mask(0)
 		_field_sim.set_direction_strength(0.0)
 		_field_sim.set_direction_scatter(0.0)
 		_field_sim.set_photon_ratio(0.67)
 		_field_sim.set_show_exit_holes(false)
-		_field_sim.set_show_collision_pointers(false)
-		_field_sim.set_show_heatmap(false)
+		_field_sim.set_show_heatmap(true)
+		_field_sim.set_heatmap_decay(false)
 		_field_sim.set_cloud_blanked(false)
-		_field_sim.set_stream_mode(false)
+		_field_sim.set_zone_collision(true)
+		_field_sim.set_sprinkler_emission(true)
+		_field_sim.set_show_capsules(false)
+		_apply_field_direction()
 
 
 func _on_anticharge_changed(value: float) -> void:
@@ -678,25 +762,31 @@ func _on_blank_toggled() -> void:
 		_field_sim.set_cloud_blanked(_blank_btn.button_pressed)
 
 
-func _on_stream_toggled() -> void:
-	if _field_sim:
-		_field_sim.set_stream_mode(_stream_btn.button_pressed)
-
-
-func _on_pointer_toggled() -> void:
-	if _field_sim:
-		_field_sim.set_show_collision_pointers(_pointer_btn.button_pressed)
-
-
 func _on_heatmap_toggled() -> void:
 	if _field_sim:
 		_field_sim.set_show_heatmap(_heatmap_btn.button_pressed)
 
 
-func _on_chirality_toggled() -> void:
+
+
+func _on_zone_toggled() -> void:
 	if _field_sim:
-		var strength: float = 0.15 if _chirality_btn.button_pressed else 0.0
-		_field_sim.call("set_chirality_strength", strength)
+		_field_sim.set_zone_collision(_zone_btn.button_pressed)
+
+
+func _on_sprinkler_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_sprinkler_emission(_sprinkler_btn.button_pressed)
+
+
+func _on_capsule_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_show_capsules(_capsule_btn.button_pressed)
+
+
+func _on_decay_toggled() -> void:
+	if _field_sim:
+		_field_sim.set_heatmap_decay(_decay_btn.button_pressed)
 
 
 func _apply_field_direction() -> void:
@@ -729,16 +819,39 @@ func _update_field_readout() -> void:
 
 	if _field_sim.is_running():
 		var count: int = _field_sim.get_photon_count()
-		_field_count_label.text = "Field: %dK" % (count / 1000)
+		_field_count_label.text = "%dK" % (count / 1000)
 		if _show_heatmap_readout():
-			var angle: float = _field_sim.get_mean_emission_angle()
+			var angle: float = _field_sim.get_mean_exit_latitude()
 			var hits: int = _field_sim.get_heatmap_total_hits()
-			_emission_label.text = "Mean exit angle: %.1f°  (n=%d)" % [angle, hits]
+			_emission_label.text = "Mean lat: %.1f° (n=%d)" % [angle, hits]
 		else:
 			_emission_label.text = ""
 	else:
-		_field_count_label.text = "Field: off"
+		_field_count_label.text = "off"
 		_emission_label.text = ""
+
+
+func _update_angle_graph() -> void:
+	if _angle_graph == null or _angle_graph_panel == null:
+		return
+	if not _field_sim:
+		_angle_graph_panel.visible = false
+		return
+
+	var show: bool = _field_sim.is_running() and _show_heatmap_readout()
+	_angle_graph_panel.visible = show
+	if not show:
+		return
+
+	# Update every 6th frame (~10 Hz) to save compute
+	_graph_update_tick += 1
+	if _graph_update_tick % 6 != 0:
+		return
+
+	var histogram: PackedFloat32Array = _field_sim.get_exit_angle_histogram()
+	var sample_n: int = _field_sim.get_exit_angle_sample_count()
+	var mean_deg: float = _field_sim.get_mean_exit_latitude()
+	_angle_graph.update_data(histogram, sample_n, mean_deg)
 
 
 func _format_level_label(level: int) -> String:

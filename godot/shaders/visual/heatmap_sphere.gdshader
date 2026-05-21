@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_add, depth_draw_never, cull_back, unshaded;
+render_mode blend_mix, depth_draw_never, cull_back, unshaded;
 
 uniform sampler2D heatmap_texture : filter_linear;
 uniform float opacity : hint_range(0.0, 1.0) = 0.7;
@@ -23,17 +23,34 @@ void fragment() {
 	float ccw = tex.g;
 	float total = cw + ccw;
 
-	if (total < 0.01) {
-		ALPHA = 0.0;
-	} else {
-		// Dominant chirality sets the hue; ratio sets saturation
-		float dominance = abs(cw - ccw) / total; // 0=even split, 1=pure
-		vec3 cw_hue  = vec3(0.2, 0.5, 1.0);  // blue
-		vec3 ccw_hue = vec3(1.0, 0.35, 0.15); // red-orange
-		vec3 hue = (cw >= ccw) ? cw_hue : ccw_hue;
-		vec3 col = mix(vec3(0.7, 0.7, 0.7), hue, dominance) * total;
+	vec3 base_color = vec3(0.02, 0.02, 0.05);
 
-		ALBEDO = col;
-		ALPHA = total * opacity;
+	if (total < 0.01) {
+		ALBEDO = base_color;
+		ALPHA = opacity * 0.4;
+	} else {
+		// High gamma: only peaks near max are bright
+		float t = pow(clamp(total, 0.0, 1.0), 3.0);
+
+		// Heat ramp: near-black -> dark red -> orange -> white
+		vec3 color;
+		if (t < 0.25) {
+			color = mix(vec3(0.03, 0.01, 0.03), vec3(0.6, 0.05, 0.0), t * 4.0);
+		} else if (t < 0.5) {
+			color = mix(vec3(0.6, 0.05, 0.0), vec3(1.0, 0.5, 0.0), (t - 0.25) * 4.0);
+		} else if (t < 0.75) {
+			color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.85, 0.3), (t - 0.5) * 4.0);
+		} else {
+			color = mix(vec3(1.0, 0.85, 0.3), vec3(1.0, 1.0, 0.95), (t - 0.75) * 4.0);
+		}
+
+		// Subtle CW/CCW tint shift — gated by signal strength to
+		// prevent blue bleed at low intensities near the poles
+		float ratio = (cw - ccw) / max(total, 0.001);
+		color += vec3(-0.08, -0.04, 0.12) * ratio * smoothstep(0.0, 0.05, t);
+		color = max(color, vec3(0.0));
+
+		ALBEDO = color;
+		ALPHA = mix(opacity * 0.4, min(opacity, 0.9), sqrt(t));
 	}
 }

@@ -9,10 +9,14 @@ use crate::spin_stack::SpinStack;
 use crate::types::{level_amplitude, level_spec, level_tier_label};
 use crate::units;
 
-/// Default trace ring-buffer capacity. At 60Hz physics tick with `min_step`
-/// filtering, this gives several seconds of history at modest spin rates and
-/// caps GPU work for the line-strip rebuild.
-const PATH_TRACE_CAPACITY: usize = 8192;
+/// Ring-buffer capacity for the visual path trace. With adaptive substepping
+/// the buffer fills faster, so 32K samples keeps several outer rotations
+/// visible. The collision GPU buffer is separate and smaller (4096 segments).
+const PATH_TRACE_CAPACITY: usize = 32768;
+
+/// Max segments for collision/capsule upload — must match the GPU storage
+/// buffer allocation in field_sim.gd (4096 × 64 bytes = 256KB).
+const COLLISION_TRACE_CAP: usize = 4096;
 /// Default minimum movement (natural units) between consecutive recorded
 /// samples. The base photon has radius 1, so 0.005 r is fine but not absurd.
 const PATH_TRACE_MIN_STEP: f64 = 0.005;
@@ -44,6 +48,7 @@ pub struct FocusParticle {
     linear_dir_preset: u8,
     composed_pos: DVec3,
     prev_composed_pos: DVec3,
+    composed_vel: DVec3,
     crest_markers: Vec<DVec3>,
     trough_markers: Vec<DVec3>,
     prev_outer_half_period: i64,
@@ -89,6 +94,7 @@ impl INode3D for FocusParticle {
             linear_dir_preset: 0,
             composed_pos: DVec3::ZERO,
             prev_composed_pos: DVec3::ZERO,
+            composed_vel: DVec3::ZERO,
             crest_markers: Vec::new(),
             trough_markers: Vec::new(),
             prev_outer_half_period: i64::MIN,
@@ -99,59 +105,73 @@ impl INode3D for FocusParticle {
     }
 
     fn physics_process(&mut self, delta: f64) {
-        self.last_physics_delta = delta;
-        self.stack.advance(delta, self.time_scale);
+        // Adaptive substepping: keep angular advance < 0.15 rad per substep
+        let substeps = self.stack.substeps_needed(delta, self.time_scale, 0.15);
+        let sub_dt = delta / substeps as f64;
+        self.last_physics_delta = sub_dt;
 
         let eff_r = self.stack.effective_radius();
         let adaptive_step = PATH_TRACE_MIN_STEP * eff_r.max(1.0);
         self.path.set_min_step(adaptive_step);
         self.surface_path.set_min_step(adaptive_step);
-
-        let (local_pos, rot) = self.stack.compose();
-
-        if self.linear_enabled {
-            self.linear_offset +=
-                direction_vec(self.linear_dir_preset) * self.linear_speed * delta * self.time_scale;
-        }
-
-        let world_pos = local_pos + self.linear_offset;
-        let vel = if delta > 1e-12 {
-            (world_pos - self.prev_composed_pos) / delta
-        } else {
-            DVec3::ZERO
-        };
-        self.prev_composed_pos = world_pos;
-        self.composed_pos = world_pos;
         let trace_radius = eff_r * TRACE_CAPSULE_SCALE as f64;
-        self.path.record(world_pos, trace_radius, vel);
 
-        let pole = rot * DVec3::Y;
-        self.surface_path.record(world_pos + pole, trace_radius, vel);
+        let mut rot = glam::DQuat::IDENTITY;
 
-        if self.linear_enabled {
-            if let Some(outer) = self.stack.outermost_orbital() {
-                if outer.angular_velocity.abs() > 1e-12 {
-                    let hp = (outer.current_angle / PI).floor() as i64;
-                    if self.prev_outer_half_period != i64::MIN
-                        && hp != self.prev_outer_half_period
-                    {
-                        if hp & 1 == 0 {
-                            if self.crest_markers.len() >= 256 {
-                                self.crest_markers.remove(0);
+        for _ in 0..substeps {
+            self.stack.advance(sub_dt, self.time_scale);
+            let (local_pos, step_rot) = self.stack.compose();
+            rot = step_rot;
+
+            if self.linear_enabled {
+                self.linear_offset += direction_vec(self.linear_dir_preset)
+                    * self.linear_speed
+                    * sub_dt
+                    * self.time_scale;
+            }
+
+            let world_pos = local_pos + self.linear_offset;
+            let vel = if sub_dt > 1e-12 {
+                (world_pos - self.prev_composed_pos) / sub_dt
+            } else {
+                DVec3::ZERO
+            };
+            self.prev_composed_pos = world_pos;
+            self.composed_pos = world_pos;
+            self.composed_vel = vel;
+
+            self.path.record(world_pos, trace_radius, vel);
+
+            let pole = self.stack.outermost_spin_axis();
+            self.surface_path.record(world_pos + pole, trace_radius, vel);
+
+            if self.linear_enabled {
+                if let Some(outer) = self.stack.outermost_orbital() {
+                    if outer.angular_velocity.abs() > 1e-12 {
+                        let hp = (outer.current_angle / PI).floor() as i64;
+                        if self.prev_outer_half_period != i64::MIN
+                            && hp != self.prev_outer_half_period
+                        {
+                            if hp & 1 == 0 {
+                                if self.crest_markers.len() >= 256 {
+                                    self.crest_markers.remove(0);
+                                }
+                                self.crest_markers.push(world_pos);
+                            } else {
+                                if self.trough_markers.len() >= 256 {
+                                    self.trough_markers.remove(0);
+                                }
+                                self.trough_markers.push(world_pos);
                             }
-                            self.crest_markers.push(world_pos);
-                        } else {
-                            if self.trough_markers.len() >= 256 {
-                                self.trough_markers.remove(0);
-                            }
-                            self.trough_markers.push(world_pos);
                         }
+                        self.prev_outer_half_period = hp;
                     }
-                    self.prev_outer_half_period = hp;
                 }
             }
         }
 
+        // Apply final position + orientation to the Godot node
+        let world_pos = self.composed_pos;
         let g_pos = Vector3::new(
             world_pos.x as f32 * WORLD_SCALE,
             world_pos.y as f32 * WORLD_SCALE,
@@ -221,6 +241,35 @@ impl FocusParticle {
     #[func]
     fn effective_radius(&self) -> f64 {
         self.stack.effective_radius()
+    }
+
+    #[func]
+    fn get_outermost_level(&self) -> i32 {
+        self.stack.level_count() as i32
+    }
+
+    #[func]
+    fn get_spin_axis(&self) -> Vector3 {
+        let a = self.stack.outermost_spin_axis();
+        Vector3::new(a.x as f32, a.y as f32, a.z as f32)
+    }
+
+    #[func]
+    fn get_composed_position_natural(&self) -> Vector3 {
+        Vector3::new(
+            self.composed_pos.x as f32,
+            self.composed_pos.y as f32,
+            self.composed_pos.z as f32,
+        )
+    }
+
+    #[func]
+    fn get_composed_velocity_natural(&self) -> Vector3 {
+        Vector3::new(
+            self.composed_vel.x as f32,
+            self.composed_vel.y as f32,
+            self.composed_vel.z as f32,
+        )
     }
 
     /// Base solid radius (no spin envelope). Used for collision spheres.
@@ -704,15 +753,29 @@ impl FocusParticle {
         self.clear_all_traces();
     }
 
-    /// Number of path-trace samples to display in snake mode: one quarter
-    /// of the outermost ghost sphere's rotation period in physics ticks.
-    /// Returns 0 when no orbital level is spinning (fallback to full trail).
+    /// Number of path-trace samples for collision geometry: one full rotation
+    /// of the second-outermost orbital (level N-1). This covers the inner
+    /// structure that charge actually interacts with, without wasting the GPU
+    /// collision buffer on the slow outermost sweep. Capped at
+    /// `COLLISION_TRACE_CAP` to match the GPU storage buffer allocation.
     #[func]
     fn snake_trace_length(&self) -> i32 {
         let dt = self.last_physics_delta;
         if dt < 1e-12 {
             return 0;
         }
+        // Prefer the inner orbital (N-1): full rotation period
+        if let Some(inner) = self.stack.second_outermost_orbital() {
+            if inner.angular_velocity.abs() > 1e-12 {
+                let angle_per_tick =
+                    inner.angular_velocity.abs() * dt * self.time_scale / inner.orbit_radius();
+                if angle_per_tick > 1e-12 {
+                    let ticks = TAU / angle_per_tick;
+                    return (ticks.round() as i32).clamp(8, COLLISION_TRACE_CAP as i32);
+                }
+            }
+        }
+        // Fallback: quarter of outermost
         match self.stack.outermost_orbital() {
             Some(outer) if outer.angular_velocity.abs() > 1e-12 => {
                 let angle_per_tick =
@@ -720,9 +783,8 @@ impl FocusParticle {
                 if angle_per_tick < 1e-12 {
                     return 0;
                 }
-                let ticks_per_rotation = TAU / angle_per_tick;
-                let quarter = (ticks_per_rotation / 4.0).round() as i32;
-                quarter.clamp(8, PATH_TRACE_CAPACITY as i32)
+                let ticks = TAU / angle_per_tick;
+                ((ticks / 4.0).round() as i32).clamp(8, COLLISION_TRACE_CAP as i32)
             }
             _ => 0,
         }
