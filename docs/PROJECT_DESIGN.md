@@ -388,12 +388,16 @@ Each frame, the focus particle's position is computed by summing every active sp
 - [x] *Trace capsule radius scales with effective_radius*
 - [ ] *Field presets (Earth, Solar Wind, Vacuum, Custom)*
 
-### *M5: Multi-Particle Interactions*
-- [ ] *Support multiple focus particles (each with full spin stack)*
-- [ ] *Inter-particle field interactions*
-- [ ] *Test scenarios: electron near proton, two protons, proton + neutron pairs*
-- [ ] *Alpha particle (helium nucleus) formation test*
-- [ ] *H2 molecule orientation test*
+### *M5: Atom-Building Mode (Phase 2)*
+
+*See [M5_ATOM_BUILDING_PLAN.md](M5_ATOM_BUILDING_PLAN.md) for full design.*
+
+*New simulation mode: particles interact via emission profiles (Phase 1 histogram data), not full spin stacks. Two-field unified force model (gravity 1/r² + charge 1/r⁴), Velocity Verlet integration, profile-based mesh rendering.*
+
+- [ ] *Phase 2a: Profile loader, force model, integrator, basic rendering*
+- [ ] *Phase 2b: Hydrogen — electron capture, H₂ bond formation, calibration*
+- [ ] *Phase 2c: Nuclear presets — alpha, helium, carbon, simple molecules*
+- [ ] *Phase 2d: Tools — spawning UI, force vectors, energy readout, export*
 
 ### *M6: Polish and Verification*
 - [ ] *Compare proton emission pattern against 30° prediction*

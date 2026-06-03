@@ -407,6 +407,10 @@ func get_exit_angle_sample_count() -> int:
 	return int(_rust_sim.call("get_exit_angle_sample_count"))
 
 
+func get_exit_angle_histogram_signed() -> PackedFloat32Array:
+	return _rust_sim.call("get_exit_angle_histogram_signed")
+
+
 func _update_heatmap_texture(eff_r: float) -> void:
 	var buf: PackedFloat32Array = _rust_sim.call("get_heatmap_buffer")
 	if buf.size() == 0:

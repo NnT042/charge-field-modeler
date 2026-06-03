@@ -71,6 +71,9 @@ pub struct FieldSim {
     /// Accumulated histogram of exit POSITION latitude (matches heatmap).
     /// 90 bins, 1° each: bin 0 = equator (0°), bin 89 = pole (89°).
     exit_angle_bins: [u64; 90],
+    /// Signed histogram: 180 bins covering -90° to +89°.
+    /// Bin 0 = -90° (south pole), bin 90 = 0° (equator), bin 179 = +89°.
+    exit_angle_bins_signed: [u64; 180],
     exit_angle_total: u64,
     /// Sum of position-based exit latitudes (degrees) for mean calculation.
     exit_latitude_sum: f64,
@@ -120,6 +123,7 @@ impl INode for FieldSim {
             emission_angle_sum: 0.0,
             emission_angle_count: 0,
             exit_angle_bins: [0u64; 90],
+            exit_angle_bins_signed: [0u64; 180],
             exit_angle_total: 0,
             exit_latitude_sum: 0.0,
             chirality_strength: 0.15,
@@ -420,6 +424,7 @@ impl FieldSim {
         self.heatmap_ccw.fill(0.0);
         self.emission_angle_sum = 0.0;
         self.exit_angle_bins = [0u64; 90];
+        self.exit_angle_bins_signed = [0u64; 180];
         self.exit_angle_total = 0;
         self.exit_latitude_sum = 0.0;
         self.emission_angle_count = 0;
@@ -682,6 +687,9 @@ impl FieldSim {
                     let lat_deg = lat.abs().to_degrees();
                     let hist_bin = (lat_deg as usize).min(89);
                     self.exit_angle_bins[hist_bin] += 1;
+                    let lat_deg_signed = lat.to_degrees();
+                    let signed_bin = ((lat_deg_signed + 90.0) as usize).min(179);
+                    self.exit_angle_bins_signed[signed_bin] += 1;
                     self.exit_angle_total += 1;
                     self.exit_latitude_sum += lat_deg as f64;
 
@@ -839,6 +847,22 @@ impl FieldSim {
         arr
     }
 
+    /// 180-element signed histogram: percentage per 1° bin from -90° to +89°.
+    #[func]
+    fn get_exit_angle_histogram_signed(&self) -> PackedFloat32Array {
+        let mut arr = PackedFloat32Array::new();
+        arr.resize(180);
+        let total = self.exit_angle_total;
+        if total == 0 {
+            return arr;
+        }
+        let inv_n = 100.0 / total as f32;
+        for i in 0..180 {
+            arr[i] = self.exit_angle_bins_signed[i] as f32 * inv_n;
+        }
+        arr
+    }
+
     /// Total number of exits accumulated in the histogram.
     #[func]
     fn get_exit_angle_sample_count(&self) -> i32 {
@@ -857,6 +881,7 @@ impl FieldSim {
         self.emission_angle_sum = 0.0;
         self.emission_angle_count = 0;
         self.exit_angle_bins = [0u64; 90];
+        self.exit_angle_bins_signed = [0u64; 180];
         self.exit_angle_total = 0;
         self.exit_latitude_sum = 0.0;
     }

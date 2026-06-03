@@ -1,5 +1,6 @@
 use godot::prelude::*;
 
+mod atom_sim;
 mod field_sim;
 mod focus_particle;
 mod path_trace;

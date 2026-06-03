@@ -24,15 +24,10 @@ var _field_stop_btn: Button
 var _field_reset_btn: Button
 var _field_count_label: Label
 var _field_count_spin: SpinBox
-var _anticharge_slider: HSlider
-var _anticharge_label: Label
 var _dir_buttons: Dictionary = {}
 var _exit_holes_btn: Button
 var _heatmap_btn: Button
-var _zone_btn: Button
-var _sprinkler_btn: Button
 var _capsule_btn: Button
-var _decay_btn: Button
 var _blank_btn: Button
 var _emission_label: Label
 var _preset_dropdown: OptionButton
@@ -49,6 +44,8 @@ var _prev_level_count: int = 0
 var _angle_graph: Control
 var _angle_graph_panel: PanelContainer
 var _graph_update_tick: int = 0
+var _graph_mode_btn: Button
+var _graph_status_label: Label
 
 
 func _ready() -> void:
@@ -74,7 +71,7 @@ func _ready() -> void:
 		_annul_buttons[i].pressed.connect(_on_annul_pressed.bind(level))
 
 	%TimeScaleSlider.value_changed.connect(_on_time_scale_changed)
-	%LinearSpeedSlider.value_changed.connect(_on_linear_speed_changed)
+	%TimeScaleSpinBox.value_changed.connect(_on_time_scale_spinbox_changed)
 	_apply_time_scale(%TimeScaleSlider.value)
 	_refresh_row_states()
 
@@ -92,7 +89,6 @@ func _ready() -> void:
 		%SideBtn.pressed.connect(_camera_rig.snap_right)
 		%TopBtn.pressed.connect(_camera_rig.snap_top)
 		%IsoBtn.pressed.connect(_camera_rig.snap_iso)
-		%HomeBtn.pressed.connect(_camera_rig.snap_default)
 		%FitBtn.pressed.connect(_camera_rig.auto_fit)
 
 	_build_field_panel()
@@ -102,6 +98,10 @@ func _ready() -> void:
 	if _field_sim:
 		_apply_field_direction()
 		_field_sim.set_show_heatmap(true)
+		_field_sim.set_cloud_blanked(true)
+		_field_sim.set_show_capsules(true)
+		_field_sim.set_zone_collision(true)
+		_field_sim.set_sprinkler_emission(true)
 		_field_sim.call("set_chirality_strength", 0.15)
 
 
@@ -110,12 +110,19 @@ func _build_tier_tabs() -> void:
 	_tab_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tab_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var tier_names: Array = ["Charge Photon (1-4)", "High Photon (5-8)", "Electron/Meson (9-12)", "Uberon (13-15)"]
+	var tab_labels: Array = ["1-4", "5-8", "9-12", "13-15"]
+	var tier_titles: Array = ["Charge Photon", "High Photon", "Electron / Meson", "Uberon"]
 
 	for tier in TIER_COUNT:
 		var tab_vbox: VBoxContainer = VBoxContainer.new()
-		tab_vbox.name = tier_names[tier]
+		tab_vbox.name = tab_labels[tier]
 		tab_vbox.add_theme_constant_override("separation", 4)
+
+		var title: Label = Label.new()
+		title.text = tier_titles[tier]
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title.add_theme_font_size_override("font_size", 13)
+		tab_vbox.add_child(title)
 
 		if tier == 0:
 			var help: Label = Label.new()
@@ -218,8 +225,12 @@ func _process(_delta: float) -> void:
 
 	# Readouts
 	%ParticleLabel.text = String(_focus.call("classification"))
-	%SignatureLabel.text = String(_focus.call("signature"))
-	%RadiusLabel.text = "%d r" % int(_focus.call("effective_radius"))
+	%SignatureLabel.text = String(_focus.call("current_tier_signature"))
+	var eff_r: float = float(_focus.call("effective_radius"))
+	if eff_r < 10.0:
+		%RadiusLabel.text = "%.1f r" % eff_r
+	else:
+		%RadiusLabel.text = "%d r" % int(eff_r)
 	if active > 0:
 		var top_v: float = float(_focus.call("get_level_velocity", active))
 		%TopOmegaLabel.text = "%+0.3f c (lvl %d)" % [top_v, active]
@@ -227,35 +238,36 @@ func _process(_delta: float) -> void:
 		%TopOmegaLabel.text = "—"
 	%FpsLabel.text = "%d" % Engine.get_frames_per_second()
 
-	# Linear state
+	# Linear state — lock off if >8 levels
 	var linear_on: bool = bool(_focus.call("is_linear_enabled"))
-	%LinearSpeedSlider.editable = linear_on
+	if linear_on and active > 8:
+		_focus.call("set_linear_enabled", false)
+		linear_on = false
+	%LinearBtn.disabled = active > 8
 	if linear_on:
-		var spd: float = float(_focus.call("get_linear_speed"))
-		if not %LinearSpeedSlider.has_focus():
-			%LinearSpeedSlider.set_value_no_signal(spd)
-		%LinearSpeedValue.text = "%.3f c" % spd
 		var dir_label: String = String(_focus.call("get_linear_direction_label"))
-		%LinearVelLabel.text = "%.3f c (%s)" % [spd, dir_label]
+		%LinearVelLabel.text = "c (%s)" % dir_label
 	else:
-		%LinearSpeedValue.text = "—"
 		%LinearVelLabel.text = "at rest"
-	var wl: float = float(_focus.call("get_wavelength"))
-	if wl > 0.01:
-		%WavelengthLabel.text = "%.2f r" % wl
-	else:
-		var char_wl: float = float(_focus.call("get_characteristic_wavelength"))
-		if char_wl > 0.01:
-			%WavelengthLabel.text = "%.2f r (at c)" % char_wl
+
+	# Wavelength + EM band only shown during linear motion
+	var show_wave: bool = linear_on
+	$ReadoutPanel/Margin/VBox/WavelengthRow.visible = show_wave
+	$ReadoutPanel/Margin/VBox/WavelengthSIRow.visible = show_wave
+	$ReadoutPanel/Margin/VBox/EMBandRow.visible = show_wave
+	if show_wave:
+		var wl: float = float(_focus.call("get_wavelength"))
+		if wl > 0.01:
+			%WavelengthLabel.text = "%.2f r" % wl
 		else:
 			%WavelengthLabel.text = "—"
+		%WavelengthSILabel.text = String(_focus.call("get_wavelength_si"))
+		%EMBandLabel.text = String(_focus.call("get_em_band"))
+		var em_color: Color = Color(_focus.call("get_wavelength_color"))
+		%EMColorSwatch.color = em_color
 
-	# SI wavelength and EM band
-	var wl_si: String = String(_focus.call("get_wavelength_si"))
-	%WavelengthSILabel.text = wl_si
-	%EMBandLabel.text = String(_focus.call("get_em_band"))
-	var em_color: Color = Color(_focus.call("get_wavelength_color"))
-	%EMColorSwatch.color = em_color
+	# Hide axes legend — axis colors are on the level labels instead
+	$ReadoutPanel/Margin/VBox/AxisLegend.visible = false
 
 	_update_field_readout()
 	_update_angle_graph()
@@ -282,15 +294,7 @@ func _on_slider_changed(value: float, level: int) -> void:
 		return
 	var active: int = int(_focus.call("level_count"))
 	if level > active:
-		for prev in range(1, level):
-			if prev > active:
-				_focus.call("activate_next")
-			_focus.call("set_level_velocity", prev, 1.0)
-			_sliders[prev - 1].set_value_no_signal(1.0)
-		if int(_focus.call("level_count")) < level:
-			_focus.call("activate_next")
-		if _field_sim:
-			_field_sim.clear_exit_holes()
+		_auto_activate_up_to(level, active)
 		_refresh_row_states()
 	_focus.call("set_level_velocity", level, value)
 
@@ -301,17 +305,27 @@ func _on_spinbox_changed(value: float, level: int) -> void:
 		return
 	var active: int = int(_focus.call("level_count"))
 	if level > active:
-		for prev in range(1, level):
-			if prev > active:
-				_focus.call("activate_next")
-			_focus.call("set_level_velocity", prev, 1.0)
-			_sliders[prev - 1].set_value_no_signal(1.0)
-		if int(_focus.call("level_count")) < level:
-			_focus.call("activate_next")
-		if _field_sim:
-			_field_sim.clear_exit_holes()
+		_auto_activate_up_to(level, active)
 		_refresh_row_states()
 	_focus.call("set_level_velocity", level, value)
+
+
+func _auto_activate_up_to(target_level: int, was_active: int) -> void:
+	for prev in range(1, target_level):
+		if prev <= was_active:
+			var existing_v: float = float(_focus.call("get_level_velocity", prev))
+			if absf(existing_v) < 1.0 - 1e-6:
+				var sat_v: float = 1.0 if existing_v >= 0.0 else -1.0
+				_focus.call("set_level_velocity", prev, sat_v)
+				_sliders[prev - 1].set_value_no_signal(sat_v)
+		else:
+			_focus.call("activate_next")
+			_focus.call("set_level_velocity", prev, 1.0)
+			_sliders[prev - 1].set_value_no_signal(1.0)
+	if int(_focus.call("level_count")) < target_level:
+		_focus.call("activate_next")
+	if _field_sim:
+		_field_sim.clear_exit_holes()
 
 
 func _on_reverse_pressed(level: int) -> void:
@@ -345,10 +359,11 @@ func _on_annul_pressed(level: int) -> void:
 
 
 func _on_time_scale_changed(slider_log: float) -> void:
-	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0], 0.02)
+	var snapped: float = _snap_to_targets(slider_log, [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 0.02)
 	if snapped != slider_log:
 		%TimeScaleSlider.set_value_no_signal(snapped)
 		slider_log = snapped
+	%TimeScaleSpinBox.set_value_no_signal(slider_log)
 	_apply_time_scale(slider_log)
 
 
@@ -359,10 +374,9 @@ func _snap_to_targets(value: float, targets: Array, deadzone: float) -> float:
 	return value
 
 
-func _on_linear_speed_changed(value: float) -> void:
-	if _focus == null:
-		return
-	_focus.call("set_linear_speed", value)
+func _on_time_scale_spinbox_changed(value: float) -> void:
+	%TimeScaleSlider.set_value_no_signal(value)
+	_apply_time_scale(value)
 
 
 # ---- Toolbar handlers ----
@@ -389,7 +403,19 @@ func _on_clear_btn_pressed() -> void:
 func _on_linear_btn_pressed() -> void:
 	if _focus:
 		var current: bool = bool(_focus.call("is_linear_enabled"))
-		_focus.call("set_linear_enabled", not current)
+		if current:
+			_focus.call("set_linear_enabled", false)
+		else:
+			var active: int = int(_focus.call("level_count"))
+			if active > 8:
+				return
+			_focus.call("set_linear_speed", 1.0)
+			_focus.call("set_linear_enabled", true)
+			# Lock field sim off during linear motion
+			if _field_sim and _field_sim.is_running():
+				_field_sim.stop_field()
+				_field_start_btn.disabled = false
+				_field_stop_btn.disabled = true
 
 
 func _on_dir_btn_pressed() -> void:
@@ -397,6 +423,15 @@ func _on_dir_btn_pressed() -> void:
 		var current: int = int(_focus.call("get_linear_direction_preset"))
 		var count: int = int(_focus.call("get_linear_direction_count"))
 		_focus.call("set_linear_direction_preset", (current + 1) % count)
+
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if (event as InputEventKey).keycode == KEY_TAB:
+		get_viewport().set_input_as_handled()
+		get_tree().change_scene_to_file("res://scenes/atom_mode.tscn")
+		return
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -407,8 +442,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_set_paused(not _paused)
 		KEY_L:
 			if _focus != null:
-				var current: bool = bool(_focus.call("is_linear_enabled"))
-				_focus.call("set_linear_enabled", not current)
+				_on_linear_btn_pressed()
 		KEY_F:
 			if _field_renderer:
 				_field_renderer.toggle_visible()
@@ -431,9 +465,8 @@ func _on_reset_pressed() -> void:
 		_sliders[i].set_value_no_signal(0.0)
 		_spinboxes[i].set_value_no_signal(0.0)
 	%TimeScaleSlider.set_value_no_signal(0.0)
+	%TimeScaleSpinBox.set_value_no_signal(0.0)
 	_apply_time_scale(0.0)
-	%LinearSpeedSlider.set_value_no_signal(0.0)
-	%LinearSpeedSlider.editable = false
 	if _field_sim:
 		_field_sim.reset_field()
 	_reset_field_controls()
@@ -458,11 +491,18 @@ func _refresh_row_states() -> void:
 	for i in PHASE_MAX_LEVEL:
 		var level: int = i + 1
 		var is_active: bool = level <= active
-		_sliders[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
+		var alpha: float = 1.0 if is_active else 0.5
+		_sliders[i].modulate = Color(1, 1, 1, alpha)
 		_spinboxes[i].editable = true
-		_spinboxes[i].modulate = Color(1, 1, 1, 1) if is_active else Color(1, 1, 1, 0.5)
+		_spinboxes[i].modulate = Color(1, 1, 1, alpha)
 		_reverse_buttons[i].disabled = not is_active
 		_annul_buttons[i].disabled = not is_active
+		var spin_type: String = String(_focus.call("spin_type_label", level))
+		match spin_type:
+			"x": _level_labels[i].modulate = Color(1.0, 0.5, 0.5, alpha)
+			"y": _level_labels[i].modulate = Color(0.5, 1.0, 0.5, alpha)
+			"z": _level_labels[i].modulate = Color(0.55, 0.7, 1.0, alpha)
+			_: _level_labels[i].modulate = Color(1, 1, 1, alpha)
 
 	for tier in TIER_COUNT:
 		_tab_container.set_tab_disabled(tier, false)
@@ -476,7 +516,7 @@ func _build_field_panel() -> void:
 	panel.anchor_bottom = 1.0
 	panel.offset_left = 16
 	panel.offset_right = 340
-	panel.offset_top = -310
+	panel.offset_top = -260
 	panel.offset_bottom = -16
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 
@@ -528,7 +568,7 @@ func _build_field_panel() -> void:
 
 	vbox.add_child(row1)
 
-	# Row 2: Photon count
+	# Row 2: Photon count (no anticharge slider — hardcoded to 33%)
 	var row2: HBoxContainer = HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 4)
 
@@ -544,26 +584,6 @@ func _build_field_panel() -> void:
 	_field_count_spin.custom_minimum_size = Vector2(90, 0)
 	_field_count_spin.tooltip_text = "Number of charge photons (50-100k)"
 	row2.add_child(_field_count_spin)
-
-	var ac_lbl: Label = Label.new()
-	ac_lbl.text = "  AC:"
-	row2.add_child(ac_lbl)
-
-	_anticharge_slider = HSlider.new()
-	_anticharge_slider.min_value = 0.0
-	_anticharge_slider.max_value = 100.0
-	_anticharge_slider.step = 1.0
-	_anticharge_slider.value = 33.0
-	_anticharge_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_anticharge_slider.custom_minimum_size = Vector2(50, 0)
-	_anticharge_slider.tooltip_text = "Percentage of anti-charge photons"
-	_anticharge_slider.value_changed.connect(_on_anticharge_changed)
-	row2.add_child(_anticharge_slider)
-
-	_anticharge_label = Label.new()
-	_anticharge_label.custom_minimum_size = Vector2(34, 0)
-	_anticharge_label.text = "33%"
-	row2.add_child(_anticharge_label)
 
 	vbox.add_child(row2)
 
@@ -605,38 +625,17 @@ func _build_field_panel() -> void:
 	_heatmap_btn.pressed.connect(_on_heatmap_toggled)
 	toggle_grid.add_child(_heatmap_btn)
 
-	_zone_btn = CheckButton.new()
-	_zone_btn.text = "Zone"
-	_zone_btn.button_pressed = true
-	_zone_btn.tooltip_text = "Zone collision: polar pass-through + equatorial deflection"
-	_zone_btn.pressed.connect(_on_zone_toggled)
-	toggle_grid.add_child(_zone_btn)
-
-	_sprinkler_btn = CheckButton.new()
-	_sprinkler_btn.text = "Emission"
-	_sprinkler_btn.button_pressed = true
-	_sprinkler_btn.tooltip_text = "Pole emission: charge enters at spin poles, exits equator"
-	_sprinkler_btn.pressed.connect(_on_sprinkler_toggled)
-	toggle_grid.add_child(_sprinkler_btn)
-
-	_decay_btn = CheckButton.new()
-	_decay_btn.text = "Decay"
-	_decay_btn.button_pressed = false
-	_decay_btn.tooltip_text = "Fade old heatmap hits over time (off = accumulate forever)"
-	_decay_btn.pressed.connect(_on_decay_toggled)
-	toggle_grid.add_child(_decay_btn)
-
 	_capsule_btn = CheckButton.new()
-	_capsule_btn.text = "Capsules"
-	_capsule_btn.button_pressed = false
-	_capsule_btn.tooltip_text = "Show trace capsule collision geometry"
+	_capsule_btn.text = "Impact Zone"
+	_capsule_btn.button_pressed = true
+	_capsule_btn.tooltip_text = "Highlight the orbit trace collision zone"
 	_capsule_btn.pressed.connect(_on_capsule_toggled)
 	toggle_grid.add_child(_capsule_btn)
 
 	_blank_btn = CheckButton.new()
-	_blank_btn.text = "Blank"
+	_blank_btn.text = "Show Photons"
 	_blank_btn.button_pressed = false
-	_blank_btn.tooltip_text = "Hide charge cloud (exit dots remain)"
+	_blank_btn.tooltip_text = "Render the charge photon cloud (heavy on GPU)"
 	_blank_btn.pressed.connect(_on_blank_toggled)
 	toggle_grid.add_child(_blank_btn)
 
@@ -663,18 +662,48 @@ func _build_angle_graph_panel() -> void:
 	_angle_graph_panel.anchor_right = 1.0
 	_angle_graph_panel.anchor_top = 1.0
 	_angle_graph_panel.anchor_bottom = 1.0
-	_angle_graph_panel.offset_left = -340
+	_angle_graph_panel.offset_left = -380
 	_angle_graph_panel.offset_right = -16
-	_angle_graph_panel.offset_top = -180
+	_angle_graph_panel.offset_top = -210
 	_angle_graph_panel.offset_bottom = -16
 	_angle_graph_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_angle_graph_panel.visible = false
 
+	var outer_vbox: VBoxContainer = VBoxContainer.new()
+	outer_vbox.add_theme_constant_override("separation", 2)
+	_angle_graph_panel.add_child(outer_vbox)
+
 	var graph_script: GDScript = load("res://scripts/exit_angle_graph.gd")
 	_angle_graph = Control.new()
 	_angle_graph.set_script(graph_script)
-	_angle_graph.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_angle_graph_panel.add_child(_angle_graph)
+	_angle_graph.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer_vbox.add_child(_angle_graph)
+
+	var btn_row: HBoxContainer = HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 4)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+
+	var mode_btn: Button = Button.new()
+	mode_btn.text = "|lat|"
+	mode_btn.tooltip_text = "Toggle between |exit latitude| and signed ±90° view"
+	mode_btn.pressed.connect(_on_graph_mode_toggled)
+	btn_row.add_child(mode_btn)
+	_graph_mode_btn = mode_btn
+
+	var export_btn: Button = Button.new()
+	export_btn.text = "Export"
+	export_btn.tooltip_text = "Save histogram data to CSV file"
+	export_btn.pressed.connect(_on_graph_export_pressed)
+	btn_row.add_child(export_btn)
+
+	_graph_status_label = Label.new()
+	_graph_status_label.text = ""
+	_graph_status_label.add_theme_font_size_override("font_size", 11)
+	_graph_status_label.modulate = Color(0.8, 0.9, 0.7, 1)
+	btn_row.add_child(_graph_status_label)
+	btn_row.add_spacer(false)
+
+	outer_vbox.add_child(btn_row)
 
 	add_child(_angle_graph_panel)
 
@@ -682,10 +711,14 @@ func _build_angle_graph_panel() -> void:
 func _on_field_start_pressed() -> void:
 	if _field_sim:
 		if _focus:
+			if bool(_focus.call("is_linear_enabled")):
+				_emission_label.text = "Disable linear motion first"
+				return
 			var outermost: int = int(_focus.call("get_outermost_level"))
 			if outermost < 9:
 				_emission_label.text = "Field requires baryon tier (level 9+)"
 				return
+		_auto_set_field_directions()
 		var count: int = int(_field_count_spin.value)
 		_field_sim.start_field(count)
 		_field_start_btn.disabled = true
@@ -715,37 +748,22 @@ func _reset_field_controls() -> void:
 	_field_stop_btn.disabled = true
 	_field_reset_btn.disabled = true
 	_field_count_label.text = "off"
-	var default_dirs: Array = ["+Z", "-Z"]
-	for key: String in _dir_buttons:
-		_dir_buttons[key].button_pressed = key in default_dirs
+	_auto_set_field_directions()
 	_exit_holes_btn.button_pressed = false
 	_heatmap_btn.button_pressed = true
 	_blank_btn.button_pressed = false
-	_zone_btn.button_pressed = true
-	_sprinkler_btn.button_pressed = true
-	_capsule_btn.button_pressed = false
-	_decay_btn.button_pressed = false
-	_anticharge_slider.set_value_no_signal(33.0)
-	_anticharge_label.text = "33%"
+	_capsule_btn.button_pressed = true
 	if _field_sim:
 		_field_sim.set_direction_strength(0.0)
 		_field_sim.set_direction_scatter(0.0)
 		_field_sim.set_photon_ratio(0.67)
 		_field_sim.set_show_exit_holes(false)
 		_field_sim.set_show_heatmap(true)
-		_field_sim.set_heatmap_decay(false)
-		_field_sim.set_cloud_blanked(false)
+		_field_sim.set_cloud_blanked(true)
 		_field_sim.set_zone_collision(true)
 		_field_sim.set_sprinkler_emission(true)
-		_field_sim.set_show_capsules(false)
+		_field_sim.set_show_capsules(true)
 		_apply_field_direction()
-
-
-func _on_anticharge_changed(value: float) -> void:
-	var pct: int = int(value)
-	_anticharge_label.text = "%d%%" % pct
-	if _field_sim:
-		_field_sim.set_photon_ratio(1.0 - value / 100.0)
 
 
 func _on_direction_toggled() -> void:
@@ -759,7 +777,7 @@ func _on_exit_holes_toggled() -> void:
 
 func _on_blank_toggled() -> void:
 	if _field_sim:
-		_field_sim.set_cloud_blanked(_blank_btn.button_pressed)
+		_field_sim.set_cloud_blanked(not _blank_btn.button_pressed)
 
 
 func _on_heatmap_toggled() -> void:
@@ -769,24 +787,23 @@ func _on_heatmap_toggled() -> void:
 
 
 
-func _on_zone_toggled() -> void:
-	if _field_sim:
-		_field_sim.set_zone_collision(_zone_btn.button_pressed)
-
-
-func _on_sprinkler_toggled() -> void:
-	if _field_sim:
-		_field_sim.set_sprinkler_emission(_sprinkler_btn.button_pressed)
-
-
 func _on_capsule_toggled() -> void:
 	if _field_sim:
 		_field_sim.set_show_capsules(_capsule_btn.button_pressed)
 
 
-func _on_decay_toggled() -> void:
-	if _field_sim:
-		_field_sim.set_heatmap_decay(_decay_btn.button_pressed)
+
+func _auto_set_field_directions() -> void:
+	var axis: String = "Z"
+	if _focus:
+		var top_axis: String = String(_focus.call("get_top_orbital_axis"))
+		if not top_axis.is_empty():
+			axis = top_axis
+	var pos_key: String = "+" + axis
+	var neg_key: String = "-" + axis
+	for key: String in _dir_buttons:
+		_dir_buttons[key].button_pressed = key == pos_key or key == neg_key
+	_apply_field_direction()
 
 
 func _apply_field_direction() -> void:
@@ -848,7 +865,11 @@ func _update_angle_graph() -> void:
 	if _graph_update_tick % 6 != 0:
 		return
 
-	var histogram: PackedFloat32Array = _field_sim.get_exit_angle_histogram()
+	var histogram: PackedFloat32Array
+	if _angle_graph.is_signed_mode():
+		histogram = _field_sim.get_exit_angle_histogram_signed()
+	else:
+		histogram = _field_sim.get_exit_angle_histogram()
 	var sample_n: int = _field_sim.get_exit_angle_sample_count()
 	var mean_deg: float = _field_sim.get_mean_exit_latitude()
 	_angle_graph.update_data(histogram, sample_n, mean_deg)
@@ -939,6 +960,7 @@ func _on_preset_selected(index: int) -> void:
 	if preset.has("time_scale_log"):
 		var ts_log: float = float(preset["time_scale_log"])
 		%TimeScaleSlider.set_value_no_signal(ts_log)
+		%TimeScaleSpinBox.set_value_no_signal(ts_log)
 		_apply_time_scale(ts_log)
 
 	var target_tier: int = (count - 1) / LEVELS_PER_TIER
@@ -950,3 +972,42 @@ func _on_preset_selected(index: int) -> void:
 		_trace.clear_trace()
 	if _camera_rig:
 		_camera_rig.auto_fit()
+
+
+func _on_graph_mode_toggled() -> void:
+	if _angle_graph:
+		var new_mode: bool = not _angle_graph.is_signed_mode()
+		_angle_graph.set_signed_mode(new_mode)
+		_graph_mode_btn.text = "±90°" if new_mode else "|lat|"
+
+
+func _on_graph_export_pressed() -> void:
+	if not _field_sim or not _angle_graph:
+		_graph_status_label.text = "No sim running"
+		return
+	var signed: bool = _angle_graph.is_signed_mode()
+	var histogram: PackedFloat32Array
+	if signed:
+		histogram = _field_sim.get_exit_angle_histogram_signed()
+	else:
+		histogram = _field_sim.get_exit_angle_histogram()
+	var sample_n: int = _field_sim.get_exit_angle_sample_count()
+	if sample_n < 10:
+		_graph_status_label.text = "Not enough data"
+		return
+	var particle: String = String(_focus.call("classification")) if _focus else "unknown"
+	var timestamp: String = Time.get_datetime_string_from_system().replace(":", "-")
+	var filename: String = "histogram_%s_%s.csv" % [particle.to_snake_case(), timestamp]
+	var path: String = "user://" + filename
+	var f: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		_graph_status_label.text = "Write failed"
+		return
+	f.store_line("degree,percentage")
+	var deg_min: int = -90 if signed else 0
+	for i in histogram.size():
+		f.store_line("%d,%.4f" % [deg_min + i, histogram[i]])
+	f.close()
+	var abs_path: String = ProjectSettings.globalize_path(path)
+	_graph_status_label.text = filename
+	OS.shell_open(abs_path.get_base_dir())

@@ -109,13 +109,20 @@ impl SpinStack {
         }
     }
 
-    /// Set the level's angular velocity (clamped to [-1, 1]). Returns false
-    /// if the level isn't currently active.
+    /// Set the level's angular velocity (clamped to [-1, 1]). Resets
+    /// `current_angle` to 0 when the velocity actually changes, so the
+    /// traced shape depends only on current velocities, never on history.
+    /// Returns false if the level isn't currently active.
     pub fn set_velocity(&mut self, level_1based: u8, v: f64) -> bool {
         if level_1based == 0 || level_1based as usize > self.levels.len() {
             return false;
         }
-        self.levels[(level_1based - 1) as usize].angular_velocity = v.clamp(-1.0, 1.0);
+        let level = &mut self.levels[(level_1based - 1) as usize];
+        let new_v = v.clamp(-1.0, 1.0);
+        if (new_v - level.angular_velocity).abs() > 1e-9 {
+            level.current_angle = 0.0;
+        }
+        level.angular_velocity = new_v;
         true
     }
 
@@ -299,6 +306,50 @@ impl SpinStack {
         self.levels.last().map_or(1.0, |l| l.amplitude)
     }
 
+    /// Signature of only the outermost active tier (e.g. "+a+x+y+z" for a
+    /// proton's tier-3 levels). Useful for compact readout.
+    pub fn current_tier_signature(&self) -> String {
+        if self.levels.is_empty() {
+            return "(no spin)".to_string();
+        }
+        let max_level = self.levels.last().unwrap().level;
+        let tier_start = ((max_level.saturating_sub(1)) / 4) * 4 + 1;
+        let mut s = String::new();
+        for l in &self.levels {
+            if l.level < tier_start {
+                continue;
+            }
+            let sign = if l.angular_velocity > 0.0 {
+                '+'
+            } else if l.angular_velocity < 0.0 {
+                '-'
+            } else {
+                continue;
+            };
+            s.push(sign);
+            s.push(l.spin_type.signature_letter());
+        }
+        if s.is_empty() {
+            "(idle)".to_string()
+        } else {
+            s
+        }
+    }
+
+    /// Axis letter of the outermost orbital spin ("X", "Y", "Z"), or empty
+    /// string if only axial levels are active.
+    pub fn top_orbital_axis_label(&self) -> &'static str {
+        match self.outermost_orbital() {
+            Some(l) => match l.spin_type {
+                SpinType::X => "X",
+                SpinType::Y => "Y",
+                SpinType::Z => "Z",
+                SpinType::Axial => "",
+            },
+            None => "",
+        }
+    }
+
     /// Spin signature like "+a-x+y+z". Levels with ω=0 are skipped (they
     /// exist in the stack but contribute no chirality yet).
     pub fn signature(&self) -> String {
@@ -363,8 +414,7 @@ impl SpinStack {
             9 => "Electron (at rest)",
             10 => "Meson (a+x)",
             11 => "Muon (a+x+y)",
-            12 => self.baryon_type(),
-            13 => "Baryon (a\u{2084})",
+            12 | 13 => self.baryon_type(),
             14 => "D meson (a\u{2084}+x\u{2084})",
             15 => "Uberon (a\u{2084}+x\u{2084}+y\u{2084})",
             _ => "(unknown)",
@@ -652,5 +702,50 @@ mod tests {
         let mut s = stack_with_levels(4);
         s.truncate_to(8);
         assert_eq!(s.level_count(), 4);
+    }
+
+    /// Changing a level's velocity must reset its current_angle to 0.
+    /// This prevents accumulated angle from prior velocities from
+    /// creating a "frozen rotation" that alters the traced shape.
+    #[test]
+    fn velocity_change_resets_angle() {
+        let mut s = stack_with_levels(12);
+        s.set_velocity(12, 1.0);
+        s.advance(3.7, TAU);
+        let angle_before = s.get(12).unwrap().current_angle;
+        assert!(angle_before.abs() > 0.01, "should have accumulated angle");
+
+        s.set_velocity(12, 0.05);
+        assert_eq!(s.get(12).unwrap().current_angle, 0.0,
+            "velocity change must reset angle to 0");
+    }
+
+    /// Zeroing a level's velocity must reset its angle so it doesn't
+    /// leave a frozen rotation offset in compose().
+    #[test]
+    fn zeroed_velocity_resets_angle() {
+        let mut s = stack_with_levels(12);
+        s.set_velocity(12, 1.0);
+        s.advance(2.3, TAU);
+        let angle_before = s.get(12).unwrap().current_angle;
+        assert!(angle_before.abs() > 0.01);
+
+        s.set_velocity(12, 0.0);
+        assert_eq!(s.get(12).unwrap().current_angle, 0.0,
+            "zeroing velocity must reset angle");
+    }
+
+    /// Setting the same velocity value should NOT reset the angle.
+    #[test]
+    fn same_velocity_preserves_angle() {
+        let mut s = stack_with_levels(3);
+        s.set_velocity(2, 0.5);
+        s.advance(1.0, TAU);
+        let angle = s.get(2).unwrap().current_angle;
+        assert!(angle.abs() > 0.01);
+
+        s.set_velocity(2, 0.5);
+        assert!(approx_eq(s.get(2).unwrap().current_angle, angle),
+            "same velocity should not reset angle");
     }
 }

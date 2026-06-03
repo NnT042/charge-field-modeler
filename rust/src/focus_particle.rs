@@ -244,6 +244,21 @@ impl FocusParticle {
     }
 
     #[func]
+    fn get_radius_si(&self) -> GString {
+        GString::from(units::format_radius_si(self.stack.effective_radius()).as_str())
+    }
+
+    #[func]
+    fn current_tier_signature(&self) -> GString {
+        GString::from(&self.stack.current_tier_signature())
+    }
+
+    #[func]
+    fn get_top_orbital_axis(&self) -> GString {
+        GString::from(self.stack.top_orbital_axis_label())
+    }
+
+    #[func]
     fn get_outermost_level(&self) -> i32 {
         self.stack.level_count() as i32
     }

@@ -90,12 +90,6 @@ layout_mode = 2
 tooltip_text = "Isometric view (5)"
 text = "Iso"
 
-[node name="HomeBtn" type="Button" parent="Toolbar/Margin/HBox"]
-unique_name_in_owner = true
-layout_mode = 2
-tooltip_text = "Reset camera to default (0)"
-text = "Home"
-
 [node name="FitBtn" type="Button" parent="Toolbar/Margin/HBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -136,31 +130,6 @@ text = "Spin Level Controls"
 [node name="Sep" type="HSeparator" parent="ControlPanel/Margin/VBox"]
 layout_mode = 2
 
-[node name="LinearSpeedRow" type="HBoxContainer" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-
-[node name="LinearSpeedLabel" type="Label" parent="ControlPanel/Margin/VBox/LinearSpeedRow"]
-layout_mode = 2
-text = "Speed:"
-
-[node name="LinearSpeedSlider" type="HSlider" parent="ControlPanel/Margin/VBox/LinearSpeedRow"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 1.0
-step = 0.001
-editable = false
-
-[node name="LinearSpeedValue" type="Label" parent="ControlPanel/Margin/VBox/LinearSpeedRow"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
-horizontal_alignment = 2
-text = "—"
-
-[node name="LinearSep" type="HSeparator" parent="ControlPanel/Margin/VBox"]
-layout_mode = 2
-
 [node name="TimeScaleTitle" type="Label" parent="ControlPanel/Margin/VBox"]
 layout_mode = 2
 text = "Time scale (log10x of TAU rad/s @ c)"
@@ -173,10 +142,19 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = -3.0
-max_value = 4.0
+max_value = 8.0
 step = 0.01
-tick_count = 8
+tick_count = 12
 ticks_on_borders = true
+
+[node name="TimeScaleSpinBox" type="SpinBox" parent="ControlPanel/Margin/VBox/TimeScaleRow"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = -3.0
+max_value = 8.0
+step = 0.1
+custom_minimum_size = Vector2(80, 0)
+tooltip_text = "Time scale (log₁₀x)"
 
 [node name="TimeScaleValue" type="Label" parent="ControlPanel/Margin/VBox/TimeScaleRow"]
 unique_name_in_owner = true

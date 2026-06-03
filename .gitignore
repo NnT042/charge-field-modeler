@@ -4,6 +4,11 @@
 # Godot editor cache and export builds
 godot/.godot/
 godot/build/
+godot/webbuild/
+
+# Run logs and test captures
+*.log
+test_screenshot/
 
 # Rust build artifacts
 rust/target/

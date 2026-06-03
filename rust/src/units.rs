@@ -63,6 +63,18 @@ pub fn em_band_detail(wl_nm: f64) -> &'static str {
     }
 }
 
+/// Convert effective_radius (natural units, r=1 for base photon) to SI meters.
+/// The same calibration anchor gives 1 natural unit = 250/π nm ≈ 79.58 nm.
+pub fn format_radius_si(radius_natural: f64) -> String {
+    if radius_natural <= 0.0 {
+        return "—".to_string();
+    }
+    let meters = radius_natural * NM_PER_NATURAL_WL * 1e-9;
+    let exp = meters.log10().floor() as i32;
+    let mantissa = meters / 10.0f64.powi(exp);
+    format!("{:.2}e{} m", mantissa, exp)
+}
+
 pub fn format_wavelength_si(wl_nm: f64) -> String {
     if wl_nm <= 0.0 {
         return "—".to_string();

@@ -1,57 +1,57 @@
 [
   {
-    "name": "Charge Photon (4-spin)",
-    "levels": [1, 1, 1, 0.5],
+    "name": "B-photon (axial)",
+    "levels": [0.05],
     "time_scale_log": 0.0
   },
   {
-    "name": "High Photon (8-spin)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 0.5],
-    "time_scale_log": 0.0
-  },
-  {
-    "name": "Electron (at rest)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "name": "Charge photon",
+    "levels": [1, 1, 1, 0.05],
     "time_scale_log": 1.0
   },
   {
-    "name": "Muon (+a+x+y)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "name": "Non-spinning electron",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 0.05],
     "time_scale_log": 1.0
   },
   {
-    "name": "Proton (+a+x+y+z)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.5],
+    "name": "Electron",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 0.05],
     "time_scale_log": 2.0
   },
   {
-    "name": "Anti-proton (+a-x+y-z)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -0.5],
+    "name": "Positron",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, -0.05],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Meson (a+x)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 0.05],
+    "time_scale_log": 2.0
+  },
+  {
+    "name": "Muon (a+x+y)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.05],
     "time_scale_log": 2.0
   },
   {
     "name": "Neutron (-a-x-y+z)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, 0.5],
-    "time_scale_log": 2.0
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, 0.05],
+    "time_scale_log": 3.0
   },
   {
     "name": "Anti-neutron (+a-x+y+z)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, 0.5],
-    "time_scale_log": 2.0
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, 0.05],
+    "time_scale_log": 3.0
   },
   {
-    "name": "Proton (0.055c outer)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.055],
-    "time_scale_log": 2.0
+    "name": "Proton (+a+x+y+z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.05],
+    "time_scale_log": 3.0
   },
   {
-    "name": "Proton (0.050c outer)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.050],
-    "time_scale_log": 2.0
-  },
-  {
-    "name": "Proton (0.060c outer)",
-    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.060],
-    "time_scale_log": 2.0
+    "name": "Anti-proton (+a-x+y-z)",
+    "levels": [1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -1, 0.05],
+    "time_scale_log": 3.0
   }
 ]

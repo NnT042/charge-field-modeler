@@ -25,7 +25,7 @@ extends Node3D
 
 const _DEFAULT_YAW: float = deg_to_rad(-30.0)
 const _DEFAULT_PITCH_DEG: float = -30.0
-const _DEFAULT_DISTANCE: float = 5.0
+const _DEFAULT_DISTANCE: float = 15.0
 
 var _focus: Node3D
 var _camera: Camera3D

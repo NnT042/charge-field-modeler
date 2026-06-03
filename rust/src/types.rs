@@ -125,8 +125,10 @@ pub fn level_tier_label(level: u8) -> &'static str {
         1..=4 => "charge photon",
         5..=8 => "high photon",
         9 => "electron",
-        10..=12 => "meson",
-        13..=15 => "uberon",
+        10..=11 => "meson",
+        12 => "baryon [no disc]",
+        13 => "baryon [equator disc]",
+        14..=15 => "uberon",
         _ => "(unknown)",
     }
 }
