@@ -427,25 +427,49 @@ Presets are rigid: internal structure is locked, only the composite emission pro
 - [x] Mode switching (Tab key toggles Phase 1 ↔ Phase 2)
 - [x] On-screen diagnostics (particle positions, velocities, distances, KE, coupling constants)
 
-### Phase 2b: Hydrogen
+### Phase 2b: Hydrogen — COMPLETE (session 28)
 
-- [ ] Spawn proton + electron, verify electron capture at pole
-- [ ] Spawn two hydrogen atoms, verify H₂ bond formation
-- [ ] Test all 8 spin/pole combinations — confirm 4 bond, 4 repel
-- [ ] Calibrate G_q / C_q ratio for stable bonds
-- [ ] Calibrate ambient field for realistic bond vibration
-- [ ] Profile-based mesh rendering (surface of revolution from histogram)
+- [x] Spawn proton + electron, verify electron capture at pole
+      (`hydrogen_capture` test; wall-riding orbit at r=1.3, θ≈11°,
+      v_tan = corotation speed — diatom.pdf's "circling the drain" AT the
+      nuclear boundary)
+- [x] Spawn two hydrogen atoms, verify H₂ bond formation
+      (polar bond, vibrating around d≈4.7 — `h2_bond_matrix`)
+- [x] Test all 8 spin/pole combinations — confirm 4 bond, 4 repel
+      (emerges from stream-cushion + stoppered-vortex forces, no coded rule)
+- [x] Calibrate G_q / C_q ratio for stable bonds
+      (constants LOCKED with Mathis-sourced derivations in
+      `Couplings::default()`, rust/src/atom_core.rs; pinned by
+      `derived_constants_equilibrium`)
+- [x] Calibrate ambient field for realistic bond vibration
+      (DEVIATION: the bond standoff comes from the stream-collision cushion
+      vs gravity+intake, not from P_amb — the pairwise shadow term stays
+      available at 0 for environment effects)
+- [x] Profile-based mesh rendering (surface of revolution from histogram)
 
-### Phase 2c: Presets and Heavier Elements
+### Phase 2c: Presets and Heavier Elements — COMPLETE except molecules (session 28)
 
-- [ ] Nuclear preset data format and loader
-- [ ] Composite profile baking (superimpose constituents)
-- [ ] Alpha particle preset
-- [ ] Helium atom: alpha + 2 captured electrons
-- [ ] Carbon, Nitrogen, Oxygen presets
+- [x] Nuclear preset data format and loader
+      (DEVIATION: Rust const data in `atom_core::preset_constituents()`,
+      not JSON — presets must be spawnable headlessly by tests, and GDScript
+      only ever spawns by name)
+- [x] Composite profile baking — REJECTED in favor of rigid groups:
+      constituents stay real particles (per-constituent nearfield lets an
+      electron capture at one specific proton's pole) integrated as one
+      rigid body. A baked profile has no constituent-level nearfield.
+- [x] Alpha particle preset (2p short stack + 2n posts, oxygen.pdf geometry;
+      `alpha_holds_and_conserves`, `alpha_captures_electron`)
+- [x] Helium atom: alpha + 2 captured electrons (`helium_stable`)
+- [x] Carbon, Nitrogen, Oxygen presets (3-alpha stack + polar plugs;
+      `heavier_presets_smoke`)
 - [ ] Simple molecule tests (H₂O, NH₃)
 
 ### Phase 2d: Tools and Polish
+
+Session 28 delivered the polished HUD (scenes/ui/atom_hud.tscn: toolbar,
+scenario buttons, readout panel, debug-hidden tuning sliders, mode-switch
+buttons in both modes) and the headless test loop (docs/M5_TEST_LOOP.md).
+Remaining 2d items:
 
 - [ ] Particle spawning UI (click to place, set type, set orientation)
 - [ ] Real-time force vector visualization (arrows showing F_gravity, F_charge, F_net)
