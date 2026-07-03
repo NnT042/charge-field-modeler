@@ -18,8 +18,13 @@ use glam::DVec3;
 use std::io::Write;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let scenario = args.first().map(String::as_str).unwrap_or("hydrogen");
+    let all_args: Vec<String> = std::env::args().skip(1).collect();
+    // Any arg of the form key=value is a coupling override (for sweeps
+    // without recompiling); the rest are positional.
+    let (overrides, args): (Vec<&String>, Vec<&String>) =
+        all_args.iter().partition(|a| a.contains('='));
+
+    let scenario = args.first().map(|s| s.as_str()).unwrap_or("hydrogen");
     let steps: usize = args
         .get(1)
         .and_then(|s| s.parse().ok())
@@ -28,6 +33,29 @@ fn main() {
     let out_csv = args.get(3).cloned();
 
     let mut core = standard_core();
+    for ov in overrides {
+        let (key, value) = ov.split_once('=').unwrap();
+        let value: f64 = value.parse().unwrap_or_else(|e| {
+            eprintln!("bad override '{ov}': {e}");
+            std::process::exit(2);
+        });
+        let c = &mut core.couplings;
+        match key {
+            "g_q" => c.g_q = value,
+            "c_q" => c.c_q = value,
+            "intake" => c.intake = value,
+            "vortex" => c.vortex = value,
+            "drag" => c.drag = value,
+            "torque" => c.torque = value,
+            "corot" => c.corot = value,
+            "p_amb" => c.ambient_pressure = value,
+            "dt" => core.dt = value,
+            other => {
+                eprintln!("unknown coupling '{other}'");
+                std::process::exit(2);
+            }
+        }
+    }
     let pair: Option<(usize, usize)> = match scenario {
         "hydrogen" => {
             let (p, e) = spawn_hydrogen(&mut core, DVec3::ZERO, DVec3::Y, true, 1.0);
@@ -47,13 +75,14 @@ fn main() {
 
     println!("scenario={scenario} steps={steps} sample_every={sample_every}");
     println!(
-        "couplings: G_q={} C_q={} I_q={} V_q={} D_q={} T_q={} P_amb={}",
+        "couplings: G_q={} C_q={} I_q={} V_q={} D_q={} T_q={} corot={} P_amb={}",
         core.couplings.g_q,
         core.couplings.c_q,
         core.couplings.intake,
         core.couplings.vortex,
         core.couplings.drag,
         core.couplings.torque,
+        core.couplings.corot,
         core.couplings.ambient_pressure,
     );
 

@@ -210,6 +210,16 @@ impl AtomSim {
         self.core.couplings.intake
     }
 
+    #[func]
+    fn set_corot_coupling(&mut self, c: f64) {
+        self.core.couplings.corot = c;
+    }
+
+    #[func]
+    fn get_corot_coupling(&self) -> f64 {
+        self.core.couplings.corot
+    }
+
     /// Auto-calibrate gravity coupling for a circular polar orbit.
     /// See AtomCore::auto_calibrate_polar for the derivation.
     #[func]

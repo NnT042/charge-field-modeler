@@ -47,10 +47,25 @@ pub struct EmissionTable {
 
 impl EmissionTable {
     pub fn sample(&self, cos_theta: f64) -> f64 {
-        let theta = cos_theta.abs().acos(); // bilateral fold: 0..π/2
-        let t = theta / FRAC_PI_2;
+        self.sample_theta(cos_theta.abs().acos()) // bilateral fold: 0..π/2
+    }
+
+    fn sample_theta(&self, theta: f64) -> f64 {
+        let t = (theta / FRAC_PI_2).clamp(0.0, 1.0);
         let idx = ((t * (self.bins.len() - 1) as f64) as usize).min(self.bins.len() - 1);
         self.bins[idx] as f64
+    }
+
+    /// dE/dθ (per radian) at the folded polar angle, central difference.
+    pub fn d_dtheta(&self, cos_theta: f64) -> f64 {
+        let theta = cos_theta.abs().acos();
+        let h = 0.02;
+        let t1 = (theta - h).max(0.0);
+        let t2 = (theta + h).min(FRAC_PI_2);
+        if t2 - t1 < 1e-9 {
+            return 0.0;
+        }
+        (self.sample_theta(t2) - self.sample_theta(t1)) / (t2 - t1)
     }
 
     pub fn from_csv_values(csv: &[f32]) -> Self {
@@ -152,11 +167,19 @@ pub struct VfxParticle {
 }
 
 pub const SOFTENING: f64 = 0.05;
-pub const DAMPING: f64 = 0.9999;
 pub const ANGULAR_DAMPING: f64 = 0.998;
 pub const MIN_RENDER_RADIUS: f32 = 0.15;
 pub const ENVELOPE_MIN_R: f64 = 0.25;
 pub const CONTACT_STIFFNESS: f64 = 100.0;
+
+/// Corotation speed ceiling (fraction of c=1). The polar vortex spins with
+/// the emitter, but matter riding it stays well sub-c — the render-scaled
+/// axial spin rate (TAU·3 ≈ 19 rad/s) would otherwise demand superluminal
+/// corotation at the contact wall, which is exactly the energy injection
+/// that made the session-27 intake vortex slingshot. Sub-c cap per the
+/// spin-model rule that top-level motion stays below c (see
+/// docs/PHYSICS_REFERENCE.md; observed orbital speeds ~0.05c).
+pub const COROT_V_MAX: f64 = 0.25;
 
 // ── Force couplings ──────────────────────────────────────────────────────
 
@@ -176,9 +199,45 @@ pub struct Couplings {
     pub drag: f64,
     /// Polar intake (radial 1/r² sink + channeling toward pole axis, ∝ A²).
     pub intake: f64,
+    /// Corotation drag: pulls tangential velocity toward the local speed of
+    /// the emitter's polar charge vortex (self-limiting tangential drive).
+    pub corot: f64,
 }
 
 impl Default for Couplings {
+    /// LOCKED defaults (M5 lockdown). These are not sliders any more — the
+    /// relationships between them are pinned by the scenario tests
+    /// (`derived_constants_equilibrium`, `hydrogen_orbit_stable_long_run`,
+    /// `h2_bond_matrix`). Change only with a failing test as justification.
+    ///
+    /// Derivation chain:
+    /// - `g_q = 1.0` — definition of the natural force unit (all other
+    ///   couplings are expressed relative to gravity at r=1).
+    /// - `c_q = 500` — sets the equatorial emission wall. With the loaded
+    ///   histograms this puts the free equilibrium radius
+    ///   r_eq = √(C_q·E(θ)·R/(G_q+I_q·A²)) INSIDE the contact wall for polar
+    ///   angles (⇒ captured electrons rest ON the nuclear boundary,
+    ///   milesmathis.com/diatom.pdf & neon.pdf: electrons sit at the nuclear
+    ///   boundary, circling the pole) and far OUTSIDE it near the equator
+    ///   (⇒ equatorial repulsion; bond standoff scale for M2).
+    /// - `intake = 0.5` — polar recycling inflow at half gravity strength at
+    ///   A²=1; the capture funnel. Charge recycles in at the poles and out
+    ///   at the equator (quantumg.html; the vortex capture picture in
+    ///   diatom.pdf where the corrected Bohr radius 9e-9 m is the CAPTURE
+    ///   limit of this vortex, not an orbit radius — fine4.pdf).
+    /// - `corot = 0.5` — relaxation rate of the corotation drag. Steady state
+    ///   is set by COROT_V_MAX, not by this value (self-limiting drag), so
+    ///   any O(0.1–1) value lands the same orbit; 0.5 converges within the
+    ///   capture transient.
+    /// - `drag = 0.3` (doppler) and `vortex = 0.1` (equatorial sprinkler) —
+    ///   retained from M4 field-sim calibration; both are dissipative or
+    ///   pole-dead and do not move the polar orbit (verified by sweep,
+    ///   session 28).
+    /// - `torque = 0.1` — equator-toward-charge alignment (gear-mesh torque,
+    ///   Compton/inverse-Compton collision mechanics).
+    /// - `ambient_pressure = 0.0` — calibrated nonzero in M2 for H₂ bonding
+    ///   (diatom.pdf: the molecular bond is an ambient-charge PUSH into the
+    ///   inter-pole charge minimum, not a pull).
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -188,6 +247,7 @@ impl Default for Couplings {
             vortex: 0.1,
             drag: 0.3,
             intake: 0.5,
+            corot: 0.5,
         }
     }
 }
@@ -517,7 +577,11 @@ impl AtomCore {
         // 3. Forces at new positions
         self.compute_forces();
 
-        // 4. Complete velocity step + damping
+        // 4. Complete velocity step.
+        // No blanket velocity damping: dissipation comes only from physical
+        // channels — doppler drag (radial) and corotation drag (tangential).
+        // A flat 0.9999/step multiplier was what killed tangential orbit
+        // velocity through session 27.
         for i in 0..n {
             let p = &mut self.particles[i];
             let inv_m = 1.0 / self.profiles[p.profile_id].mass;
@@ -526,7 +590,6 @@ impl AtomCore {
 
             p.velocity += a * (dt * 0.5);
             p.angular_velocity += alpha * (dt * 0.5);
-            p.velocity *= DAMPING;
             // Preserve axial spin (intrinsic), only damp tumble/precession
             let pole = p.pole_axis();
             let w_axial = pole * p.angular_velocity.dot(pole);
@@ -599,6 +662,40 @@ impl AtomCore {
                 let f_charge_on_i =
                     cq.c_q * mass_prod * emission_j * absorption_i / r4s * doppler;
 
+                // Meridional emission-pressure gradient (transverse confinement).
+                // The radial charge push above is the r-component of a photon
+                // flux whose density varies with latitude; the θ-component
+                // pushes DOWN the gradient — into the polar channel where
+                // E(θ) ≈ 0. Two jobs: (a) keeps a polar orbiter from drifting
+                // into the equatorial 1/r⁴ wall (the session-26 "transverse
+                // confinement" gap), and (b) makes the charge force the
+                // gradient of Φ ∝ E(θ)·R/3r³ — conservative, so close passes
+                // no longer pump energy into the orbiter.
+                // θ̂ = (d̂·cosθ − pole_nearest)/sinθ, singular only on-axis
+                // where dE/dθ = 0 anyway.
+                {
+                    // i's emission gradient acting on j
+                    let pole_eff_i = pole_i * cos_theta_i.signum();
+                    let sin_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
+                    if sin_i > 1e-6 {
+                        let theta_hat = (d_hat * cos_theta_i.abs() - pole_eff_i) / sin_i;
+                        let de = pi_prof.emission.d_dtheta(cos_theta_i);
+                        let f_conf = -cq.c_q * mass_prod * absorption_j * de / (3.0 * r4s);
+                        self.particles[j].force_accum += theta_hat * f_conf;
+                        self.particles[i].force_accum -= theta_hat * f_conf;
+                    }
+                    // j's emission gradient acting on i
+                    let pole_eff_j = pole_j * cos_theta_j.signum();
+                    let sin_j = (1.0 - cos_theta_j * cos_theta_j).max(0.0).sqrt();
+                    if sin_j > 1e-6 {
+                        let theta_hat = (-d_hat * cos_theta_j.abs() - pole_eff_j) / sin_j;
+                        let de = pj_prof.emission.d_dtheta(cos_theta_j);
+                        let f_conf = -cq.c_q * mass_prod * absorption_i * de / (3.0 * r4s);
+                        self.particles[i].force_accum += theta_hat * f_conf;
+                        self.particles[j].force_accum -= theta_hat * f_conf;
+                    }
+                }
+
                 // Ambient pressure: pushes particles into charge shadows
                 let shadow = (1.0 - emission_i) * (1.0 - emission_j);
                 let f_ambient = cq.ambient_pressure * shadow / r2s;
@@ -650,12 +747,45 @@ impl AtomCore {
                         self.particles[i].force_accum += toward_axis * f_chan;
                     }
 
-                    // NOTE: intake vortex (tangential drag from spinning intake)
-                    // removed — ω≈19 multiplier injects too much energy, causing
-                    // slingshot escape.  The electron spawns with tangential
-                    // velocity; radial intake + channeling should produce orbit
-                    // without tangential drive.  Revisit with a self-limiting
-                    // drag-toward-corotation model if orbits decay.
+                }
+
+                // Corotation drag: the polar charge vortex corotates with the
+                // emitter's axial spin (diatom.pdf — captured electrons "circle
+                // the drain or the pole"; the vortex is what holds them there).
+                // Field angular velocity decays as (r_emitter/r)²; the drag
+                // pulls the orbiter's tangential velocity toward the local
+                // field velocity, capped at COROT_V_MAX (sub-c). Self-limiting:
+                // the force vanishes as v_tan → v_corot, so unlike the removed
+                // session-27 intake vortex it cannot accelerate past corotation
+                // (no slingshot). Gated by A²(θ) to the polar funnel.
+                if cq.corot.abs() > 1e-12 {
+                    let v_tan_vec = v_rel - d_hat * v_radial;
+
+                    // i's vortex acting on j
+                    let spin_i = self.particles[i].angular_velocity.dot(pole_i);
+                    let omega_i = spin_i * (pi_prof.radius / r).powi(2);
+                    let mut v_corot = pole_i.cross(d_vec) * omega_i;
+                    let vc_len = v_corot.length();
+                    if vc_len > COROT_V_MAX {
+                        v_corot *= COROT_V_MAX / vc_len;
+                    }
+                    let f_corot =
+                        (v_corot - v_tan_vec) * (cq.corot * mass_prod * ai2 / r2s);
+                    self.particles[j].force_accum += f_corot;
+                    self.particles[i].force_accum -= f_corot;
+
+                    // j's vortex acting on i (relative velocities negate)
+                    let spin_j = self.particles[j].angular_velocity.dot(pole_j);
+                    let omega_j = spin_j * (pj_prof.radius / r).powi(2);
+                    let mut v_corot_j = pole_j.cross(-d_vec) * omega_j;
+                    let vcj_len = v_corot_j.length();
+                    if vcj_len > COROT_V_MAX {
+                        v_corot_j *= COROT_V_MAX / vcj_len;
+                    }
+                    let f_corot_i =
+                        (v_corot_j + v_tan_vec) * (cq.corot * mass_prod * aj2 / r2s);
+                    self.particles[i].force_accum += f_corot_i;
+                    self.particles[j].force_accum -= f_corot_i;
                 }
 
                 // Vortex force: spinning emission carries tangential momentum.
@@ -685,13 +815,21 @@ impl AtomCore {
                     }
                 }
 
-                // Contact repulsion: hard-sphere boundary at sum of radii
+                // Contact repulsion: hard-sphere boundary at sum of radii,
+                // with near-critical normal damping while approaching —
+                // an undamped spring against the 1/1836-mass electron
+                // (dt·ω ≈ 0.2) scatters it chaotically ("bunny hopping").
                 let ri = pi_prof.radius.max(MIN_RENDER_RADIUS as f64);
                 let rj = pj_prof.radius.max(MIN_RENDER_RADIUS as f64);
                 let r_contact = ri + rj;
                 if r < r_contact {
                     let overlap = r_contact - r;
-                    let f_contact = CONTACT_STIFFNESS * overlap;
+                    let mut f_contact = CONTACT_STIFFNESS * overlap;
+                    if v_radial < 0.0 {
+                        let m_red = mass_prod / (pi_prof.mass + pj_prof.mass);
+                        let c_n = 2.0 * (CONTACT_STIFFNESS * m_red).sqrt();
+                        f_contact -= c_n * v_radial; // approaching ⇒ extra repulsion
+                    }
                     self.particles[j].force_accum += d_hat * f_contact;
                     self.particles[i].force_accum -= d_hat * f_contact;
                 }
