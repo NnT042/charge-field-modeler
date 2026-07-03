@@ -17,8 +17,7 @@ func _ready() -> void:
 
 	%PauseBtn.pressed.connect(func(): _mode.toggle_pause())
 	%ResetBtn.pressed.connect(func(): _mode.reset_scenario())
-	%ProfilesBtn.toggled.connect(func(on: bool): _mode.show_force_profile = on)
-	%VfxBtn.toggled.connect(func(on: bool): _mode.atom_sim.set_vfx_enabled(on))
+	%CloudsBtn.toggled.connect(func(on: bool): _mode.set_clouds(on))
 	%DebugBtn.toggled.connect(func(on: bool): _mode.set_tuning_visible(on))
 	%ModeBtn.pressed.connect(func():
 		get_tree().change_scene_to_file("res://scenes/main.tscn"))
@@ -95,8 +94,7 @@ func _process(_delta: float) -> void:
 	%FpsLabel.text = "%d" % Engine.get_frames_per_second()
 
 	# Mirror toggles that can also change via hotkeys.
-	%ProfilesBtn.set_pressed_no_signal(_mode.show_force_profile)
-	%VfxBtn.set_pressed_no_signal(bool(sim.is_vfx_enabled()))
+	%CloudsBtn.set_pressed_no_signal(_mode.show_clouds)
 	if int(%SubstepsSlider.value) != _mode.substeps_per_frame:
 		%SubstepsSlider.set_value_no_signal(_mode.substeps_per_frame)
 		%SubstepsSpinBox.set_value_no_signal(_mode.substeps_per_frame)

@@ -14,20 +14,19 @@ var tuning_panel: CanvasLayer
 
 var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
-var substeps_per_frame := 20
+var substeps_per_frame := 100
 var paused := false
-var show_force_profile := true
+var show_clouds := true          # emission smoke + intake vortex clouds
+var show_profile_rings := false  # debug: the old wireframe rings
+var show_pole_lines := false     # debug: center-to-pole indicator lines
 var current_scenario := "protons"
 
 # Force profile visualization
 var _fp_mesh: ImmediateMesh
 var _fp_mi: MeshInstance3D
 
-# VFX sprinkler
+# Charge cloud renderer (emission smoke + intake vortex billboards)
 var vfx_mmi: MultiMeshInstance3D
-const VFX_EMIT_PER_PARTICLE := 8
-const VFX_SPEED := 4.0
-const VFX_LIFETIME := 0.4
 
 # Wall-riding orbit geometry (matches Rust atom_scenarios.rs: the M1 orbit
 # settles at r=1.3, θ≈11°, v_tan = corotation speed 0.25).
@@ -56,7 +55,7 @@ func _create_tuning_panel() -> void:
 	# shows it for physics experiments.
 	tuning_panel = preload("res://scripts/atom_tuning_panel.gd").new()
 	add_child(tuning_panel)
-	tuning_panel.setup(atom_sim)
+	tuning_panel.setup(atom_sim, self)
 	tuning_panel.visible = false
 
 func set_tuning_visible(on: bool) -> void:
@@ -81,8 +80,12 @@ func _create_envelope_renderers():
 
 	for type_name in profile_ids:
 		var pid: int = profile_ids[type_name]
-		var mesh_buf: PackedFloat32Array = atom_sim.build_profile_mesh(pid, 32, 24)
-		var mesh := _build_array_mesh(mesh_buf, envelope_mat)
+		# A trace model saved from spin mode ("Save Model") replaces the
+		# lathe envelope as this type's visual body.
+		var mesh: ArrayMesh = _try_load_trace_mesh(type_name, envelope_mat)
+		if mesh == null:
+			var mesh_buf: PackedFloat32Array = atom_sim.build_profile_mesh(pid, 32, 24)
+			mesh = _build_array_mesh(mesh_buf, envelope_mat)
 
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -93,6 +96,53 @@ func _create_envelope_renderers():
 		mmi.multimesh = mm
 		add_child(mmi)
 		type_renderers[type_name] = mmi
+
+## Load a normalized spin-mode path trace (user://trace_models/<type>.csv)
+## as a line-strip mesh in local units of the particle radius, or null.
+func _try_load_trace_mesh(type_name: String, mat: Material) -> ArrayMesh:
+	var path := "user://trace_models/%s.csv" % type_name
+	if not FileAccess.file_exists(path):
+		return null
+	var f = FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return null
+	var verts := PackedVector3Array()
+	var is_header := true
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line.is_empty():
+			continue
+		if is_header:
+			is_header = false
+			continue
+		var parts := line.split(",")
+		if parts.size() >= 3:
+			verts.append(Vector3(float(parts[0]), float(parts[1]), float(parts[2])))
+	if verts.size() < 2:
+		return null
+
+	var type_colors := {
+		"proton": Color(0.92, 0.30, 0.20),
+		"neutron": Color(0.35, 0.50, 0.92),
+		"electron": Color(0.20, 0.90, 0.35),
+	}
+	var c: Color = type_colors.get(type_name, Color(0.7, 0.7, 0.7))
+	var colors := PackedColorArray()
+	colors.resize(verts.size())
+	var inv_last := 1.0 / float(verts.size() - 1)
+	for i in range(verts.size()):
+		var t := float(i) * inv_last
+		colors[i] = Color(c.r, c.g, c.b, lerp(0.25, 0.9, t))
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
+	mesh.surface_set_material(0, mat)
+	print("[atom] using trace model for ", type_name, " (", verts.size(), " points)")
+	return mesh
 
 func _build_array_mesh(buf: PackedFloat32Array, mat: Material) -> ArrayMesh:
 	if buf.size() < 2:
@@ -221,8 +271,11 @@ func _create_vfx_renderer() -> void:
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	mat.no_depth_test = true
 
+	# Unit quad — the per-instance transform scale (set in Rust) carries the
+	# actual puff size, so smoke can grow as it drifts.
+	mat.billboard_keep_scale = true
 	var mesh := QuadMesh.new()
-	mesh.size = Vector2(0.06, 0.06)
+	mesh.size = Vector2(1.0, 1.0)
 	mesh.material = mat
 
 	var mm := MultiMesh.new()
@@ -247,8 +300,9 @@ func _create_force_profile_vis() -> void:
 	add_child(_fp_mi)
 
 func _draw_force_profiles() -> void:
+	# Debug-only wireframe rings (superseded by the charge clouds).
 	_fp_mesh.clear_surfaces()
-	if not show_force_profile:
+	if not show_profile_rings:
 		return
 	var n: int = atom_sim.get_particle_count()
 	var base_r: float = 0.2
@@ -285,16 +339,19 @@ func _process(_delta):
 	if not paused and atom_sim.is_running():
 		atom_sim.step_n(substeps_per_frame)
 	_update_rendering()
-	_update_vfx(_delta)
+	_update_clouds(_delta)
 	_draw_force_profiles()
 
-func _update_vfx(delta: float) -> void:
-	if paused or not atom_sim.is_running() or not atom_sim.is_vfx_enabled():
+func set_clouds(on: bool) -> void:
+	show_clouds = on
+	atom_sim.set_vfx_enabled(on)
+
+func _update_clouds(delta: float) -> void:
+	# Clouds keep swirling while paused — they're visualization, not physics.
+	if not atom_sim.is_vfx_enabled():
 		vfx_mmi.multimesh.instance_count = 0
 		return
-	var buf: PackedFloat32Array = atom_sim.advance_vfx(
-		delta, VFX_EMIT_PER_PARTICLE, VFX_SPEED, VFX_LIFETIME
-	)
+	var buf: PackedFloat32Array = atom_sim.advance_clouds(delta)
 	var count: int = buf.size() / 16
 	vfx_mmi.multimesh.instance_count = count
 	if count > 0:
@@ -332,9 +389,7 @@ func _unhandled_key_input(event: InputEvent):
 		KEY_D:
 			spawn_scenario("h2_bond")
 		KEY_F:
-			show_force_profile = not show_force_profile
-		KEY_V:
-			atom_sim.set_vfx_enabled(not atom_sim.is_vfx_enabled())
+			set_clouds(not show_clouds)
 		KEY_BRACKETRIGHT:
 			substeps_per_frame = mini(substeps_per_frame + 5, 200)
 		KEY_BRACKETLEFT:
@@ -360,9 +415,10 @@ func _update_rendering():
 		var buf: PackedFloat32Array = atom_sim.build_multimesh_buffer_for_profile(pid)
 		mmi.multimesh.set_buffer(buf)
 
-	# Pole indicator lines
+	# Pole indicator lines (debug — hidden by default; the Christmas
+	# ornaments are retired)
 	var total: int = atom_sim.get_particle_count()
-	if total == 0:
+	if not show_pole_lines or total == 0:
 		pole_lines.mesh = null
 		return
 	var pole_buf: PackedFloat32Array = atom_sim.build_pole_indicator_buffer()

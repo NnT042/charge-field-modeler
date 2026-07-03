@@ -8,6 +8,7 @@ extends CanvasLayer
 #
 
 var _sim: Node = null
+var _mode: Node = null
 var _rows: Array = []  # each: {slider, value_label, getter, setter, updating}
 
 const PARAMS := [
@@ -22,8 +23,9 @@ const PARAMS := [
 	{"label": "P_amb Ambient", "get": "get_ambient_pressure", "set": "set_ambient_pressure", "min": 0.0, "max": 1.0,  "step": 0.002},
 ]
 
-func setup(sim: Node) -> void:
+func setup(sim: Node, mode: Node = null) -> void:
 	_sim = sim
+	_mode = mode
 	layer = 10
 
 	var panel := PanelContainer.new()
@@ -47,6 +49,20 @@ func setup(sim: Node) -> void:
 
 	for p in PARAMS:
 		_add_row(vbox, p)
+
+	# Debug visualization toggles (superseded visuals, kept for inspection)
+	if _mode != null:
+		vbox.add_child(HSeparator.new())
+		_add_debug_check(vbox, "Pole axis lines", "show_pole_lines")
+		_add_debug_check(vbox, "Profile rings (wireframe)", "show_profile_rings")
+
+func _add_debug_check(parent: VBoxContainer, label: String, prop: String) -> void:
+	var check := CheckBox.new()
+	check.text = label
+	check.add_theme_font_size_override("font_size", 12)
+	check.button_pressed = _mode.get(prop)
+	check.toggled.connect(func(on: bool): _mode.set(prop, on))
+	parent.add_child(check)
 
 func _add_row(parent: VBoxContainer, p: Dictionary) -> void:
 	var row := HBoxContainer.new()

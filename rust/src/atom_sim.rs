@@ -468,22 +468,11 @@ impl AtomSim {
         self.core.pair_distance(a.max(0) as usize, b.max(0) as usize)
     }
 
-    // ── VFX: charge emission sprinkler ───────────────────────────────────
+    // ── Charge cloud VFX (emission smoke + intake vortex) ─────────────────
 
     #[func]
-    fn advance_vfx(
-        &mut self,
-        delta: f64,
-        emit_per_particle: i32,
-        speed: f64,
-        lifetime: f64,
-    ) -> PackedFloat32Array {
-        packed(&self.core.advance_vfx(
-            delta,
-            emit_per_particle.max(0) as usize,
-            speed,
-            lifetime,
-        ))
+    fn advance_clouds(&mut self, delta: f64) -> PackedFloat32Array {
+        packed(&self.core.advance_clouds(delta))
     }
 
     #[func]

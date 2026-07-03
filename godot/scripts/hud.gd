@@ -83,6 +83,7 @@ func _ready() -> void:
 	%LinearBtn.pressed.connect(_on_linear_btn_pressed)
 	%DirBtn.pressed.connect(_on_dir_btn_pressed)
 	%ResetBtn.pressed.connect(_on_reset_pressed)
+	%SaveModelBtn.pressed.connect(_on_save_model_pressed)
 	%ModeBtn.pressed.connect(func():
 		get_tree().change_scene_to_file("res://scenes/atom_mode.tscn"))
 
@@ -400,6 +401,50 @@ func _on_trace_btn_pressed() -> void:
 func _on_clear_btn_pressed() -> void:
 	if _trace:
 		_trace.clear_trace()
+
+
+## Save the current path trace, normalized to the effective radius, as the
+## visual model atom mode uses for this particle type (user://trace_models/).
+func _on_save_model_pressed() -> void:
+	if _focus == null:
+		return
+	var points: PackedVector3Array = _focus.call("get_path_points")
+	if points.size() < 8:
+		_flash_save_btn("No trace yet")
+		return
+	var eff_r: float = _focus.call("effective_radius")
+	if eff_r <= 0.0:
+		eff_r = 1.0
+	# Type name from the classification's first word ("Proton", "Electron",
+	# "Neutron (at rest)" → proton/electron/neutron); atom mode picks up
+	# files matching its profile names.
+	var cls := String(_focus.call("classification")).to_lower()
+	var pname := cls.get_slice(" ", 0).replace("(", "").strip_edges()
+	if pname.is_empty():
+		_flash_save_btn("No classification")
+		return
+	DirAccess.make_dir_recursive_absolute("user://trace_models")
+	var path := "user://trace_models/%s.csv" % pname
+	var f = FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		_flash_save_btn("Write failed")
+		return
+	f.store_line("x,y,z")
+	var step: int = maxi(1, points.size() / 2000)
+	var i: int = 0
+	while i < points.size():
+		var p: Vector3 = points[i] / eff_r
+		f.store_line("%f,%f,%f" % [p.x, p.y, p.z])
+		i += step
+	f.close()
+	print("[hud] saved trace model: ", ProjectSettings.globalize_path(path))
+	_flash_save_btn("Saved: " + pname)
+
+
+func _flash_save_btn(msg: String) -> void:
+	%SaveModelBtn.text = msg
+	var t := get_tree().create_timer(1.8)
+	t.timeout.connect(func(): %SaveModelBtn.text = "Save Model")
 
 
 func _on_linear_btn_pressed() -> void:

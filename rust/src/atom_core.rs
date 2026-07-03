@@ -137,6 +137,8 @@ pub struct ParticleProfile {
     pub emission: EmissionTable,
     pub absorption: EmissionTable,
     pub emission_cdf: EmissionCdf,
+    /// A²-weighted CDF — samples the polar intake cone for the vortex cloud.
+    pub intake_cdf: EmissionCdf,
 }
 
 // ── Sim Particle ──────────────────────────────────────────────────────────
@@ -168,6 +170,10 @@ pub struct Constituent {
     pub local_pos: DVec3,
     pub local_pole: DVec3,
     pub spin_sign: f64,
+    /// Carousel member: rides around the group's stack axis (the alpha's
+    /// neutron posts are not immovable — they roll around the midsection,
+    /// riding the disc outputs between the two protons, staying 180° apart).
+    pub carousel: bool,
 }
 
 /// One alpha block centered at `y` on the stack axis: two protons in a
@@ -185,37 +191,56 @@ fn alpha_block(y: f64) -> Vec<Constituent> {
             local_pos: DVec3::new(0.0, y - 0.9, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
+            carousel: false,
         },
         Constituent {
             profile_name: "proton",
             local_pos: DVec3::new(0.0, y + 0.9, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
+            carousel: false,
         },
         Constituent {
             profile_name: "neutron",
             local_pos: DVec3::new(-0.5, y, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
+            carousel: true,
         },
         Constituent {
             profile_name: "neutron",
             local_pos: DVec3::new(0.5, y, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
+            carousel: true,
         },
     ]
 }
 
-/// Polar plug: a proton (or blocking neutron) plugged into a stack pole
-/// (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton in the south
-/// pole, neutron in the north; O = protons in both poles).
-fn polar_plug(profile_name: &'static str, y: f64) -> Constituent {
+/// Polar plug proton: plugged into a stack pole with its pole PERPENDICULAR
+/// to the stack axis, so its equatorial disc output feeds the stack's open
+/// polar channel (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton
+/// in the south pole, neutron in the north; O = protons in both poles).
+fn plug_proton(y: f64) -> Constituent {
     Constituent {
-        profile_name,
+        profile_name: "proton",
+        local_pos: DVec3::new(0.0, y, 0.0),
+        local_pole: DVec3::X,
+        spin_sign: 1.0,
+        carousel: false,
+    }
+}
+
+/// Polar blocking neutron: keeps its pole ON the stack axis — neutrons
+/// channel pole-to-pole (through-charge), so an axial pole feeds the
+/// stack's channel rather than blowing across it.
+fn plug_neutron(y: f64) -> Constituent {
+    Constituent {
+        profile_name: "neutron",
         local_pos: DVec3::new(0.0, y, 0.0),
         local_pole: DVec3::Y,
         spin_sign: 1.0,
+        carousel: false,
     }
 }
 
@@ -242,8 +267,8 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // the balancing neutron in the north (ammon.pdf).
         "nitrogen" => {
             let mut c = preset_constituents("carbon")?;
-            c.push(polar_plug("proton", -(ALPHA_PITCH + 1.8)));
-            c.push(polar_plug("neutron", ALPHA_PITCH + 1.8));
+            c.push(plug_proton(-(ALPHA_PITCH + 1.8)));
+            c.push(plug_neutron(ALPHA_PITCH + 1.8));
             Some(c)
         }
         // Oxygen: carbon stack + protons plugged in BOTH poles (oxygen.pdf:
@@ -251,10 +276,10 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // stack), plus their companion neutrons alongside.
         "oxygen" => {
             let mut c = preset_constituents("carbon")?;
-            c.push(polar_plug("proton", -(ALPHA_PITCH + 1.8)));
-            c.push(polar_plug("proton", ALPHA_PITCH + 1.8));
-            c.push(polar_plug("neutron", -(ALPHA_PITCH + 2.9)));
-            c.push(polar_plug("neutron", ALPHA_PITCH + 2.9));
+            c.push(plug_proton(-(ALPHA_PITCH + 1.8)));
+            c.push(plug_proton(ALPHA_PITCH + 1.8));
+            c.push(plug_neutron(-(ALPHA_PITCH + 2.9)));
+            c.push(plug_neutron(ALPHA_PITCH + 2.9));
             Some(c)
         }
         _ => None,
@@ -277,6 +302,15 @@ pub struct RigidGroup {
     pub local_orients: Vec<DQuat>,
     /// Intrinsic axial spin rate of each member (rad/s about its own pole).
     pub member_spin: Vec<f64>,
+    /// Accumulated axial spin phase per member — members visibly rotate
+    /// about their own poles even though the group frame is rigid.
+    pub member_spin_phase: Vec<f64>,
+    /// Members that ride the carousel around the group's stack axis
+    /// (alpha neutron posts). Kinematic: preserves all pair distances
+    /// (carousel members are 180° apart, everything else is on-axis).
+    pub carousel: Vec<bool>,
+    pub carousel_rate: f64,
+    pub carousel_phase: f64,
     pub com: DVec3,
     pub velocity: DVec3,
     pub orientation: DQuat,
@@ -292,7 +326,11 @@ pub struct VfxParticle {
     position: DVec3,
     velocity: DVec3,
     age: f64,
+    lifetime: f64,
     color: (f32, f32, f32),
+    base_scale: f32,
+    /// Scale growth per second — smoke expands as it drifts.
+    grow: f32,
 }
 
 pub const SOFTENING: f64 = 0.05;
@@ -408,6 +446,9 @@ pub struct AtomCore {
     rng: Rng,
     vfx_particles: Vec<VfxParticle>,
     pub vfx_enabled: bool,
+    /// Wall-clock accumulator for cloud animation (independent of sim time
+    /// so the visual rotation rate doesn't change with substeps).
+    vfx_time: f64,
 }
 
 impl Default for AtomCore {
@@ -430,7 +471,8 @@ impl AtomCore {
             time: 0.0,
             rng: Rng::new(0xDEAD_BEEF_CAFE),
             vfx_particles: Vec::new(),
-            vfx_enabled: false,
+            vfx_enabled: true,
+            vfx_time: 0.0,
         }
     }
 
@@ -440,6 +482,8 @@ impl AtomCore {
         let emission = EmissionTable::from_csv_values(csv);
         let absorption = emission.complement();
         let emission_cdf = EmissionCdf::from_bins(&emission.bins);
+        let a2_bins: Vec<f32> = absorption.bins.iter().map(|v| v * v).collect();
+        let intake_cdf = EmissionCdf::from_bins(&a2_bins);
         let id = self.profiles.len();
         self.profiles.push(ParticleProfile {
             name: name.to_string(),
@@ -448,6 +492,7 @@ impl AtomCore {
             emission,
             absorption,
             emission_cdf,
+            intake_cdf,
         });
         id
     }
@@ -519,6 +564,7 @@ impl AtomCore {
         let mut local_offsets = Vec::new();
         let mut local_orients = Vec::new();
         let mut member_spin = Vec::new();
+        let mut carousel = Vec::new();
         let mut mass = 0.0;
         let mut inertia = 0.0;
 
@@ -535,15 +581,24 @@ impl AtomCore {
             local_offsets.push(c.local_pos);
             local_orients.push(orientation_from_pole(c.local_pole));
             member_spin.push(spin);
+            carousel.push(c.carousel);
             mass += prof_mass;
             inertia += prof_mass * (c.local_pos.length_squared() + 0.4 * prof_radius * prof_radius);
         }
 
+        let n_members = members.len();
         self.groups.push(RigidGroup {
             members,
             local_offsets,
             local_orients,
             member_spin,
+            member_spin_phase: vec![0.0; n_members],
+            carousel,
+            // Posts ride the disc outputs — they roll in time with the
+            // proton spin (oxygen.pdf: the neutrons keep the protons from
+            // turning by rolling with them, cohering the two fields).
+            carousel_rate: default_spin_rate("proton"),
+            carousel_phase: 0.0,
             com: pos,
             velocity: vel,
             orientation,
@@ -560,30 +615,46 @@ impl AtomCore {
     /// spin — velocity-dependent forces (doppler, corotation) on
     /// constituents need correct member velocities.
     fn sync_group_members(&mut self, gid: usize) {
-        let (members, data): (Vec<usize>, Vec<(DVec3, DQuat, f64)>) = {
+        struct MemberSync {
+            id: usize,
+            offset: DVec3,
+            orient: DQuat,
+            spin: f64,
+            spin_phase: f64,
+            carousel: bool,
+        }
+        let (data, com, vel, orientation, omega, car_rot, car_omega) = {
             let g = &self.groups[gid];
-            (
-                g.members.clone(),
-                g.local_offsets
-                    .iter()
-                    .zip(&g.local_orients)
-                    .zip(&g.member_spin)
-                    .map(|((off, orient), spin)| (*off, *orient, *spin))
-                    .collect(),
-            )
+            let data: Vec<MemberSync> = (0..g.members.len())
+                .map(|k| MemberSync {
+                    id: g.members[k],
+                    offset: g.local_offsets[k],
+                    orient: g.local_orients[k],
+                    spin: g.member_spin[k],
+                    spin_phase: g.member_spin_phase[k],
+                    carousel: g.carousel[k],
+                })
+                .collect();
+            let car_rot = DQuat::from_rotation_y(g.carousel_phase);
+            // Carousel angular velocity in world space (about the stack axis)
+            let car_omega = (g.orientation * DVec3::Y) * g.carousel_rate;
+            (data, g.com, g.velocity, g.orientation, g.angular_velocity, car_rot, car_omega)
         };
-        let (com, vel, orientation, omega) = {
-            let g = &self.groups[gid];
-            (g.com, g.velocity, g.orientation, g.angular_velocity)
-        };
-        for (&m, (off, local_orient, spin)) in members.iter().zip(data) {
-            let world_off = orientation * off;
-            let p = &mut self.particles[m];
+        for ms in data {
+            let local_off = if ms.carousel { car_rot * ms.offset } else { ms.offset };
+            let world_off = orientation * local_off;
+            let p = &mut self.particles[ms.id];
             p.position = com + world_off;
-            p.orientation = (orientation * local_orient).normalize();
+            // Rigid frame × constituent frame × accumulated axial spin —
+            // members visibly rotate about their own poles.
+            p.orientation =
+                (orientation * ms.orient * DQuat::from_rotation_y(ms.spin_phase)).normalize();
             p.velocity = vel + omega.cross(world_off);
+            if ms.carousel {
+                p.velocity += car_omega.cross(world_off);
+            }
             let pole = p.pole_axis();
-            p.angular_velocity = omega + pole * spin;
+            p.angular_velocity = omega + pole * ms.spin;
         }
     }
 
@@ -883,6 +954,12 @@ impl AtomCore {
                     let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
                     g.orientation = (rot * g.orientation).normalize();
                 }
+                // Kinematic phases: carousel ride + member axial spins.
+                g.carousel_phase = (g.carousel_phase + g.carousel_rate * dt) % TAU;
+                for k in 0..g.member_spin_phase.len() {
+                    g.member_spin_phase[k] =
+                        (g.member_spin_phase[k] + g.member_spin[k] * dt) % TAU;
+                }
             }
             self.sync_group_members(gi);
         }
@@ -1054,17 +1131,28 @@ impl AtomCore {
                 let f_intake_on_i =
                     cq.intake * pj_prof.mass * pi_prof.mass * aj2 * (1.0 - occ) / r2s;
 
-                // Stream-collision cushion: two facing intake streams meet
-                // head-on between the pair (pole-to-pole charge meeting
-                // head-to-head — fourier.pdf, jup3.pdf). Pressure ∝ product
-                // of the two stream densities ⇒ 1/r⁴, and ∝ (m_i·m_j)² since
-                // recycling throughput scales with mass (the electron's
-                // 1/1836 stream is no cushion at all). A stoppering particle
-                // back-scatters both streams — the blocked channel pushes
-                // HARDER (rotor back-pressure): ×(1+2·occ). This is what
-                // stands bonded atoms off at molecular distance and drives
-                // electron-between atoms apart (4-bond/4-repel matrix).
-                let f_stream = cq.stream * (mass_prod * mass_prod) * ai2 * aj2
+                // Stream-collision cushion: opposing charge streams meet
+                // head-on between the pair. Two symmetric channels:
+                // - A_i²·A_j² — facing polar INTAKE streams (pole-to-pole
+                //   charge meeting head-to-head — fourier.pdf, jup3.pdf);
+                //   sets the H₂ bond standoff.
+                // - E_i²·E_j² — facing EMISSION discs colliding edge-to-edge;
+                //   this is why two bare protons repel to a standoff instead
+                //   of gravitating into mutual orbit at ambient pressure.
+                // (Pole-facing-disc mixes are NOT collisions — the disc blows
+                // into the intake and feeds it, handled by intake/channeling.)
+                // Pressure ∝ product of the two stream densities ⇒ 1/r⁴, and
+                // ∝ (m_i·m_j)² since recycling throughput scales with mass
+                // (the electron's 1/1836 stream is no cushion at all). A
+                // stoppering particle back-scatters both streams — the
+                // blocked channel pushes HARDER (rotor back-pressure):
+                // ×(1+2·occ). This is what stands bonded atoms off at
+                // molecular distance and drives electron-between atoms apart
+                // (4-bond/4-repel matrix).
+                let ei2 = emission_i * emission_i;
+                let ej2 = emission_j * emission_j;
+                let f_stream = cq.stream * (mass_prod * mass_prod)
+                    * (ai2 * aj2 + ei2 * ej2)
                     * (1.0 + 2.0 * occ)
                     / r4s;
 
@@ -1391,66 +1479,158 @@ impl AtomCore {
             .count()
     }
 
-    // ── VFX: charge emission sprinkler ───────────────────────────────────
+    // ── Charge cloud VFX ─────────────────────────────────────────────────
+    // Replaces the old wireframe rings + sprinkler dots. Two families per
+    // particle, both shaped by the actual force-model profiles:
+    // - EMISSION SMOKE (type color): spawned at the surface with directions
+    //   from the emission CDF, drifting slowly outward in coherent spiral
+    //   arms that ride the particle's spin — a rotating nozzle of smoke.
+    // - INTAKE VORTEX (cyan): spawned OUTSIDE in the polar cone (A²-CDF),
+    //   spiraling inward and dying at the surface — charge circling the
+    //   drain into the pole.
 
-    /// Advance VFX particles and return the MultiMesh buffer
-    /// (12 transform + 4 color floats per particle).
-    pub fn advance_vfx(
-        &mut self,
-        delta: f64,
-        emit_per_particle: usize,
-        speed: f64,
-        lifetime: f64,
-    ) -> Vec<f32> {
+    /// Advance the cloud particles by wall-clock `delta` seconds and return
+    /// the MultiMesh buffer (12 transform + 4 color floats per particle).
+    pub fn advance_clouds(&mut self, delta: f64) -> Vec<f32> {
+        const MAX_POOL: usize = 4096;
+        const EMIT_PER_SEC: f64 = 260.0; // per sim particle
+        const INTAKE_PER_SEC: f64 = 160.0;
+        const EMIT_DRIFT: f64 = 0.55; // radial drift speed
+        const EMIT_LIFE: f64 = 1.6;
+        const INTAKE_SPEED: f64 = 1.5; // infall speed
+        const ARM_COUNT: usize = 3;
+        /// Visual rotation rate of the spiral arms (rad/s wall clock) —
+        /// deliberately far below the physical spin rate so the eye can
+        /// track it.
+        const ARM_RATE: f64 = 1.6;
+        const INTAKE_COLOR: (f32, f32, f32) = (0.30, 0.65, 1.0);
+
         if !self.vfx_enabled || self.particles.is_empty() {
             self.vfx_particles.clear();
             return Vec::new();
         }
 
-        let max_pool = 2048usize;
+        self.vfx_time += delta;
 
         // Age and move existing
         for vp in &mut self.vfx_particles {
             vp.age += delta;
             vp.position += vp.velocity * delta;
         }
-        self.vfx_particles.retain(|vp| vp.age < lifetime);
+        self.vfx_particles.retain(|vp| vp.age < vp.lifetime);
 
         // Collect per-particle data to avoid borrow conflicts
-        let emit_info: Vec<(DVec3, DVec3, DVec3, DVec3, f64, (f32, f32, f32), usize)> = self
+        struct Emitter {
+            pos: DVec3,
+            pole: DVec3,
+            right: DVec3,
+            forward: DVec3,
+            radius: f64,
+            color: (f32, f32, f32),
+            pid: usize,
+            spin_sign: f64,
+        }
+        let emitters: Vec<Emitter> = self
             .particles
             .iter()
             .map(|p| {
                 let prof = &self.profiles[p.profile_id];
                 let pole = p.pole_axis();
                 let (right, forward) = build_frame(pole);
-                let radius = prof.radius.max(MIN_RENDER_RADIUS as f64);
-                let color = profile_color(&prof.name);
-                (p.position, pole, right, forward, radius, color, p.profile_id)
+                Emitter {
+                    pos: p.position,
+                    pole,
+                    right,
+                    forward,
+                    radius: prof.radius.max(MIN_RENDER_RADIUS as f64),
+                    color: profile_color(&prof.name),
+                    pid: p.profile_id,
+                    spin_sign: p.angular_velocity.dot(pole).signum(),
+                }
             })
             .collect();
 
-        for (pos, pole, right, forward, radius, color, pid) in &emit_info {
-            for _ in 0..emit_per_particle {
-                if self.vfx_particles.len() >= max_pool {
+        // Fractional spawn counts via random rounding.
+        let spawn_count = |rng: &mut Rng, rate: f64| -> usize {
+            let x = rate * delta;
+            let base = x.floor() as usize;
+            base + usize::from(rng.next_f64() < x.fract())
+        };
+
+        for em in &emitters {
+            let arm_phase = em.spin_sign * ARM_RATE * self.vfx_time;
+
+            // Emission smoke — coherent spiral arms.
+            let n_emit = spawn_count(&mut self.rng, EMIT_PER_SEC);
+            for _ in 0..n_emit {
+                if self.vfx_particles.len() >= MAX_POOL {
                     break;
                 }
-                let theta = self.profiles[*pid].emission_cdf.sample(self.rng.next_f64());
+                let theta = self.profiles[em.pid].emission_cdf.sample(self.rng.next_f64());
+                let north = self.rng.next_f64() > 0.5;
+                let arm = (self.rng.next_f64() * ARM_COUNT as f64) as usize;
+                let phi = arm_phase
+                    + arm as f64 * (TAU / ARM_COUNT as f64)
+                    + (self.rng.next_f64() - 0.5) * 0.9;
+
+                let cos_t = theta.cos();
+                let sin_t = theta.sin();
+                let local_y = if north { cos_t } else { -cos_t };
+                let dir = em.right * (sin_t * phi.cos())
+                    + em.pole * local_y
+                    + em.forward * (sin_t * phi.sin());
+                // Tangential kick in the spin direction keeps the arms
+                // curved as they drift out (rotating-sprinkler look).
+                let tangent = em.pole.cross(dir);
+                let tangent = if tangent.length_squared() > 1e-12 {
+                    tangent.normalize() * em.spin_sign
+                } else {
+                    DVec3::ZERO
+                };
+                self.vfx_particles.push(VfxParticle {
+                    position: em.pos + dir * em.radius,
+                    velocity: dir * EMIT_DRIFT + tangent * (ARM_RATE * em.radius * 0.55),
+                    age: 0.0,
+                    lifetime: EMIT_LIFE * (0.7 + 0.6 * self.rng.next_f64()),
+                    color: em.color,
+                    base_scale: 0.045 * em.radius.max(0.35) as f32,
+                    grow: 0.9,
+                });
+            }
+
+            // Intake vortex — spawned out in the polar cone, spiraling in.
+            let n_intake = spawn_count(&mut self.rng, INTAKE_PER_SEC);
+            for _ in 0..n_intake {
+                if self.vfx_particles.len() >= MAX_POOL {
+                    break;
+                }
+                let theta = self.profiles[em.pid].intake_cdf.sample(self.rng.next_f64());
                 let north = self.rng.next_f64() > 0.5;
                 let phi = self.rng.next_f64() * TAU;
 
                 let cos_t = theta.cos();
                 let sin_t = theta.sin();
                 let local_y = if north { cos_t } else { -cos_t };
-                let dir =
-                    *right * (sin_t * phi.cos()) + *pole * local_y + *forward * (sin_t * phi.sin());
-                let spawn_pos = *pos + dir * *radius;
-
+                let dir = em.right * (sin_t * phi.cos())
+                    + em.pole * local_y
+                    + em.forward * (sin_t * phi.sin());
+                let spawn_r = em.radius * 2.3;
+                let tangent = em.pole.cross(dir);
+                let tangent = if tangent.length_squared() > 1e-12 {
+                    tangent.normalize() * em.spin_sign
+                } else {
+                    DVec3::ZERO
+                };
+                // Dies right as it reaches the surface — the drain swallows it.
+                let lifetime = (spawn_r - em.radius) / INTAKE_SPEED;
                 self.vfx_particles.push(VfxParticle {
-                    position: spawn_pos,
-                    velocity: dir * speed,
+                    position: em.pos + dir * spawn_r,
+                    velocity: dir * -INTAKE_SPEED + tangent * (ARM_RATE * em.radius * 0.8),
                     age: 0.0,
-                    color: *color,
+                    lifetime,
+                    color: INTAKE_COLOR,
+                    base_scale: 0.04 * em.radius.max(0.35) as f32,
+                    grow: -0.35, // tightens as it falls in
                 });
             }
         }
@@ -1458,15 +1638,17 @@ impl AtomCore {
         // Build MultiMesh buffer: 12 (transform) + 4 (color) per particle
         let n = self.vfx_particles.len();
         let mut buf = Vec::with_capacity(n * 16);
-        let scale = 0.03f32;
 
         for vp in &self.vfx_particles {
-            let fade = ((1.0 - vp.age / lifetime) as f32).max(0.0);
+            let t = (vp.age / vp.lifetime) as f32;
+            // Quick fade-in, slow fade-out.
+            let fade = (t / 0.12).min(1.0) * (1.0 - t).max(0.0);
+            let scale = (vp.base_scale * (1.0 + vp.grow * vp.age as f32)).max(0.008);
             buf.extend_from_slice(&[
                 scale, 0.0, 0.0, vp.position.x as f32,
                 0.0, scale, 0.0, vp.position.y as f32,
                 0.0, 0.0, scale, vp.position.z as f32,
-                vp.color.0, vp.color.1, vp.color.2, fade * 0.8,
+                vp.color.0, vp.color.1, vp.color.2, fade * 0.55,
             ]);
         }
 

@@ -63,20 +63,13 @@ text = "Iso"
 [node name="Sep2" type="VSeparator" parent="Toolbar/Margin/HBox"]
 layout_mode = 2
 
-[node name="ProfilesBtn" type="Button" parent="Toolbar/Margin/HBox"]
+[node name="CloudsBtn" type="Button" parent="Toolbar/Margin/HBox"]
 unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true
 button_pressed = true
-tooltip_text = "Show emission/intake profile rings (F)"
-text = "Profiles"
-
-[node name="VfxBtn" type="Button" parent="Toolbar/Margin/HBox"]
-unique_name_in_owner = true
-layout_mode = 2
-toggle_mode = true
-tooltip_text = "Charge emission sprinkler VFX (V)"
-text = "VFX"
+tooltip_text = "Charge clouds: emission smoke + polar intake vortex (F)"
+text = "Clouds"
 
 [node name="Sep3" type="VSeparator" parent="Toolbar/Margin/HBox"]
 layout_mode = 2
@@ -226,14 +219,14 @@ size_flags_horizontal = 3
 min_value = 1.0
 max_value = 200.0
 step = 1.0
-value = 20.0
+value = 100.0
 
 [node name="SubstepsSpinBox" type="SpinBox" parent="ScenarioPanel/Margin/VBox/SubstepsRow"]
 unique_name_in_owner = true
 layout_mode = 2
 min_value = 1.0
 max_value = 200.0
-value = 20.0
+value = 100.0
 
 [node name="ReadoutPanel" type="PanelContainer" parent="."]
 anchor_left = 1.0

@@ -574,6 +574,32 @@ mod tests {
         );
     }
 
+    /// Two free protons, poles parallel, side by side: the disc-collision
+    /// cushion must stand them off — parked and parallel, NOT gravitating
+    /// into a mutual orbit ("deranged ornaments", session 28 user report)
+    /// and NOT fusing. Ambient-pressure fusion is a star's job.
+    #[test]
+    fn two_protons_stand_off() {
+        let mut core = standard_core();
+        let pid = core.profile_id_by_name("proton").unwrap();
+        core.spawn_particle(pid, DVec3::new(-3.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
+        core.spawn_particle(pid, DVec3::new(3.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
+        let m = run_pair(&mut core, 0, 1, 200_000, 100, 0.4);
+        assert!(
+            m.mean_orbit_r > 4.0 && m.mean_orbit_r < 6.5,
+            "protons should park at the disc-collision standoff: {m:?}"
+        );
+        assert!(
+            m.v_tan_mean < 0.02,
+            "protons should not circle each other: {m:?}"
+        );
+        assert!(
+            (m.theta_pole_mean_deg - 90.0).abs() < 5.0,
+            "poles should stay parallel (equator-facing): {m:?}"
+        );
+        assert!(m.min_r > 2.2, "protons must not fuse at ambient: {m:?}");
+    }
+
     /// Stretch presets (C/N/O) smoke test: spawn, run, stay rigid and finite.
     #[test]
     fn heavier_presets_smoke() {

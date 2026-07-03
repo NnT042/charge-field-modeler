@@ -48,6 +48,12 @@ layout_mode = 2
 tooltip_text = "Clear path trace (C)"
 text = "Clear"
 
+[node name="SaveModelBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Save the current path trace as this particle's visual model in atom mode (best with Linear off and a full trace)"
+text = "Save Model"
+
 [node name="Sep2" type="VSeparator" parent="Toolbar/Margin/HBox"]
 layout_mode = 2
 

@@ -66,7 +66,7 @@ fn main() {
             let pid = core.profile_id_by_name("proton").unwrap();
             core.spawn_particle(pid, DVec3::new(-3.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
             core.spawn_particle(pid, DVec3::new(3.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
-            None
+            Some((0, 1))
         }
         s if s.starts_with("h2") => {
             // h2:N — combo 0-3 = electrons outside, spins ++ +- -+ --;
