@@ -84,6 +84,10 @@ func _ready() -> void:
 	_setup_capsule_debug_renderer()
 
 	_rd = RenderingServer.create_local_rendering_device()
+	if _rd == null:
+		# Headless / no-GPU run: compute field sim unavailable, HUD still works.
+		push_warning("field_sim: no RenderingDevice (headless?) — field sim disabled")
+		return
 	_update_shader = _load_shader("res://shaders/compute/field_update.glsl")
 	_collide_shader = _load_shader("res://shaders/compute/collision_detect.glsl")
 	_trace_shader = _load_shader("res://shaders/compute/trace_collide.glsl")
@@ -684,4 +688,5 @@ func _exit_tree() -> void:
 		_rd.free_rid(_trace_shader)
 	if _reduce_shader.is_valid():
 		_rd.free_rid(_reduce_shader)
-	_rd.free()
+	if _rd != null:
+		_rd.free()

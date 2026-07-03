@@ -230,6 +230,16 @@ impl AtomSim {
         self.core.couplings.corot
     }
 
+    #[func]
+    fn set_stream_coupling(&mut self, s: f64) {
+        self.core.couplings.stream = s;
+    }
+
+    #[func]
+    fn get_stream_coupling(&self) -> f64 {
+        self.core.couplings.stream
+    }
+
     /// Auto-calibrate gravity coupling for a circular polar orbit.
     /// See AtomCore::auto_calibrate_polar for the derivation.
     #[func]

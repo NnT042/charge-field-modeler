@@ -1,17 +1,23 @@
 extends Node3D
+#
+# Atom mode: sim stepping, 3D rendering, scenario spawning.
+# UI lives in scenes/ui/atom_hud.tscn (atom_hud.gd) and calls the public
+# methods below. All physics is in Rust (AtomSim / atom_core.rs).
+#
 
 @export var camera_rig_path: NodePath
 
 var atom_sim: Node  # AtomSim (Rust GDExtension)
 var pole_lines: MeshInstance3D
 var camera_rig: Node3D
-var info_label: Label
+var tuning_panel: CanvasLayer
 
 var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
 var substeps_per_frame := 20
 var paused := false
 var show_force_profile := true
+var current_scenario := "protons"
 
 # Force profile visualization
 var _fp_mesh: ImmediateMesh
@@ -23,6 +29,12 @@ const VFX_EMIT_PER_PARTICLE := 8
 const VFX_SPEED := 4.0
 const VFX_LIFETIME := 0.4
 
+# Wall-riding orbit geometry (matches Rust atom_scenarios.rs: the M1 orbit
+# settles at r=1.3, θ≈11°, v_tan = corotation speed 0.25).
+const RIDE_AXIAL := 1.276
+const RIDE_LATERAL := 0.248
+const COROT_V := 0.25
+
 # ── Lifecycle ──────────────────────────────────────────────────────────
 
 func _ready():
@@ -30,33 +42,25 @@ func _ready():
 	pole_lines = $PoleIndicators
 	if camera_rig_path:
 		camera_rig = get_node(camera_rig_path)
-	_create_info_label()
 	_create_tuning_panel()
 	_load_profiles()
 	_create_envelope_renderers()
 	_create_vfx_renderer()
 	_create_force_profile_vis()
-	_spawn_test_scenario()
+	spawn_scenario("protons")
 	atom_sim.set_running(true)
 
-func _create_info_label():
-	var canvas := CanvasLayer.new()
-	add_child(canvas)
-	info_label = Label.new()
-	info_label.position = Vector2(12, 8)
-	info_label.add_theme_font_size_override("font_size", 14)
-	info_label.add_theme_color_override("font_color", Color(0.8, 0.85, 0.9))
-	info_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
-	info_label.add_theme_constant_override("shadow_offset_x", 1)
-	info_label.add_theme_constant_override("shadow_offset_y", 1)
-	canvas.add_child(info_label)
-
 func _create_tuning_panel() -> void:
-	# DISPOSABLE: delete this function + its call in _ready() and the
-	# atom_tuning_panel.gd file to remove the slider UI. No physics here.
-	var panel = preload("res://scripts/atom_tuning_panel.gd").new()
-	add_child(panel)
-	panel.setup(atom_sim)
+	# DEBUG-ONLY: hidden by default (constants are locked and derived — see
+	# Couplings::default() in rust/src/atom_core.rs). The HUD's Debug toggle
+	# shows it for physics experiments.
+	tuning_panel = preload("res://scripts/atom_tuning_panel.gd").new()
+	add_child(tuning_panel)
+	tuning_panel.setup(atom_sim)
+	tuning_panel.visible = false
+
+func set_tuning_visible(on: bool) -> void:
+	tuning_panel.visible = on
 
 func _load_profiles():
 	var proton = _read_csv("res://config/histogram_proton.csv")
@@ -128,29 +132,67 @@ func _build_array_mesh(buf: PackedFloat32Array, mat: Material) -> ArrayMesh:
 	mesh.surface_set_material(0, mat)
 	return mesh
 
-func _spawn_test_scenario():
+# ── Scenarios (public API for the HUD) ─────────────────────────────────
+
+func toggle_pause() -> void:
+	paused = not paused
+
+func reset_scenario() -> void:
+	spawn_scenario(current_scenario)
+
+func spawn_scenario(scenario: String) -> void:
+	current_scenario = scenario
 	atom_sim.clear_particles()
-	# Two protons, poles up, separated along X
-	atom_sim.spawn_particle(profile_ids["proton"], Vector3(-3, 0, 0), Vector3.ZERO, Vector3.UP)
-	atom_sim.spawn_particle(profile_ids["proton"], Vector3(3, 0, 0), Vector3.ZERO, Vector3.UP)
+	match scenario:
+		"protons":
+			# Two free protons, poles parallel: the stream cushion stands
+			# them off — no fusion at ambient pressure.
+			atom_sim.spawn_particle(profile_ids["proton"], Vector3(-3, 0, 0), Vector3.ZERO, Vector3.UP)
+			atom_sim.spawn_particle(profile_ids["proton"], Vector3(3, 0, 0), Vector3.ZERO, Vector3.UP)
+		"hydrogen":
+			# Free electron released over the pole: capture, then the
+			# wall-riding "circling the drain" orbit.
+			atom_sim.spawn_particle(profile_ids["proton"], Vector3.ZERO, Vector3.ZERO, Vector3.UP)
+			atom_sim.spawn_particle(profile_ids["electron"],
+				Vector3(0.5, 2.0, 0), Vector3(0, 0, 0.5), Vector3.UP)
+		"h2_bond":
+			# Two H stacked on the pole axis, electrons on the OUTER poles:
+			# bare facing poles → stream-cushion bond with vibration.
+			_spawn_formed_h(Vector3(0, -3, 0), -1.0)
+			_spawn_formed_h(Vector3(0, 3, 0), 1.0)
+		"h2_repel":
+			# Electrons BETWEEN the protons: stoppered channels, no bond —
+			# the pair is driven out past molecular range.
+			_spawn_formed_h(Vector3(0, -3, 0), 1.0)
+			_spawn_formed_h(Vector3(0, 3, 0), -1.0)
+		"alpha", "carbon", "nitrogen", "oxygen":
+			atom_sim.spawn_preset(scenario, Vector3.ZERO, Vector3.ZERO, Vector3.UP)
+		"helium":
+			atom_sim.spawn_preset("alpha", Vector3.ZERO, Vector3.ZERO, Vector3.UP)
+			# Electrons riding the two outer proton poles (protons at y=±0.9).
+			atom_sim.spawn_particle(profile_ids["electron"],
+				Vector3(RIDE_LATERAL, 0.9 + RIDE_AXIAL, 0),
+				Vector3(0, 0, -COROT_V), Vector3.UP)
+			atom_sim.spawn_particle(profile_ids["electron"],
+				Vector3(RIDE_LATERAL, -0.9 - RIDE_AXIAL, 0),
+				Vector3(0, 0, -COROT_V), Vector3.DOWN)
+		_:
+			push_warning("atom_mode: unknown scenario " + scenario)
 
-func _spawn_hydrogen():
-	# Proton at origin, electron near north pole with tangential velocity for orbit
-	var p_pos := Vector3(0, 0, 0)
+## One hydrogen atom with the electron already wall-riding.
+## `electron_side` +1 = electron on the +Y pole, −1 = on the −Y pole.
+func _spawn_formed_h(p_pos: Vector3, electron_side: float) -> void:
 	atom_sim.spawn_particle(profile_ids["proton"], p_pos, Vector3.ZERO, Vector3.UP)
-	atom_sim.spawn_particle(profile_ids["electron"],
-		p_pos + Vector3(0.5, 2.0, 0),
-		Vector3(0, 0, 0.5),
-		Vector3.UP)
+	var e_pos := p_pos + Vector3(RIDE_LATERAL, electron_side * RIDE_AXIAL, 0)
+	var e_pole := Vector3(0, electron_side, 0)
+	atom_sim.spawn_particle(profile_ids["electron"], e_pos, Vector3(0, 0, -COROT_V), e_pole)
 
-func _spawn_h2_test():
-	# Two hydrogen atoms: protons separated along X, electrons on outer poles
-	# Left H: proton at (-4,0,0) pole up, electron at (-4,3,0) above pole
-	atom_sim.spawn_particle(profile_ids["proton"], Vector3(-4, 0, 0), Vector3.ZERO, Vector3.UP)
-	atom_sim.spawn_particle(profile_ids["electron"], Vector3(-4, 3, 0), Vector3.ZERO, Vector3.UP)
-	# Right H: proton at (4,0,0) pole up, electron at (4,3,0) above pole
-	atom_sim.spawn_particle(profile_ids["proton"], Vector3(4, 0, 0), Vector3.ZERO, Vector3.UP)
-	atom_sim.spawn_particle(profile_ids["electron"], Vector3(4, 3, 0), Vector3.ZERO, Vector3.UP)
+func spawn_free(type_name: String) -> void:
+	var pid = profile_ids.get(type_name, -1)
+	if pid < 0:
+		return
+	var pos = Vector3(randf_range(-2, 2), randf_range(-2, 2), randf_range(-2, 2))
+	atom_sim.spawn_particle(pid, pos, Vector3.ZERO, Vector3.UP)
 
 func _read_csv(path: String) -> PackedFloat32Array:
 	var file = FileAccess.open(path, FileAccess.READ)
@@ -245,7 +287,6 @@ func _process(_delta):
 	_update_rendering()
 	_update_vfx(_delta)
 	_draw_force_profiles()
-	_update_info()
 
 func _update_vfx(delta: float) -> void:
 	if paused or not atom_sim.is_running() or not atom_sim.is_vfx_enabled():
@@ -259,45 +300,7 @@ func _update_vfx(delta: float) -> void:
 	if count > 0:
 		vfx_mmi.multimesh.set_buffer(buf)
 
-func _update_info():
-	var n: int = atom_sim.get_particle_count()
-	var t: float = atom_sim.get_time()
-	var ke: float = atom_sim.get_total_kinetic_energy()
-	var status := "PAUSED" if paused else "RUNNING"
-	var lines := PackedStringArray()
-	lines.append("ATOM MODE [%s]  t=%.4f  KE=%s" % [status, t, String.num_scientific(ke)])
-	var dt: float = atom_sim.get_timestep()
-	lines.append("Particles: %d   dt=%s   substeps=%d" % [n, String.num_scientific(dt), substeps_per_frame])
-	var g_q: float = atom_sim.get_gravity_coupling()
-	var c_q: float = atom_sim.get_charge_coupling()
-	var p_amb: float = atom_sim.get_ambient_pressure()
-	var v_q: float = atom_sim.get_vortex_coupling()
-	var d_q: float = atom_sim.get_drag_coupling()
-	var i_q: float = atom_sim.get_intake_coupling()
-	lines.append("G_q=%.2f  C_q=%.2f  P=%.3f  T=%.3f  V=%.3f  D=%.2f  I=%.2f" % [g_q, c_q, p_amb, float(atom_sim.get_torque_coupling()), v_q, d_q, i_q])
-	var oi: PackedFloat32Array = atom_sim.get_orbit_info()
-	if oi.size() >= 6 and oi[0] > 0.0:
-		lines.append("Orbit: r=%.2f  θ_pole=%.1f°  v_tan=%.3f  v_rad=%.3f  E=%.4f" % [oi[0], oi[5], oi[1], oi[2], oi[4]])
-	var fb: PackedFloat32Array = atom_sim.get_force_breakdown()
-	if fb.size() >= 8:
-		lines.append("Forces: grav=%s  chrg=%s  intake=%s  chan=%s  A²=%.3f  spd=%.3f" % [
-			String.num_scientific(fb[0]), String.num_scientific(fb[1]),
-			String.num_scientific(fb[2]), String.num_scientific(fb[3]),
-			fb[6], fb[7]])
-	for i in range(mini(n, 6)):
-		var pos: Vector3 = atom_sim.get_particle_position(i)
-		var spd: float = atom_sim.get_particle_speed(i)
-		var pname: String = atom_sim.get_profile_name(atom_sim.get_profile_ids()[i])
-		lines.append("  #%d %s  pos=(%.2f,%.2f,%.2f)  v=%.3f" % [i, pname, pos.x, pos.y, pos.z, spd])
-	if n >= 2:
-		lines.append("  d(0,1)=%.4f" % atom_sim.get_pair_distance(0, 1))
-	lines.append("")
-	var vfx_status := "ON" if atom_sim.is_vfx_enabled() else "OFF"
-	lines.append("VFX: %s (%d)  " % [vfx_status, atom_sim.get_vfx_count()])
-	lines.append("[Space] pause  [Bksp] reset  [P/N/E] spawn  [H] hydrogen  [D] H2  [F] profile  [V] VFX")
-	lines.append("[G/Shift+G] G_q  [C/Shift+C] C_q  [A/Shift+A] P_amb")
-	lines.append("[W/Shift+W] V_q  [T/Shift+T] T_q  [R/Shift+R] D_q  [I/Shift+I] I_q  [K] cal  [Tab] Ph1")
-	info_label.text = "\n".join(lines)
+# ── Input ──────────────────────────────────────────────────────────────
 
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
@@ -306,7 +309,6 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		get_tree().change_scene_to_file("res://scenes/main.tscn")
 
-
 func _unhandled_key_input(event: InputEvent):
 	if not (event is InputEventKey):
 		return
@@ -314,56 +316,25 @@ func _unhandled_key_input(event: InputEvent):
 	if not k.pressed or k.echo:
 		return
 	var handled := true
-	var shift := k.shift_pressed
 	match k.keycode:
 		KEY_SPACE:
-			paused = not paused
+			toggle_pause()
 		KEY_BACKSPACE:
-			atom_sim.clear_particles()
-			_spawn_test_scenario()
+			reset_scenario()
 		KEY_P:
-			_spawn_at_cursor("proton")
+			spawn_free("proton")
 		KEY_N:
-			_spawn_at_cursor("neutron")
+			spawn_free("neutron")
 		KEY_E:
-			_spawn_at_cursor("electron")
+			spawn_free("electron")
 		KEY_H:
-			atom_sim.clear_particles()
-			_spawn_hydrogen()
+			spawn_scenario("hydrogen")
 		KEY_D:
-			atom_sim.clear_particles()
-			_spawn_h2_test()
+			spawn_scenario("h2_bond")
 		KEY_F:
 			show_force_profile = not show_force_profile
 		KEY_V:
 			atom_sim.set_vfx_enabled(not atom_sim.is_vfx_enabled())
-		KEY_G:
-			var cur: float = atom_sim.get_gravity_coupling()
-			atom_sim.set_gravity_coupling(cur * (0.8 if shift else 1.25))
-		KEY_C:
-			var cur: float = atom_sim.get_charge_coupling()
-			atom_sim.set_charge_coupling(cur * (0.8 if shift else 1.25))
-		KEY_A:
-			var cur: float = atom_sim.get_ambient_pressure()
-			if shift:
-				atom_sim.set_ambient_pressure(maxf(cur - 0.01, 0.0))
-			else:
-				atom_sim.set_ambient_pressure(cur + 0.01)
-		KEY_W:
-			var cur: float = atom_sim.get_vortex_coupling()
-			atom_sim.set_vortex_coupling(cur * (0.8 if shift else 1.25))
-		KEY_T:
-			var cur: float = atom_sim.get_torque_coupling()
-			atom_sim.set_torque_coupling(cur * (0.8 if shift else 1.25))
-		KEY_R:
-			var cur: float = atom_sim.get_drag_coupling()
-			atom_sim.set_drag_coupling(cur * (0.8 if shift else 1.25))
-		KEY_I:
-			var cur: float = atom_sim.get_intake_coupling()
-			atom_sim.set_intake_coupling(cur * (0.8 if shift else 1.25))
-		KEY_K:
-			var g: float = atom_sim.auto_calibrate_polar()
-			print("[atom] auto_calibrate_polar -> G_q = %.4f" % g)
 		KEY_BRACKETRIGHT:
 			substeps_per_frame = mini(substeps_per_frame + 5, 200)
 		KEY_BRACKETLEFT:
@@ -372,13 +343,6 @@ func _unhandled_key_input(event: InputEvent):
 			handled = false
 	if handled:
 		get_viewport().set_input_as_handled()
-
-func _spawn_at_cursor(type_name: String):
-	var pid = profile_ids.get(type_name, -1)
-	if pid < 0:
-		return
-	var pos = Vector3(randf_range(-2, 2), randf_range(-2, 2), randf_range(-2, 2))
-	atom_sim.spawn_particle(pid, pos, Vector3.ZERO, Vector3.UP)
 
 # ── Rendering ──────────────────────────────────────────────────────────
 

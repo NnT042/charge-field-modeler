@@ -83,6 +83,8 @@ func _ready() -> void:
 	%LinearBtn.pressed.connect(_on_linear_btn_pressed)
 	%DirBtn.pressed.connect(_on_dir_btn_pressed)
 	%ResetBtn.pressed.connect(_on_reset_pressed)
+	%ModeBtn.pressed.connect(func():
+		get_tree().change_scene_to_file("res://scenes/atom_mode.tscn"))
 
 	if _camera_rig:
 		%FrontBtn.pressed.connect(_camera_rig.snap_front)

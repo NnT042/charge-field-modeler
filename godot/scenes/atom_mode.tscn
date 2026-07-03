@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=3 uid="uid://cfm_atom_mode"]
+[gd_scene load_steps=7 format=3 uid="uid://cfm_atom_mode"]
 
 [ext_resource type="Script" path="res://scripts/atom_mode.gd" id="1_atom_mode"]
 [ext_resource type="Script" path="res://scripts/orbit_camera_rig.gd" id="2_orbit"]
+[ext_resource type="PackedScene" path="res://scenes/ui/atom_hud.tscn" id="3_atom_hud"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_1"]
 sky_top_color = Color(0.02, 0.03, 0.06, 1)
@@ -51,3 +52,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 15)
 current = true
 fov = 50.0
 near = 0.05
+
+[node name="AtomHUD" parent="." instance=ExtResource("3_atom_hud")]

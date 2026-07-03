@@ -1,0 +1,442 @@
+[gd_scene load_steps=2 format=3 uid="uid://cfm_atom_hud1"]
+
+[ext_resource type="Script" path="res://scripts/atom_hud.gd" id="1_atom_hud"]
+
+[node name="AtomHUD" type="CanvasLayer"]
+script = ExtResource("1_atom_hud")
+
+[node name="Toolbar" type="PanelContainer" parent="."]
+anchor_right = 1.0
+offset_bottom = 44.0
+mouse_filter = 0
+
+[node name="Margin" type="MarginContainer" parent="Toolbar"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="HBox" type="HBoxContainer" parent="Toolbar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="PauseBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Toggle pause (Space)"
+text = "Pause"
+
+[node name="ResetBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Reset to the current scenario (Backspace)"
+text = "Reset"
+
+[node name="Sep1" type="VSeparator" parent="Toolbar/Margin/HBox"]
+layout_mode = 2
+
+[node name="FrontBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Front view (1)"
+text = "Front"
+
+[node name="SideBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Side view (3)"
+text = "Side"
+
+[node name="TopBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Top view (7)"
+text = "Top"
+
+[node name="IsoBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Isometric view (5)"
+text = "Iso"
+
+[node name="Sep2" type="VSeparator" parent="Toolbar/Margin/HBox"]
+layout_mode = 2
+
+[node name="ProfilesBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+toggle_mode = true
+button_pressed = true
+tooltip_text = "Show emission/intake profile rings (F)"
+text = "Profiles"
+
+[node name="VfxBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+toggle_mode = true
+tooltip_text = "Charge emission sprinkler VFX (V)"
+text = "VFX"
+
+[node name="Sep3" type="VSeparator" parent="Toolbar/Margin/HBox"]
+layout_mode = 2
+
+[node name="DebugBtn" type="CheckButton" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Show the force-coupling tuning panel (debug — constants are locked)"
+text = "Debug"
+
+[node name="Spacer" type="Control" parent="Toolbar/Margin/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ModeBtn" type="Button" parent="Toolbar/Margin/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Switch to spin-stacking mode (Tab)"
+text = "⇄ Spin Mode"
+
+[node name="ScenarioPanel" type="PanelContainer" parent="."]
+offset_left = 16.0
+offset_top = 52.0
+offset_right = 240.0
+mouse_filter = 0
+
+[node name="Margin" type="MarginContainer" parent="ScenarioPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="ScenarioPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+text = "Scenarios"
+
+[node name="Sep" type="HSeparator" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="ProtonsBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Two free protons, poles parallel"
+text = "Two Protons"
+
+[node name="HydrogenBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Proton + free electron: capture into the polar wall-riding orbit (H)"
+text = "Hydrogen"
+
+[node name="H2BondBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Two H atoms, electrons on the OUTER poles: bare facing poles bond (D)"
+text = "H₂ — bonding"
+
+[node name="H2RepelBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Two H atoms, electrons BETWEEN: stoppered poles refuse to bond"
+text = "H₂ — repelling"
+
+[node name="AlphaBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Alpha particle: 2p + 2n rigid stack, the nuclear building block"
+text = "Alpha"
+
+[node name="HeliumBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Alpha + two electrons riding the outer proton poles"
+text = "Helium"
+
+[node name="CarbonBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Three stacked alphas (the single-stack limit)"
+text = "Carbon"
+
+[node name="NitrogenBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Carbon stack + south proton plug, north neutron"
+text = "Nitrogen"
+
+[node name="OxygenBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Carbon stack + proton plugs in both poles"
+text = "Oxygen"
+
+[node name="Sep2" type="HSeparator" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="SpawnTitle" type="Label" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Add free particle"
+
+[node name="SpawnRow" type="HBoxContainer" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="SpawnPBtn" type="Button" parent="ScenarioPanel/Margin/VBox/SpawnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Spawn a proton at a random position (P)"
+text = "+P"
+
+[node name="SpawnNBtn" type="Button" parent="ScenarioPanel/Margin/VBox/SpawnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Spawn a neutron at a random position (N)"
+text = "+N"
+
+[node name="SpawnEBtn" type="Button" parent="ScenarioPanel/Margin/VBox/SpawnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Spawn an electron at a random position (E)"
+text = "+E"
+
+[node name="Sep3" type="HSeparator" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="SubstepsTitle" type="Label" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Sim speed (substeps/frame)"
+
+[node name="SubstepsRow" type="HBoxContainer" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="SubstepsSlider" type="HSlider" parent="ScenarioPanel/Margin/VBox/SubstepsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 200.0
+step = 1.0
+value = 20.0
+
+[node name="SubstepsSpinBox" type="SpinBox" parent="ScenarioPanel/Margin/VBox/SubstepsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 200.0
+value = 20.0
+
+[node name="ReadoutPanel" type="PanelContainer" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 52.0
+offset_right = -16.0
+mouse_filter = 0
+
+[node name="Margin" type="MarginContainer" parent="ReadoutPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="ReadoutPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+text = "Readout"
+
+[node name="Sep" type="HSeparator" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="StatusRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/StatusRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "Status"
+
+[node name="StatusLabel" type="Label" parent="ReadoutPanel/Margin/VBox/StatusRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="TimeRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/TimeRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "Sim time"
+
+[node name="TimeLabel" type="Label" parent="ReadoutPanel/Margin/VBox/TimeRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="ParticlesRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/ParticlesRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "Particles"
+
+[node name="ParticlesLabel" type="Label" parent="ReadoutPanel/Margin/VBox/ParticlesRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="KERow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/KERow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "Kinetic energy"
+
+[node name="KELabel" type="Label" parent="ReadoutPanel/Margin/VBox/KERow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="OrbitSep" type="HSeparator" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="OrbitTitle" type="Label" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.75, 0.75, 0.78, 1)
+text = "Orbit (heaviest ↔ lightest)"
+
+[node name="OrbitRRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/OrbitRRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "r / θ_pole"
+
+[node name="OrbitRLabel" type="Label" parent="ReadoutPanel/Margin/VBox/OrbitRRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="OrbitVRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/OrbitVRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "v_tan / v_rad"
+
+[node name="OrbitVLabel" type="Label" parent="ReadoutPanel/Margin/VBox/OrbitVRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="ForcesSep" type="HSeparator" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="ForcesTitle" type="Label" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.75, 0.75, 0.78, 1)
+text = "Forces on orbiter (− attract / + repel)"
+
+[node name="FGravRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/FGravRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "grav / charge"
+
+[node name="FGravLabel" type="Label" parent="ReadoutPanel/Margin/VBox/FGravRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="FIntakeRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/FIntakeRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "intake / channel"
+
+[node name="FIntakeLabel" type="Label" parent="ReadoutPanel/Margin/VBox/FIntakeRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="PairRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/PairRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "d(0,1)"
+
+[node name="PairLabel" type="Label" parent="ReadoutPanel/Margin/VBox/PairRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="FpsRow" type="HBoxContainer" parent="ReadoutPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Key" type="Label" parent="ReadoutPanel/Margin/VBox/FpsRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(110, 0)
+theme_override_font_sizes/font_size = 12
+text = "FPS"
+
+[node name="FpsLabel" type="Label" parent="ReadoutPanel/Margin/VBox/FpsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="PauseLabel" type="Label" parent="."]
+unique_name_in_owner = true
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -80.0
+offset_top = 52.0
+offset_right = 80.0
+offset_bottom = 78.0
+theme_override_colors/font_color = Color(1, 0.9, 0.4, 1)
+horizontal_alignment = 1
+text = ""

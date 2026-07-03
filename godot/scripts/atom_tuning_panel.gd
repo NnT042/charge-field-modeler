@@ -1,11 +1,10 @@
 extends CanvasLayer
 #
-# DISPOSABLE tuning UI — labeled sliders for the atom-mode force couplings.
-#
-# To remove when tuning is done: delete this file and the single
-# `_create_tuning_panel()` call in atom_mode.gd. Nothing else references it.
-# Contains NO physics — it is a pure getter/setter bridge to AtomSim, so it
-# can be torn out without touching the model.
+# DEBUG tuning UI — labeled sliders for the atom-mode force couplings.
+# Hidden by default (constants are locked and derived — see
+# Couplings::default() in rust/src/atom_core.rs). Toggled by the HUD's
+# Debug button for physics experiments. Contains NO physics — it is a pure
+# getter/setter bridge to AtomSim.
 #
 
 var _sim: Node = null
@@ -18,6 +17,8 @@ const PARAMS := [
 	{"label": "D_q  Doppler",  "get": "get_drag_coupling",    "set": "set_drag_coupling",    "min": 0.0, "max": 2.0,  "step": 0.005},
 	{"label": "T_q  Torque",   "get": "get_torque_coupling",  "set": "set_torque_coupling",  "min": 0.0, "max": 2.0,  "step": 0.005},
 	{"label": "I_q  Intake",   "get": "get_intake_coupling",  "set": "set_intake_coupling",  "min": 0.0, "max": 3.0,  "step": 0.005},
+	{"label": "Corot Drag",    "get": "get_corot_coupling",   "set": "set_corot_coupling",   "min": 0.0, "max": 3.0,  "step": 0.005},
+	{"label": "S_q  Stream",   "get": "get_stream_coupling",  "set": "set_stream_coupling",  "min": 0.0, "max": 100.0, "step": 0.5},
 	{"label": "P_amb Ambient", "get": "get_ambient_pressure", "set": "set_ambient_pressure", "min": 0.0, "max": 1.0,  "step": 0.002},
 ]
 
