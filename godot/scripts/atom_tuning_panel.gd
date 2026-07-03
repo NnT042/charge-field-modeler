@@ -13,10 +13,11 @@ var _rows: Array = []  # each: {slider, value_label, getter, setter, updating}
 
 const PARAMS := [
 	{"label": "G_q  Gravity",  "get": "get_gravity_coupling", "set": "set_gravity_coupling", "min": 0.0, "max": 3.0,  "step": 0.005},
-	{"label": "C_q  Charge",   "get": "get_charge_coupling",  "set": "set_charge_coupling",  "min": 0.0, "max": 10.0, "step": 0.05},
+	{"label": "C_q  Charge",   "get": "get_charge_coupling",  "set": "set_charge_coupling",  "min": 0.0, "max": 2000.0, "step": 5.0},
 	{"label": "V_q  Vortex",   "get": "get_vortex_coupling",  "set": "set_vortex_coupling",  "min": 0.0, "max": 2.0,  "step": 0.005},
 	{"label": "D_q  Doppler",  "get": "get_drag_coupling",    "set": "set_drag_coupling",    "min": 0.0, "max": 2.0,  "step": 0.005},
 	{"label": "T_q  Torque",   "get": "get_torque_coupling",  "set": "set_torque_coupling",  "min": 0.0, "max": 2.0,  "step": 0.005},
+	{"label": "I_q  Intake",   "get": "get_intake_coupling",  "set": "set_intake_coupling",  "min": 0.0, "max": 3.0,  "step": 0.005},
 	{"label": "P_amb Ambient", "get": "get_ambient_pressure", "set": "set_ambient_pressure", "min": 0.0, "max": 1.0,  "step": 0.002},
 ]
 

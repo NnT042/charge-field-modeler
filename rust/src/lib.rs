@@ -1,5 +1,7 @@
 use godot::prelude::*;
 
+pub mod atom_core;
+pub mod atom_scenarios;
 mod atom_sim;
 mod field_sim;
 mod focus_particle;

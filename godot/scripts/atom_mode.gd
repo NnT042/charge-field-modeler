@@ -11,6 +11,11 @@ var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
 var substeps_per_frame := 20
 var paused := false
+var show_force_profile := true
+
+# Force profile visualization
+var _fp_mesh: ImmediateMesh
+var _fp_mi: MeshInstance3D
 
 # VFX sprinkler
 var vfx_mmi: MultiMeshInstance3D
@@ -30,6 +35,7 @@ func _ready():
 	_load_profiles()
 	_create_envelope_renderers()
 	_create_vfx_renderer()
+	_create_force_profile_vis()
 	_spawn_test_scenario()
 	atom_sim.set_running(true)
 
@@ -186,6 +192,51 @@ func _create_vfx_renderer() -> void:
 	vfx_mmi.multimesh = mm
 	add_child(vfx_mmi)
 
+func _create_force_profile_vis() -> void:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true
+	_fp_mesh = ImmediateMesh.new()
+	_fp_mi = MeshInstance3D.new()
+	_fp_mi.mesh = _fp_mesh
+	_fp_mi.material_override = mat
+	add_child(_fp_mi)
+
+func _draw_force_profiles() -> void:
+	_fp_mesh.clear_surfaces()
+	if not show_force_profile:
+		return
+	var n: int = atom_sim.get_particle_count()
+	var base_r: float = 0.2
+	var vis_base: float = 2.0
+	var pts: int = 72
+	var pids: PackedInt32Array = atom_sim.get_profile_ids()
+	for i in range(n):
+		var mass: float = atom_sim.get_profile_mass(pids[i])
+		var mass_scale: float = maxf(mass ** 0.25, 0.08)
+		var sc: float = vis_base * mass_scale
+		for plane_idx in range(2):
+			# Emission profile — red/orange (linear, power=1)
+			var em: PackedVector3Array = atom_sim.get_profile_ring(
+				i, false, base_r, sc, pts, plane_idx, 1.0)
+			if em.size() > 1:
+				_fp_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+				_fp_mesh.surface_set_color(Color(1.0, 0.35, 0.15, 0.55))
+				for v in em:
+					_fp_mesh.surface_add_vertex(v)
+				_fp_mesh.surface_end()
+			# Intake profile — blue/cyan (squared, power=2 to match force)
+			var ab: PackedVector3Array = atom_sim.get_profile_ring(
+				i, true, base_r, sc, pts, plane_idx, 2.0)
+			if ab.size() > 1:
+				_fp_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+				_fp_mesh.surface_set_color(Color(0.2, 0.55, 1.0, 0.55))
+				for v in ab:
+					_fp_mesh.surface_add_vertex(v)
+				_fp_mesh.surface_end()
+
 # ── Frame loop ─────────────────────────────────────────────────────────
 
 func _process(_delta):
@@ -193,6 +244,7 @@ func _process(_delta):
 		atom_sim.step_n(substeps_per_frame)
 	_update_rendering()
 	_update_vfx(_delta)
+	_draw_force_profiles()
 	_update_info()
 
 func _update_vfx(delta: float) -> void:
@@ -221,10 +273,17 @@ func _update_info():
 	var p_amb: float = atom_sim.get_ambient_pressure()
 	var v_q: float = atom_sim.get_vortex_coupling()
 	var d_q: float = atom_sim.get_drag_coupling()
-	lines.append("G_q=%.2f  C_q=%.2f  P_amb=%.3f  T_q=%.3f  V_q=%.3f  D_q=%.2f" % [g_q, c_q, p_amb, float(atom_sim.get_torque_coupling()), v_q, d_q])
+	var i_q: float = atom_sim.get_intake_coupling()
+	lines.append("G_q=%.2f  C_q=%.2f  P=%.3f  T=%.3f  V=%.3f  D=%.2f  I=%.2f" % [g_q, c_q, p_amb, float(atom_sim.get_torque_coupling()), v_q, d_q, i_q])
 	var oi: PackedFloat32Array = atom_sim.get_orbit_info()
-	if oi.size() >= 5 and oi[0] > 0.0:
-		lines.append("Orbit: r=%.2f  v_tan=%.3f  v_rad=%.3f  ->G_q*=%.3f  E_axis=%.4f" % [oi[0], oi[1], oi[2], oi[3], oi[4]])
+	if oi.size() >= 6 and oi[0] > 0.0:
+		lines.append("Orbit: r=%.2f  θ_pole=%.1f°  v_tan=%.3f  v_rad=%.3f  E=%.4f" % [oi[0], oi[5], oi[1], oi[2], oi[4]])
+	var fb: PackedFloat32Array = atom_sim.get_force_breakdown()
+	if fb.size() >= 8:
+		lines.append("Forces: grav=%s  chrg=%s  intake=%s  chan=%s  A²=%.3f  spd=%.3f" % [
+			String.num_scientific(fb[0]), String.num_scientific(fb[1]),
+			String.num_scientific(fb[2]), String.num_scientific(fb[3]),
+			fb[6], fb[7]])
 	for i in range(mini(n, 6)):
 		var pos: Vector3 = atom_sim.get_particle_position(i)
 		var spd: float = atom_sim.get_particle_speed(i)
@@ -235,9 +294,9 @@ func _update_info():
 	lines.append("")
 	var vfx_status := "ON" if atom_sim.is_vfx_enabled() else "OFF"
 	lines.append("VFX: %s (%d)  " % [vfx_status, atom_sim.get_vfx_count()])
-	lines.append("[Space] pause  [Bksp] reset  [P/N/E] spawn  [H] hydrogen  [D] H2")
-	lines.append("[V] VFX  [G/Shift+G] G_q  [C/Shift+C] C_q  [A/Shift+A] P_amb")
-	lines.append("[W/Shift+W] V_q  [T/Shift+T] T_q  [R/Shift+R] D_q  [K] calibrate  [Tab] Phase 1")
+	lines.append("[Space] pause  [Bksp] reset  [P/N/E] spawn  [H] hydrogen  [D] H2  [F] profile  [V] VFX")
+	lines.append("[G/Shift+G] G_q  [C/Shift+C] C_q  [A/Shift+A] P_amb")
+	lines.append("[W/Shift+W] V_q  [T/Shift+T] T_q  [R/Shift+R] D_q  [I/Shift+I] I_q  [K] cal  [Tab] Ph1")
 	info_label.text = "\n".join(lines)
 
 func _input(event: InputEvent) -> void:
@@ -274,6 +333,8 @@ func _unhandled_key_input(event: InputEvent):
 		KEY_D:
 			atom_sim.clear_particles()
 			_spawn_h2_test()
+		KEY_F:
+			show_force_profile = not show_force_profile
 		KEY_V:
 			atom_sim.set_vfx_enabled(not atom_sim.is_vfx_enabled())
 		KEY_G:
@@ -297,6 +358,9 @@ func _unhandled_key_input(event: InputEvent):
 		KEY_R:
 			var cur: float = atom_sim.get_drag_coupling()
 			atom_sim.set_drag_coupling(cur * (0.8 if shift else 1.25))
+		KEY_I:
+			var cur: float = atom_sim.get_intake_coupling()
+			atom_sim.set_intake_coupling(cur * (0.8 if shift else 1.25))
 		KEY_K:
 			var g: float = atom_sim.auto_calibrate_polar()
 			print("[atom] auto_calibrate_polar -> G_q = %.4f" % g)
