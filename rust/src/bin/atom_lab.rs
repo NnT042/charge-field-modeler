@@ -12,7 +12,7 @@
 
 use charge_field_modeler::atom_core::AtomCore;
 use charge_field_modeler::atom_scenarios::{
-    run_pair, run_recording, spawn_hydrogen, standard_core,
+    run_bond, run_pair, run_recording, spawn_h2, spawn_hydrogen, standard_core,
 };
 use glam::DVec3;
 use std::io::Write;
@@ -48,6 +48,7 @@ fn main() {
             "drag" => c.drag = value,
             "torque" => c.torque = value,
             "corot" => c.corot = value,
+            "stream" => c.stream = value,
             "p_amb" => c.ambient_pressure = value,
             "dt" => core.dt = value,
             other => {
@@ -67,8 +68,51 @@ fn main() {
             core.spawn_particle(pid, DVec3::new(3.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
             None
         }
+        s if s.starts_with("h2") => {
+            // h2:N — combo 0-3 = electrons outside, spins ++ +- -+ --;
+            //        combo 4-7 = electrons between, same spin order.
+            // h2 alone runs the whole matrix and prints the verdict table.
+            let run_one = |combo: usize, steps: usize, sample: usize| {
+                let mut c = standard_core();
+                let outside = combo < 4;
+                let spin_a = if combo & 0b01 == 0 { 1.0 } else { -1.0 };
+                let spin_b = if combo & 0b10 == 0 { 1.0 } else { -1.0 };
+                let ids = spawn_h2(&mut c, outside, spin_a, spin_b, 6.0);
+                let m = run_bond(&mut c, ids, steps, sample, 0.4);
+                (outside, spin_a, spin_b, m)
+            };
+            if let Some(n) = s.strip_prefix("h2:").and_then(|n| n.parse::<usize>().ok()) {
+                let (outside, sa, sb, m) = run_one(n & 7, steps, sample_every);
+                println!(
+                    "combo {n}: outside={outside} spins=({sa:+},{sb:+})\n{m:#?}\nbonded={} repelled={}",
+                    m.bonded(),
+                    m.repelled()
+                );
+            } else {
+                println!("combo | outside | spins | mean_d | stddev | final_d | e_kept | verdict");
+                for n in 0..8usize {
+                    let (outside, sa, sb, m) = run_one(n, steps, sample_every);
+                    let verdict = if m.bonded() {
+                        "BOND"
+                    } else if m.repelled() {
+                        "repel"
+                    } else {
+                        "-"
+                    };
+                    println!(
+                        "  {n}   |  {}  | ({sa:+.0},{sb:+.0}) | {:6.3} | {:6.3} | {:7.3} | {} | {verdict}",
+                        if outside { "out" } else { " in" },
+                        m.mean_d,
+                        m.d_stddev,
+                        m.final_d,
+                        m.electrons_retained,
+                    );
+                }
+            }
+            return;
+        }
         other => {
-            eprintln!("unknown scenario '{other}' (try: hydrogen, protons)");
+            eprintln!("unknown scenario '{other}' (try: hydrogen, protons, h2, h2:N)");
             std::process::exit(2);
         }
     };

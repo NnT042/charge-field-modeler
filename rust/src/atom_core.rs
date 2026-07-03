@@ -202,6 +202,9 @@ pub struct Couplings {
     /// Corotation drag: pulls tangential velocity toward the local speed of
     /// the emitter's polar charge vortex (self-limiting tangential drive).
     pub corot: f64,
+    /// Polar stream-collision cushion: repulsion between two facing intake
+    /// streams (∝ A_i²·A_j²·(m_i·m_j)²/r⁴). Sets the molecular standoff.
+    pub stream: f64,
 }
 
 impl Default for Couplings {
@@ -235,9 +238,17 @@ impl Default for Couplings {
     ///   session 28).
     /// - `torque = 0.1` — equator-toward-charge alignment (gear-mesh torque,
     ///   Compton/inverse-Compton collision mechanics).
-    /// - `ambient_pressure = 0.0` — calibrated nonzero in M2 for H₂ bonding
-    ///   (diatom.pdf: the molecular bond is an ambient-charge PUSH into the
-    ///   inter-pole charge minimum, not a pull).
+    /// - `stream = 24.5` — head-on collision of two facing polar intake
+    ///   streams (pole-to-pole charge "meeting head-to-head",
+    ///   milesmathis.com/fourier.pdf & jup3.pdf). 1/r⁴ (product of two 1/r²
+    ///   stream densities), ∝ (m_i·m_j)² since recycling throughput scales
+    ///   with mass. Sets the H₂ bond standoff: d = √(stream·A⁴/(G_q+2·I_q))
+    ///   ≈ 3.5 for bare facing poles — molecular, well outside nuclear
+    ///   contact (2.0). Also why bare protons refuse to fuse at ambient
+    ///   pressure (nuclear.pdf: alphas need stars).
+    /// - `ambient_pressure = 0.0` — the pairwise shadow term stays available
+    ///   for environment effects, but the H₂ bond emerges from
+    ///   gravity+intake attraction vs the stream cushion without it.
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -248,6 +259,7 @@ impl Default for Couplings {
             drag: 0.3,
             intake: 0.5,
             corot: 0.5,
+            stream: 24.5,
         }
     }
 }
@@ -608,6 +620,46 @@ impl AtomCore {
 
     // ── Force computation ─────────────────────────────────────────────
 
+    /// Per-pair channel occlusion in [0,1]: 1 when a third particle sits in
+    /// the polar channel between the pair (within lateral 0.3 of the line,
+    /// full fade by 0.8). Models the STOPPERED vortex of diatom.pdf — a
+    /// captured electron riding a pole blocks that pole's intake stream.
+    fn compute_occlusion(&self) -> Vec<f64> {
+        let n = self.particles.len();
+        let mut occ = vec![0.0f64; n * n];
+        if n < 3 {
+            return occ;
+        }
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let a = self.particles[i].position;
+                let b = self.particles[j].position;
+                let ab = b - a;
+                let len2 = ab.length_squared();
+                if len2 < 1e-12 {
+                    continue;
+                }
+                let mut worst = 0.0f64;
+                for k in 0..n {
+                    if k == i || k == j {
+                        continue;
+                    }
+                    let t = (self.particles[k].position - a).dot(ab) / len2;
+                    if t <= 0.05 || t >= 0.95 {
+                        continue;
+                    }
+                    let closest = a + ab * t;
+                    let lat = (self.particles[k].position - closest).length();
+                    let block = ((0.8 - lat) / 0.5).clamp(0.0, 1.0);
+                    worst = worst.max(block);
+                }
+                occ[i * n + j] = worst;
+                occ[j * n + i] = worst;
+            }
+        }
+        occ
+    }
+
     fn compute_forces(&mut self) {
         let n = self.particles.len();
         for p in &mut self.particles {
@@ -616,6 +668,7 @@ impl AtomCore {
         }
 
         let cq = self.couplings;
+        let occlusion = self.compute_occlusion();
 
         // Pairwise forces
         for i in 0..n {
@@ -696,27 +749,51 @@ impl AtomCore {
                     }
                 }
 
-                // Ambient pressure: pushes particles into charge shadows
+                // Channel occlusion for this pair (stoppered vortex).
+                let occ = occlusion[i * n + j];
+
+                // Ambient pressure: pushes particles into charge shadows.
+                // A stoppered channel has no shadow minimum (diatom.pdf).
                 let shadow = (1.0 - emission_i) * (1.0 - emission_j);
-                let f_ambient = cq.ambient_pressure * shadow / r2s;
+                let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / r2s;
 
                 // Polar intake: the proton recycles charge through its poles,
                 // creating a focused inward flow.  A(θ)² sharpens the profile
                 // to a narrow polar cone matching Mathis's vortex description.
+                // A particle stoppering the channel blocks the stream.
                 let ai2 = absorption_i * absorption_i;
                 let aj2 = absorption_j * absorption_j;
 
                 // Radial intake: pulls toward the emitter, 1/r² (flow sink).
-                let f_intake_on_j = cq.intake * pi_prof.mass * pj_prof.mass * ai2 / r2s;
-                let f_intake_on_i = cq.intake * pj_prof.mass * pi_prof.mass * aj2 / r2s;
+                let f_intake_on_j =
+                    cq.intake * pi_prof.mass * pj_prof.mass * ai2 * (1.0 - occ) / r2s;
+                let f_intake_on_i =
+                    cq.intake * pj_prof.mass * pi_prof.mass * aj2 * (1.0 - occ) / r2s;
+
+                // Stream-collision cushion: two facing intake streams meet
+                // head-on between the pair (pole-to-pole charge meeting
+                // head-to-head — fourier.pdf, jup3.pdf). Pressure ∝ product
+                // of the two stream densities ⇒ 1/r⁴, and ∝ (m_i·m_j)² since
+                // recycling throughput scales with mass (the electron's
+                // 1/1836 stream is no cushion at all). A stoppering particle
+                // back-scatters both streams — the blocked channel pushes
+                // HARDER (rotor back-pressure): ×(1+2·occ). This is what
+                // stands bonded atoms off at molecular distance and drives
+                // electron-between atoms apart (4-bond/4-repel matrix).
+                let f_stream = cq.stream * (mass_prod * mass_prod) * ai2 * aj2
+                    * (1.0 + 2.0 * occ)
+                    / r4s;
 
                 // d_hat points from i to j.
                 // Gravity pulls j toward i: along -d_hat
                 // Charge pushes j away from i: along +d_hat
                 // Ambient pulls j toward i: along -d_hat
                 // Intake pulls j toward i: along -d_hat
-                let net_on_j = (f_charge_on_j - f_grav - f_ambient - f_intake_on_j) * d_hat;
-                let net_on_i = (f_grav + f_ambient + f_intake_on_i - f_charge_on_i) * d_hat;
+                // Stream cushion pushes apart: along +d_hat for j
+                let net_on_j =
+                    (f_charge_on_j + f_stream - f_grav - f_ambient - f_intake_on_j) * d_hat;
+                let net_on_i =
+                    (f_grav + f_ambient + f_intake_on_i - f_charge_on_i - f_stream) * d_hat;
 
                 self.particles[j].force_accum += net_on_j;
                 self.particles[i].force_accum += net_on_i;

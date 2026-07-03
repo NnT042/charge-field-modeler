@@ -197,6 +197,161 @@ pub fn tunnel_edge_angle_deg(table: &crate::atom_core::EmissionTable, threshold:
     90.0
 }
 
+// ── H₂ bonding scenarios ──────────────────────────────────────────────────
+
+/// Wall-riding orbit geometry the M1 physics settles into (see
+/// hydrogen_orbit_stable_long_run): r = contact (1.3), θ ≈ 11° from the
+/// pole, v_tan = COROT_V_MAX circling the pole axis.
+const RIDE_R: f64 = 1.3;
+const RIDE_THETA_DEG: f64 = 11.0;
+
+/// Spawn a PRE-FORMED hydrogen atom: proton plus electron already in the
+/// wall-riding polar orbit, so bonding runs don't wait out the capture
+/// transient. `electron_dir` is the unit direction from the proton to the
+/// occupied pole. Returns (proton_id, electron_id).
+pub fn spawn_formed_hydrogen(
+    core: &mut AtomCore,
+    p_pos: DVec3,
+    proton_pole: DVec3,
+    electron_dir: DVec3,
+    spin_sign: f64,
+) -> (usize, usize) {
+    let p_id = core.profile_id_by_name("proton").expect("proton profile");
+    let e_id = core.profile_id_by_name("electron").expect("electron profile");
+    let proton_pole = proton_pole.normalize();
+    let electron_dir = electron_dir.normalize();
+
+    let p_spin = crate::atom_core::default_spin_rate("proton") * spin_sign;
+    let proton = core
+        .spawn_particle_ex(p_id, p_pos, DVec3::ZERO, proton_pole, p_spin)
+        .expect("spawn proton");
+
+    // Electron on the wall at θ from the occupied pole, circling the axis
+    // at the corotation speed in the direction the proton's spin drags it.
+    let theta = RIDE_THETA_DEG.to_radians();
+    let (lat_dir, _) = crate::atom_core::build_frame(electron_dir);
+    let e_offset = electron_dir * (RIDE_R * theta.cos()) + lat_dir * (RIDE_R * theta.sin());
+    let e_pos = p_pos + e_offset;
+    // v_corot direction = (spin vector) × (offset from axis)
+    let spin_vec = proton_pole * spin_sign;
+    let lateral = lat_dir * (RIDE_R * theta.sin());
+    let v_dir = spin_vec.cross(lateral).normalize();
+    let e_vel = v_dir * crate::atom_core::COROT_V_MAX;
+    let e_spin = crate::atom_core::default_spin_rate("electron") * spin_sign;
+    let electron = core
+        .spawn_particle_ex(e_id, e_pos, e_vel, electron_dir, e_spin)
+        .expect("spawn electron");
+
+    (proton, electron)
+}
+
+/// Spawn two hydrogen atoms stacked on the Y axis (the bond in Mathis is
+/// POLAR — diatom.pdf: atoms align their poles; the bond forms when the
+/// facing poles are bare and the electrons sit on the OUTER poles).
+/// Returns [proton_a, electron_a, proton_b, electron_b].
+/// Combo encoding for the 8-way matrix: spin pair (a,b) ∈ {+,−}² ×
+/// electrons outside/between.
+pub fn spawn_h2(
+    core: &mut AtomCore,
+    electrons_outside: bool,
+    spin_a: f64,
+    spin_b: f64,
+    separation: f64,
+) -> [usize; 4] {
+    let a_pos = DVec3::new(0.0, -separation / 2.0, 0.0);
+    let b_pos = DVec3::new(0.0, separation / 2.0, 0.0);
+    // Both protons poles +Y (parallel; anti-parallel cases are covered by
+    // the spin signs since the histograms are bilaterally symmetric).
+    let (a_e_dir, b_e_dir) = if electrons_outside {
+        (-DVec3::Y, DVec3::Y) // away from the partner atom
+    } else {
+        (DVec3::Y, -DVec3::Y) // sandwiched between the protons
+    };
+    let (pa, ea) = spawn_formed_hydrogen(core, a_pos, DVec3::Y, a_e_dir, spin_a);
+    let (pb, eb) = spawn_formed_hydrogen(core, b_pos, DVec3::Y, b_e_dir, spin_b);
+    [pa, ea, pb, eb]
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BondMetrics {
+    pub initial_d: f64,
+    /// Proton–proton distance stats over the post-settle window.
+    pub mean_d: f64,
+    pub d_stddev: f64,
+    pub min_d: f64,
+    pub max_d: f64,
+    pub final_d: f64,
+    /// Both electrons stayed within 2.0 of their own proton.
+    pub electrons_retained: bool,
+}
+
+impl BondMetrics {
+    /// Bonded ⇔ settled at molecular standoff, vibrating (M5 plan: the bond
+    /// SHOULD vibrate — rigid means pressure too high) but bounded, never
+    /// collapsing to nuclear contact (min_d > 2.2 ⇒ no ambient fusion),
+    /// and still holding at the end.
+    pub fn bonded(&self) -> bool {
+        self.mean_d >= 2.5
+            && self.mean_d <= 6.0
+            && self.d_stddev / self.mean_d < 0.35
+            && self.min_d > 2.2
+            && self.final_d < 7.0
+    }
+
+    /// Repelled ⇔ driven out and parked/oscillating clearly beyond bond
+    /// range (the stoppered-channel standoff), or monotonically leaving.
+    pub fn repelled(&self) -> bool {
+        self.mean_d > 7.0
+            || (self.final_d > 1.5 * self.initial_d && self.final_d >= self.max_d - 1e-9)
+    }
+}
+
+/// Run and reduce an H₂ (or any two-atom) run to bond metrics.
+pub fn run_bond(
+    core: &mut AtomCore,
+    ids: [usize; 4],
+    n_steps: usize,
+    sample_every: usize,
+    settle_frac: f64,
+) -> BondMetrics {
+    let [pa, ea, pb, eb] = ids;
+    let sample_every = sample_every.max(1);
+    let n_samples = n_steps / sample_every;
+    let settle_start = ((n_samples as f64) * settle_frac.clamp(0.0, 0.95)) as usize;
+
+    let mut m = BondMetrics {
+        initial_d: core.pair_distance(pa, pb),
+        min_d: f64::MAX,
+        electrons_retained: true,
+        ..Default::default()
+    };
+    let mut window: Vec<f64> = Vec::new();
+
+    for s in 0..n_samples {
+        core.step_n(sample_every);
+        let d = core.pair_distance(pa, pb);
+        m.min_d = m.min_d.min(d);
+        m.max_d = m.max_d.max(d);
+        m.final_d = d;
+        if core.pair_distance(pa, ea) > 2.0 || core.pair_distance(pb, eb) > 2.0 {
+            m.electrons_retained = false;
+        }
+        if s >= settle_start {
+            window.push(d);
+        }
+    }
+    if !window.is_empty() {
+        let n = window.len() as f64;
+        m.mean_d = window.iter().sum::<f64>() / n;
+        let var = window.iter().map(|d| (d - m.mean_d).powi(2)).sum::<f64>() / n;
+        m.d_stddev = var.sqrt();
+    }
+    if m.min_d == f64::MAX {
+        m.min_d = 0.0;
+    }
+    m
+}
+
 /// One sampled trajectory frame (all particles).
 pub struct TrajectoryRow {
     pub t: f64,
@@ -347,13 +502,41 @@ mod tests {
         );
     }
 
-    /// M2 gate: of the 8 spin/pole combinations, exactly the 4 with
-    /// electrons on the OUTER poles bond; the 4 with electrons between
-    /// the protons repel. Emerges from forces — no coded rule.
+    /// M2 gate: of the 8 spin/pole combinations (4 spin pairings × electron
+    /// placement), exactly the 4 with electrons on the OUTER poles bond and
+    /// the 4 with electrons between the protons repel. The discriminant
+    /// emerges from the stream-cushion + stoppered-vortex forces — there is
+    /// no coded bonding rule anywhere.
     #[test]
-    #[ignore = "M2: needs ambient pressure calibration"]
     fn h2_bond_matrix() {
-        unimplemented!("filled in at M2");
+        let mut bonds = 0;
+        let mut repels = 0;
+        for combo in 0..8usize {
+            let mut core = standard_core();
+            let outside = combo < 4;
+            let spin_a = if combo & 0b01 == 0 { 1.0 } else { -1.0 };
+            let spin_b = if combo & 0b10 == 0 { 1.0 } else { -1.0 };
+            let ids = spawn_h2(&mut core, outside, spin_a, spin_b, 6.0);
+            let m = run_bond(&mut core, ids, 250_000, 200, 0.4);
+            assert!(
+                m.electrons_retained,
+                "combo {combo}: an atom lost its electron: {m:?}"
+            );
+            if outside {
+                assert!(
+                    m.bonded() && !m.repelled(),
+                    "combo {combo} (electrons outside) should bond: {m:?}"
+                );
+                bonds += 1;
+            } else {
+                assert!(
+                    m.repelled() && !m.bonded(),
+                    "combo {combo} (electrons between) should repel: {m:?}"
+                );
+                repels += 1;
+            }
+        }
+        assert_eq!((bonds, repels), (4, 4));
     }
 
     /// M3 gates: alpha rigidity + conservation, electron capture on alpha,
