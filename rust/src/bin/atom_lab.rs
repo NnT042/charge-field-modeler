@@ -111,8 +111,45 @@ fn main() {
             }
             return;
         }
+        "alpha" => {
+            core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("alpha preset");
+            let e_id = core.profile_id_by_name("electron").unwrap();
+            let e = core
+                .spawn_particle(
+                    e_id,
+                    DVec3::new(0.5, 2.9, 0.0),
+                    DVec3::new(0.0, 0.0, 0.4),
+                    DVec3::Y,
+                )
+                .unwrap();
+            Some((1, e)) // top proton is member[1]
+        }
+        "helium" => {
+            let gid = core
+                .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("alpha preset");
+            let top = core.groups[gid].members[1];
+            let e_id = core.profile_id_by_name("electron").unwrap();
+            let e_top = core
+                .spawn_particle(
+                    e_id,
+                    DVec3::new(0.248, 2.176, 0.0),
+                    DVec3::new(0.0, 0.0, -0.25),
+                    DVec3::Y,
+                )
+                .unwrap();
+            core.spawn_particle(
+                e_id,
+                DVec3::new(0.248, -2.176, 0.0),
+                DVec3::new(0.0, 0.0, -0.25),
+                -DVec3::Y,
+            )
+            .unwrap();
+            Some((top, e_top))
+        }
         other => {
-            eprintln!("unknown scenario '{other}' (try: hydrogen, protons, h2, h2:N)");
+            eprintln!("unknown scenario '{other}' (try: hydrogen, protons, h2, h2:N, alpha, helium)");
             std::process::exit(2);
         }
     };

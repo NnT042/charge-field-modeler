@@ -93,6 +93,16 @@ impl AtomSim {
             .unwrap_or(-1)
     }
 
+    /// Spawn a rigid nuclear preset (e.g. "alpha") at `pos` with its stack
+    /// axis along `axis`. Returns the group id, or -1 for an unknown name.
+    #[func]
+    fn spawn_preset(&mut self, name: GString, pos: Vector3, vel: Vector3, axis: Vector3) -> i32 {
+        self.core
+            .spawn_preset(&name.to_string(), dv(pos), dv(vel), dv(axis))
+            .map(|id| id as i32)
+            .unwrap_or(-1)
+    }
+
     #[func]
     fn remove_particle(&mut self, id: i32) {
         self.core.remove_particle(id as usize);

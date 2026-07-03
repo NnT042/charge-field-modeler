@@ -149,12 +149,141 @@ pub struct SimParticle {
     pub angular_velocity: DVec3,
     pub force_accum: DVec3,
     pub torque_accum: DVec3,
+    /// Index into AtomCore::groups when this particle is a rigid-composite
+    /// constituent (nuclear preset); None for free particles.
+    pub group: Option<usize>,
 }
 
 impl SimParticle {
     pub fn pole_axis(&self) -> DVec3 {
         self.orientation * DVec3::Y
     }
+}
+
+// ── Nuclear presets (rigid composites) ───────────────────────────────────
+
+#[derive(Clone)]
+pub struct Constituent {
+    pub profile_name: &'static str,
+    pub local_pos: DVec3,
+    pub local_pole: DVec3,
+    pub spin_sign: f64,
+}
+
+/// One alpha block centered at `y` on the stack axis: two protons in a
+/// short stack (CDs stacked hole-to-hole, spinning the SAME direction so
+/// charge channels through pole-to-pole as a dipole —
+/// milesmathis.com/oxygen.pdf), with the two neutrons as posts between the
+/// disks keeping the protons from turning (oxygen.pdf). Posts sit off-axis
+/// so the axial charge channel stays open (nuclear.pdf: the hole in the CD
+/// is the recycling channel). Exact post positions are a modeling choice
+/// within those constraints.
+fn alpha_block(y: f64) -> Vec<Constituent> {
+    vec![
+        Constituent {
+            profile_name: "proton",
+            local_pos: DVec3::new(0.0, y - 0.9, 0.0),
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        },
+        Constituent {
+            profile_name: "proton",
+            local_pos: DVec3::new(0.0, y + 0.9, 0.0),
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: DVec3::new(-0.5, y, 0.0),
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: DVec3::new(0.5, y, 0.0),
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        },
+    ]
+}
+
+/// Polar plug: a proton (or blocking neutron) plugged into a stack pole
+/// (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton in the south
+/// pole, neutron in the north; O = protons in both poles).
+fn polar_plug(profile_name: &'static str, y: f64) -> Constituent {
+    Constituent {
+        profile_name,
+        local_pos: DVec3::new(0.0, y, 0.0),
+        local_pole: DVec3::Y,
+        spin_sign: 1.0,
+    }
+}
+
+/// Alpha stack pitch: adjacent alpha centers along the axis. Tight enough
+/// that the disks read as plugged (nuclear.pdf), loose enough to see the
+/// blocks.
+const ALPHA_PITCH: f64 = 2.6;
+
+pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
+    match name {
+        "alpha" => Some(alpha_block(0.0)),
+        // Carbon: three alphas stacked (nuclear.pdf: "Carbon blocks — three
+        // alphas stacked"; the single-stack limit that makes C the basis of
+        // life).
+        "carbon" => Some(
+            [
+                alpha_block(-ALPHA_PITCH),
+                alpha_block(0.0),
+                alpha_block(ALPHA_PITCH),
+            ]
+            .concat(),
+        ),
+        // Nitrogen: carbon stack + 7th proton plugged in the south pole and
+        // the balancing neutron in the north (ammon.pdf).
+        "nitrogen" => {
+            let mut c = preset_constituents("carbon")?;
+            c.push(polar_plug("proton", -(ALPHA_PITCH + 1.8)));
+            c.push(polar_plug("neutron", ALPHA_PITCH + 1.8));
+            Some(c)
+        }
+        // Oxygen: carbon stack + protons plugged in BOTH poles (oxygen.pdf:
+        // the 7th and 8th protons go on the ends because four alphas can't
+        // stack), plus their companion neutrons alongside.
+        "oxygen" => {
+            let mut c = preset_constituents("carbon")?;
+            c.push(polar_plug("proton", -(ALPHA_PITCH + 1.8)));
+            c.push(polar_plug("proton", ALPHA_PITCH + 1.8));
+            c.push(polar_plug("neutron", -(ALPHA_PITCH + 2.9)));
+            c.push(polar_plug("neutron", ALPHA_PITCH + 2.9));
+            Some(c)
+        }
+        _ => None,
+    }
+}
+
+/// Preset names for UI listings.
+pub fn preset_names() -> &'static [&'static str] {
+    &["alpha", "carbon", "nitrogen", "oxygen"]
+}
+
+/// A rigidly-locked composite (nucleus). Constituents remain real particles
+/// (forces sampled per-constituent — an electron can capture at one specific
+/// proton's pole), but they integrate as one rigid body. Intra-group pair
+/// forces are skipped: the nucleus is pre-fused, its internal balance is
+/// not simulated (uf4.pdf: "the alphas can't be broken and rearranged").
+pub struct RigidGroup {
+    pub members: Vec<usize>,
+    pub local_offsets: Vec<DVec3>,
+    pub local_orients: Vec<DQuat>,
+    /// Intrinsic axial spin rate of each member (rad/s about its own pole).
+    pub member_spin: Vec<f64>,
+    pub com: DVec3,
+    pub velocity: DVec3,
+    pub orientation: DQuat,
+    pub angular_velocity: DVec3,
+    pub mass: f64,
+    /// Scalar inertia approximation: Σ m(|offset|² + 0.4 r²).
+    pub inertia: f64,
 }
 
 // ── VFX Particle (charge emission sprinkler) ─────────────────────────────
@@ -269,6 +398,7 @@ impl Default for Couplings {
 pub struct AtomCore {
     pub profiles: Vec<ParticleProfile>,
     pub particles: Vec<SimParticle>,
+    pub groups: Vec<RigidGroup>,
     pub couplings: Couplings,
     pub ambient_gravity: DVec3,
     pub ambient_charge: DVec3,
@@ -291,6 +421,7 @@ impl AtomCore {
         Self {
             profiles: Vec::new(),
             particles: Vec::new(),
+            groups: Vec::new(),
             couplings: Couplings::default(),
             ambient_gravity: DVec3::ZERO,
             ambient_charge: DVec3::ZERO,
@@ -366,18 +497,121 @@ impl AtomCore {
             angular_velocity: pole * spin_rate,
             force_accum: DVec3::ZERO,
             torque_accum: DVec3::ZERO,
+            group: None,
         });
         Some(id)
     }
 
+    /// Spawn a rigid nuclear preset at `pos` with its axis along `axis`.
+    /// Returns the group id, or None for an unknown preset name.
+    pub fn spawn_preset(
+        &mut self,
+        name: &str,
+        pos: DVec3,
+        vel: DVec3,
+        axis: DVec3,
+    ) -> Option<usize> {
+        let constituents = preset_constituents(name)?;
+        let orientation = orientation_from_pole(axis);
+        let gid = self.groups.len();
+
+        let mut members = Vec::new();
+        let mut local_offsets = Vec::new();
+        let mut local_orients = Vec::new();
+        let mut member_spin = Vec::new();
+        let mut mass = 0.0;
+        let mut inertia = 0.0;
+
+        for c in &constituents {
+            let profile_id = self.profile_id_by_name(c.profile_name)?;
+            let prof_mass = self.profiles[profile_id].mass;
+            let prof_radius = self.profiles[profile_id].radius;
+            let spin = default_spin_rate(c.profile_name) * c.spin_sign;
+            let world_pos = pos + orientation * c.local_pos;
+            let world_pole = orientation * c.local_pole;
+            let id = self.spawn_particle_ex(profile_id, world_pos, vel, world_pole, spin)?;
+            self.particles[id].group = Some(gid);
+            members.push(id);
+            local_offsets.push(c.local_pos);
+            local_orients.push(orientation_from_pole(c.local_pole));
+            member_spin.push(spin);
+            mass += prof_mass;
+            inertia += prof_mass * (c.local_pos.length_squared() + 0.4 * prof_radius * prof_radius);
+        }
+
+        self.groups.push(RigidGroup {
+            members,
+            local_offsets,
+            local_orients,
+            member_spin,
+            com: pos,
+            velocity: vel,
+            orientation,
+            angular_velocity: DVec3::ZERO,
+            mass,
+            inertia: inertia.max(1e-9),
+        });
+        self.sync_group_members(gid);
+        Some(gid)
+    }
+
+    /// Reposition a group's members from the group frame and give them the
+    /// rigid-body velocity field (v_com + ω×r) plus their intrinsic axial
+    /// spin — velocity-dependent forces (doppler, corotation) on
+    /// constituents need correct member velocities.
+    fn sync_group_members(&mut self, gid: usize) {
+        let (members, data): (Vec<usize>, Vec<(DVec3, DQuat, f64)>) = {
+            let g = &self.groups[gid];
+            (
+                g.members.clone(),
+                g.local_offsets
+                    .iter()
+                    .zip(&g.local_orients)
+                    .zip(&g.member_spin)
+                    .map(|((off, orient), spin)| (*off, *orient, *spin))
+                    .collect(),
+            )
+        };
+        let (com, vel, orientation, omega) = {
+            let g = &self.groups[gid];
+            (g.com, g.velocity, g.orientation, g.angular_velocity)
+        };
+        for (&m, (off, local_orient, spin)) in members.iter().zip(data) {
+            let world_off = orientation * off;
+            let p = &mut self.particles[m];
+            p.position = com + world_off;
+            p.orientation = (orientation * local_orient).normalize();
+            p.velocity = vel + omega.cross(world_off);
+            let pole = p.pole_axis();
+            p.angular_velocity = omega + pole * spin;
+        }
+    }
+
     pub fn remove_particle(&mut self, id: usize) {
-        if id < self.particles.len() {
-            self.particles.swap_remove(id);
+        if id >= self.particles.len() {
+            return;
+        }
+        // Constituents of a rigid preset can't be removed individually.
+        if self.particles[id].group.is_some() {
+            return;
+        }
+        let last = self.particles.len() - 1;
+        self.particles.swap_remove(id);
+        // The particle formerly at `last` now lives at `id` — fix group refs.
+        if id != last {
+            if let Some(g) = self.particles[id].group {
+                for m in &mut self.groups[g].members {
+                    if *m == last {
+                        *m = id;
+                    }
+                }
+            }
         }
     }
 
     pub fn clear_particles(&mut self) {
         self.particles.clear();
+        self.groups.clear();
         self.vfx_particles.clear();
     }
 
@@ -562,29 +796,13 @@ impl AtomCore {
             return;
         }
         let dt = self.dt;
-        let n = self.particles.len();
 
         // 1. Forces at current state
         self.compute_forces();
 
         // 2. Half-step velocities + full-step positions
-        for i in 0..n {
-            let p = &mut self.particles[i];
-            let inv_m = 1.0 / self.profiles[p.profile_id].mass;
-            let a = p.force_accum * inv_m;
-            let alpha = p.torque_accum;
-
-            p.velocity += a * (dt * 0.5);
-            p.angular_velocity += alpha * (dt * 0.5);
-            p.position += p.velocity * dt;
-
-            let w = p.angular_velocity;
-            let w_len = w.length();
-            if w_len > 1e-12 {
-                let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
-                p.orientation = (rot * p.orientation).normalize();
-            }
-        }
+        self.kick(dt * 0.5);
+        self.drift(dt);
 
         // 3. Forces at new positions
         self.compute_forces();
@@ -594,14 +812,12 @@ impl AtomCore {
         // channels — doppler drag (radial) and corotation drag (tangential).
         // A flat 0.9999/step multiplier was what killed tangential orbit
         // velocity through session 27.
-        for i in 0..n {
+        self.kick(dt * 0.5);
+        for i in 0..self.particles.len() {
+            if self.particles[i].group.is_some() {
+                continue;
+            }
             let p = &mut self.particles[i];
-            let inv_m = 1.0 / self.profiles[p.profile_id].mass;
-            let a = p.force_accum * inv_m;
-            let alpha = p.torque_accum;
-
-            p.velocity += a * (dt * 0.5);
-            p.angular_velocity += alpha * (dt * 0.5);
             // Preserve axial spin (intrinsic), only damp tumble/precession
             let pole = p.pole_axis();
             let w_axial = pole * p.angular_velocity.dot(pole);
@@ -610,6 +826,66 @@ impl AtomCore {
         }
 
         self.time += dt;
+    }
+
+    /// Velocity (and angular velocity) update for free particles and groups.
+    fn kick(&mut self, dt: f64) {
+        for i in 0..self.particles.len() {
+            if self.particles[i].group.is_some() {
+                continue;
+            }
+            let p = &mut self.particles[i];
+            let inv_m = 1.0 / self.profiles[p.profile_id].mass;
+            p.velocity += p.force_accum * inv_m * dt;
+            p.angular_velocity += p.torque_accum * dt;
+        }
+        // Groups: aggregate member forces into a COM force + torque.
+        for gi in 0..self.groups.len() {
+            let (f, tau) = {
+                let g = &self.groups[gi];
+                let mut f = DVec3::ZERO;
+                let mut tau = DVec3::ZERO;
+                for &m in &g.members {
+                    let p = &self.particles[m];
+                    f += p.force_accum;
+                    tau += (p.position - g.com).cross(p.force_accum) + p.torque_accum;
+                }
+                (f, tau)
+            };
+            let g = &mut self.groups[gi];
+            g.velocity += f / g.mass * dt;
+            g.angular_velocity += tau / g.inertia * dt;
+        }
+    }
+
+    /// Position (and orientation) update for free particles and groups.
+    fn drift(&mut self, dt: f64) {
+        for i in 0..self.particles.len() {
+            if self.particles[i].group.is_some() {
+                continue;
+            }
+            let p = &mut self.particles[i];
+            p.position += p.velocity * dt;
+            let w = p.angular_velocity;
+            let w_len = w.length();
+            if w_len > 1e-12 {
+                let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
+                p.orientation = (rot * p.orientation).normalize();
+            }
+        }
+        for gi in 0..self.groups.len() {
+            {
+                let g = &mut self.groups[gi];
+                g.com += g.velocity * dt;
+                let w = g.angular_velocity;
+                let w_len = w.length();
+                if w_len > 1e-12 {
+                    let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
+                    g.orientation = (rot * g.orientation).normalize();
+                }
+            }
+            self.sync_group_members(gi);
+        }
     }
 
     pub fn step_n(&mut self, steps: usize) {
@@ -673,6 +949,14 @@ impl AtomCore {
         // Pairwise forces
         for i in 0..n {
             for j in (i + 1)..n {
+                // Rigid-composite constituents don't interact internally:
+                // the nucleus is pre-fused (uf4.pdf — alphas can't be broken
+                // and rearranged); its internal balance isn't simulated.
+                if self.particles[i].group.is_some()
+                    && self.particles[i].group == self.particles[j].group
+                {
+                    continue;
+                }
                 let d_vec = self.particles[j].position - self.particles[i].position;
                 let r2 = d_vec.length_squared();
                 let r = r2.sqrt().max(SOFTENING);

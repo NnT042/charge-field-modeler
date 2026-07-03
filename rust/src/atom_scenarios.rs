@@ -539,23 +539,168 @@ mod tests {
         assert_eq!((bonds, repels), (4, 4));
     }
 
-    /// M3 gates: alpha rigidity + conservation, electron capture on alpha,
-    /// helium stability.
+    /// M3 gate: an isolated alpha stays rigid (constituent geometry exact),
+    /// conserves COM momentum under a kick (no external forces), and never
+    /// goes non-finite.
     #[test]
-    #[ignore = "M3: needs rigid groups + presets"]
     fn alpha_holds_and_conserves() {
-        unimplemented!("filled in at M3");
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("alpha", DVec3::ZERO, DVec3::new(0.3, 0.1, 0.0), DVec3::Y)
+            .expect("alpha preset");
+        let members = core.groups[gid].members.clone();
+        let initial_dists: Vec<f64> = pair_dists(&core, &members);
+        let p0 = momentum(&core);
+
+        core.step_n(100_000);
+
+        for p in &core.particles {
+            assert!(
+                p.position.is_finite() && p.velocity.is_finite(),
+                "non-finite state"
+            );
+        }
+        let final_dists = pair_dists(&core, &members);
+        for (a, b) in initial_dists.iter().zip(&final_dists) {
+            assert!(
+                (a - b).abs() < 1e-9,
+                "rigidity violated: pair distance {a} -> {b}"
+            );
+        }
+        let p1 = momentum(&core);
+        assert!(
+            (p0 - p1).length() < 1e-9,
+            "momentum not conserved: {p0:?} -> {p1:?}"
+        );
     }
 
+    /// Stretch presets (C/N/O) smoke test: spawn, run, stay rigid and finite.
     #[test]
-    #[ignore = "M3: needs rigid groups + presets"]
+    fn heavier_presets_smoke() {
+        for name in ["carbon", "nitrogen", "oxygen"] {
+            let mut core = standard_core();
+            let gid = core
+                .spawn_preset(name, DVec3::ZERO, DVec3::new(0.1, 0.0, 0.05), DVec3::Y)
+                .unwrap_or_else(|| panic!("{name} preset missing"));
+            let members = core.groups[gid].members.clone();
+            let expected = match name {
+                "carbon" => 12,
+                "nitrogen" => 14,
+                "oxygen" => 16,
+                _ => unreachable!(),
+            };
+            assert_eq!(members.len(), expected, "{name} constituent count");
+            let initial = pair_dists(&core, &members[..4.min(members.len())]);
+            core.step_n(50_000);
+            let after = pair_dists(&core, &members[..4.min(members.len())]);
+            for (a, b) in initial.iter().zip(&after) {
+                assert!((a - b).abs() < 1e-9, "{name} rigidity violated");
+            }
+            for p in &core.particles {
+                assert!(p.position.is_finite(), "{name}: non-finite state");
+            }
+        }
+    }
+
+    fn pair_dists(core: &AtomCore, ids: &[usize]) -> Vec<f64> {
+        let mut out = Vec::new();
+        for (n, &a) in ids.iter().enumerate() {
+            for &b in &ids[n + 1..] {
+                out.push(core.pair_distance(a, b));
+            }
+        }
+        out
+    }
+
+    fn momentum(core: &AtomCore) -> DVec3 {
+        core.particles
+            .iter()
+            .map(|p| p.velocity * core.profiles[p.profile_id].mass)
+            .sum()
+    }
+
+    /// M3 gate: a free electron released over the alpha's top proton pole is
+    /// captured into the same wall-riding orbit as hydrogen — constituent-
+    /// level nearfield working through the rigid group.
+    #[test]
     fn alpha_captures_electron() {
-        unimplemented!("filled in at M3");
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        // Members: [proton_bottom, proton_top, neutron, neutron]
+        let top_proton = core.groups[gid].members[1];
+        let e_id = core.profile_id_by_name("electron").unwrap();
+        let e = core
+            .spawn_particle(
+                e_id,
+                DVec3::new(0.5, 2.9, 0.0), // 2.0 above the top proton at (0,0.9,0)
+                DVec3::new(0.0, 0.0, 0.4),
+                DVec3::Y,
+            )
+            .unwrap();
+        let m = run_pair(&mut core, top_proton, e, 300_000, 100, 0.5);
+        assert!(m.capture_time.is_some(), "no capture on alpha pole: {m:?}");
+        assert!(!m.escaped, "escaped: {m:?}");
+        assert!(
+            m.mean_orbit_r >= 1.1 && m.mean_orbit_r <= 2.0,
+            "electron should ride near the top proton's boundary: {m:?}"
+        );
+        assert!(
+            m.orbit_r_stddev / m.mean_orbit_r < 0.2,
+            "orbit not stable: {m:?}"
+        );
     }
 
+    /// M3 gate: helium — alpha plus two electrons riding the two outer
+    /// proton poles — holds over a long run: both electrons stay bound to
+    /// their poles, the nucleus stays put (no self-propulsion).
     #[test]
-    #[ignore = "M3: needs rigid groups + presets"]
     fn helium_stable() {
-        unimplemented!("filled in at M3");
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        let bottom_proton = core.groups[gid].members[0];
+        let top_proton = core.groups[gid].members[1];
+        let e_id = core.profile_id_by_name("electron").unwrap();
+        // Pre-placed wall-riding electrons on the two outer poles, circling
+        // opposite ways to match the shared stack spin direction.
+        let theta = RIDE_THETA_DEG.to_radians();
+        let lat = RIDE_R * theta.sin();
+        let ax = RIDE_R * theta.cos();
+        let e_top = core
+            .spawn_particle(
+                e_id,
+                DVec3::new(lat, 0.9 + ax, 0.0),
+                DVec3::new(0.0, 0.0, -crate::atom_core::COROT_V_MAX),
+                DVec3::Y,
+            )
+            .unwrap();
+        let e_bot = core
+            .spawn_particle(
+                e_id,
+                DVec3::new(lat, -0.9 - ax, 0.0),
+                DVec3::new(0.0, 0.0, -crate::atom_core::COROT_V_MAX),
+                -DVec3::Y,
+            )
+            .unwrap();
+
+        core.step_n(300_000);
+
+        let d_top = core.pair_distance(top_proton, e_top);
+        let d_bot = core.pair_distance(bottom_proton, e_bot);
+        assert!(
+            d_top < 2.0 && d_bot < 2.0,
+            "helium electrons should stay bound: d_top={d_top} d_bot={d_bot}"
+        );
+        let com_drift = core.groups[gid].com.length();
+        assert!(
+            com_drift < 1.0,
+            "helium nucleus should not self-propel: drift={com_drift}"
+        );
+        for p in &core.particles {
+            assert!(p.position.is_finite(), "non-finite state");
+        }
     }
 }
