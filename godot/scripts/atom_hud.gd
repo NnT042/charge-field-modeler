@@ -38,6 +38,8 @@ func _ready() -> void:
 		"CarbonBtn": "carbon",
 		"NitrogenBtn": "nitrogen",
 		"OxygenBtn": "oxygen",
+		"NeonBtn": "neon",
+		"ArgonBtn": "argon",
 	}
 	for btn_name in scenarios:
 		var node := get_node("%" + btn_name) as Button

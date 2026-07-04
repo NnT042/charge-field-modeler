@@ -263,6 +263,56 @@ fn plug_neutron(y: f64, z: f64) -> Constituent {
 /// Same nestling scale as the alpha's neutron posts (±0.5 off-axis).
 const PLUG_PAIR_GAP: f64 = 0.55;
 
+/// Radius of the carousel level: distance from the stack axis to a
+/// carousel alpha's center. Sets the nearest carousel proton pole just
+/// outside the center disk's edge — plugged edge-to-hole (nuclear.pdf,
+/// four.pdf: "all disks fit together edge to hole, like male and female
+/// sockets").
+const CAROUSEL_R: f64 = 3.1;
+
+/// One alpha mounted ON THE CAROUSEL at azimuth `phi_deg`: its stack axis
+/// points RADIALLY (the center disk's equatorial output feeds this alpha's
+/// axial hole — nuclear.pdf's first carousel configuration, Neon), and the
+/// whole block rides the carousel around the core. Charge is flung out
+/// equatorially through these (dielec.pdf/diamag.pdf).
+fn carousel_alpha(phi_deg: f64) -> Vec<Constituent> {
+    let phi = phi_deg.to_radians();
+    let u = DVec3::new(phi.cos(), 0.0, phi.sin()); // radial stack axis
+    let center = u * CAROUSEL_R;
+    // Posts sit perpendicular to the alpha's own axis; vertical keeps them
+    // clear of both the core and the neighboring carousel blocks.
+    vec![
+        Constituent {
+            profile_name: "proton",
+            local_pos: center - u * 0.9,
+            local_pole: u,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "proton",
+            local_pos: center + u * 0.9,
+            local_pole: u,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: center + DVec3::new(0.0, 0.5, 0.0),
+            local_pole: u,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: center + DVec3::new(0.0, -0.5, 0.0),
+            local_pole: u,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+    ]
+}
+
 /// Alpha stack pitch: adjacent alpha centers along the axis. Tight enough
 /// that the disks read as plugged (nuclear.pdf), loose enough to see the
 /// blocks.
@@ -305,13 +355,45 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
             c.push(plug_neutron(y, PLUG_PAIR_GAP));
             Some(c)
         }
+        // Neon: THE first carousel configuration (nuclear.pdf) — one
+        // center alpha with four carousel alphas plugged edge-to-hole
+        // around its equator. The axial charge hole top and bottom is
+        // "surrounded by four charge maxima": unreactive, six-sided.
+        "neon" => Some(
+            [
+                alpha_block(0.0),
+                carousel_alpha(0.0),
+                carousel_alpha(90.0),
+                carousel_alpha(180.0),
+                carousel_alpha(270.0),
+            ]
+            .concat(),
+        ),
+        // Argon: Neon's carousel + the full axial line on the same center
+        // disk — "nine disks... Level one is the center disk. Level two
+        // consists of the four carousel disks. Level 3a is the posts up
+        // and down. Level 3b is the caps top and bottom" (nuclear.pdf).
+        "argon" => Some(
+            [
+                alpha_block(-2.0 * ALPHA_PITCH), // cap
+                alpha_block(-ALPHA_PITCH),       // post
+                alpha_block(0.0),                // center
+                alpha_block(ALPHA_PITCH),        // post
+                alpha_block(2.0 * ALPHA_PITCH),  // cap
+                carousel_alpha(0.0),
+                carousel_alpha(90.0),
+                carousel_alpha(180.0),
+                carousel_alpha(270.0),
+            ]
+            .concat(),
+        ),
         _ => None,
     }
 }
 
 /// Preset names for UI listings.
 pub fn preset_names() -> &'static [&'static str] {
-    &["alpha", "carbon", "nitrogen", "oxygen"]
+    &["alpha", "carbon", "nitrogen", "oxygen", "neon", "argon"]
 }
 
 /// A rigidly-locked composite (nucleus). Constituents remain real particles
@@ -2071,15 +2153,25 @@ impl AtomCore {
     /// Advance the cloud particles by wall-clock `delta` seconds and return
     /// the MultiMesh buffer (12 transform + 4 color floats per particle).
     pub fn advance_clouds(&mut self, delta: f64) -> Vec<f32> {
-        const MAX_POOL: usize = 12_000;
+        const MAX_POOL: usize = 40_000;
         /// Parcel speed along its path (natural units / wall second).
-        const FLOW_SPEED: f64 = 2.0;
+        const FLOW_SPEED: f64 = 2.4;
         /// Recycling loops per second through a free baryon (split across
         /// the two poles). Electrons recycle a sliver of this.
-        const FLOW_FREE_PER_SEC: f64 = 260.0;
+        const FLOW_FREE_PER_SEC: f64 = 800.0;
         /// Loops per second per alpha engine in a nucleus — more engines
         /// in the stack, denser flow.
-        const FLOW_GROUP_PER_ENGINE: f64 = 130.0;
+        const FLOW_GROUP_PER_ENGINE: f64 = 380.0;
+        /// A cap electron only DAMPS the pole flow it rides (it skims what
+        /// it can carry — its stream is 1/1836 of the proton's), it does
+        /// not stopper it: effective flow occlusion is scaled by this.
+        const ELECTRON_FLOW_DAMP: f64 = 0.35;
+        /// Each plug nucleon on a stack end boosts that end's pole-flow
+        /// density: its perpendicular disc (proton) or axial channel
+        /// (neutron) gathers extra field into the socket (phos.pdf
+        /// plug-and-socket; atmo2.pdf "pulling charge into the axial
+        /// holes"). Rate multiplier = 1 + BOOST × plugs.
+        const PLUG_FLOW_BOOST: f64 = 0.5;
         /// Destination weight for passing straight through the stack vs
         /// peeling off at one alpha disc (weight 1 each).
         const THROUGH_WEIGHT: f64 = 0.7;
@@ -2193,9 +2285,16 @@ impl AtomCore {
             let rate_scale = if mass < 0.5 { 0.2 } else { 1.0 };
             for (side, &(occ_v, blocker)) in occ[ei].iter().enumerate() {
                 let entry = if side == 0 { 1.0 } else { -1.0 };
+                // An electron cap only skims the stream; a baryon stopper
+                // really blocks it.
+                let occ_flow = if blocker.is_some() {
+                    occ_v * ELECTRON_FLOW_DAMP
+                } else {
+                    occ_v
+                };
                 let n = spawn_count(
                     &mut self.rng,
-                    FLOW_FREE_PER_SEC * 0.5 * (1.0 - occ_v) * rate_scale,
+                    FLOW_FREE_PER_SEC * 0.5 * (1.0 - occ_flow) * rate_scale,
                 );
                 for _ in 0..n {
                     if self.vfx_particles.len() >= MAX_POOL {
@@ -2236,10 +2335,14 @@ impl AtomCore {
                         },
                     });
                 }
-                // Electron-capped pole: the inflow doesn't die, it gets
-                // CAPTURED at the rider and dispersed off its disc.
+                // Electron-capped pole: the skimmed share of the inflow is
+                // CAPTURED at the rider and dispersed off its disc — the
+                // rest recycles through as usual.
                 if blocker.is_some() && occ_v > 0.5 {
-                    let n = spawn_count(&mut self.rng, FLOW_FREE_PER_SEC * 0.3 * rate_scale);
+                    let n = spawn_count(
+                        &mut self.rng,
+                        FLOW_FREE_PER_SEC * 0.5 * occ_v * ELECTRON_FLOW_DAMP * rate_scale,
+                    );
                     for _ in 0..n {
                         if self.vfx_particles.len() >= MAX_POOL {
                             break;
@@ -2285,11 +2388,34 @@ impl AtomCore {
             let engines = exits.len().max(1);
             let reach_n = reach_at_theta(&self.groups[gi].skin_reach, 0.0);
             let reach_s = reach_at_theta(&self.groups[gi].skin_reach, std::f64::consts::PI);
+            // Plug nucleons per end: anything sitting beyond the outermost
+            // AXIAL proton is a polar plug — its disc/channel gathers extra
+            // field into the socket, boosting that end's intake.
+            let mut y_pmax = 0.0f64;
+            for (k, &m) in self.groups[gi].members.iter().enumerate() {
+                let axial = (self.groups[gi].local_orients[k] * DVec3::Y)
+                    .dot(DVec3::Y)
+                    .abs()
+                    > 0.9;
+                if axial && self.profiles[self.particles[m].profile_id].name == "proton" {
+                    y_pmax = y_pmax.max(self.groups[gi].local_offsets[k].y.abs());
+                }
+            }
+            let mut plugs = [0usize; 2]; // [top, bottom]
+            if y_pmax > 0.0 {
+                for off in &self.groups[gi].local_offsets {
+                    if off.y > y_pmax + 0.2 {
+                        plugs[0] += 1;
+                    } else if off.y < -(y_pmax + 0.2) {
+                        plugs[1] += 1;
+                    }
+                }
+            }
             for side in 0..2 {
-                let (entry, tip_y, far_tip, reach_out) = if side == 0 {
-                    (1.0, y_top, y_bot, reach_s)
+                let (entry, tip_y, far_tip, reach_out, n_plugs) = if side == 0 {
+                    (1.0, y_top, y_bot, reach_s, plugs[0])
                 } else {
-                    (-1.0, y_bot, y_top, reach_n)
+                    (-1.0, y_bot, y_top, reach_n, plugs[1])
                 };
                 // End occlusion: a particle sitting over this stack end
                 // stoppers it; an electron rider captures instead.
@@ -2313,23 +2439,33 @@ impl AtomCore {
                         blocker = (self.profiles[p.profile_id].mass < 0.5).then_some(k);
                     }
                 }
-                let end_rate = FLOW_GROUP_PER_ENGINE * engines as f64 * 0.5;
-                let n = spawn_count(&mut self.rng, end_rate * (1.0 - occ_v));
+                let occ_flow = if blocker.is_some() {
+                    occ_v * ELECTRON_FLOW_DAMP
+                } else {
+                    occ_v
+                };
+                let boost = 1.0 + PLUG_FLOW_BOOST * n_plugs as f64;
+                let end_rate = FLOW_GROUP_PER_ENGINE * engines as f64 * 0.5 * boost;
+                let n = spawn_count(&mut self.rng, end_rate * (1.0 - occ_flow));
                 for _ in 0..n {
                     if self.vfx_particles.len() >= MAX_POOL {
                         break;
                     }
+                    // The boosted share arrives SIDEWAYS through the plug —
+                    // its perpendicular disc gathers field into the socket.
+                    let side_feed =
+                        n_plugs > 0 && self.rng.next_f64() < (boost - 1.0) / boost;
                     let w_total = exits.len() as f64 + THROUGH_WEIGHT;
                     let pick = self.rng.next_f64() * w_total;
                     let (pts, len, color_end) = if pick >= exits.len() as f64 {
                         let (pts, len) = flow_group_through(
-                            &mut self.rng, entry, tip_y, far_tip, reach_out,
+                            &mut self.rng, entry, tip_y, far_tip, reach_out, side_feed,
                         );
                         (pts, len, THROUGH_COLOR)
                     } else {
                         let (rr, ry) = exits[pick as usize];
                         let (pts, len) =
-                            flow_group_disc(&mut self.rng, entry, tip_y, rr, ry);
+                            flow_group_disc(&mut self.rng, entry, tip_y, rr, ry, side_feed);
                         (pts, len, PROTON_COLOR)
                     };
                     self.vfx_particles.push(VfxParticle {
@@ -2348,9 +2484,11 @@ impl AtomCore {
                         },
                     });
                 }
-                // Cap electron on this end: captured + dispersed inflow.
+                // Cap electron on this end: the skimmed share is captured
+                // and dispersed; the rest passed through above.
                 if blocker.is_some() && occ_v > 0.5 {
-                    let n = spawn_count(&mut self.rng, end_rate * 0.5);
+                    let n =
+                        spawn_count(&mut self.rng, end_rate * occ_v * ELECTRON_FLOW_DAMP);
                     for _ in 0..n {
                         if self.vfx_particles.len() >= MAX_POOL {
                             break;
@@ -2597,6 +2735,38 @@ fn flow_capture(rng: &mut Rng, tip_y: f64, entry: f64, radius: f64) -> (Vec<DVec
     resample_polyline_uniform(&raw, 12)
 }
 
+/// Entry prefix for a nucleus flow: either the polar funnel above the
+/// stack end, or — when a plug gathers the perpendicular field — a
+/// SIDEWAYS approach spiraling into the plug at the end's latitude.
+fn push_group_entry(
+    raw: &mut Vec<DVec3>,
+    rng: &mut Rng,
+    entry: f64,
+    tip_y: f64,
+    side_feed: bool,
+) -> f64 {
+    let phi0 = rng.next_f64() * TAU;
+    if side_feed {
+        for k in 0..3 {
+            let f = k as f64 / 2.0;
+            let rho = 2.9 - 2.3 * f;
+            let h = tip_y + entry * (0.2 - 0.5 * f);
+            let phi = phi0 + 1.6 * f;
+            raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+        }
+    } else {
+        let mouth = 0.6 + 0.9 * rng.next_f64();
+        for k in 0..3 {
+            let f = k as f64 / 2.0;
+            let h = tip_y + entry * (1.9 - 1.7 * f);
+            let rho = mouth * (1.0 - f) + 0.08;
+            let phi = phi0 + 2.0 * f;
+            raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+        }
+    }
+    phi0
+}
+
 /// Through-charge in a nucleus: open end (`tip_y`) → the whole axial
 /// channel → out the far pole to the composite reach — the stack's
 /// pole-to-pole channel.
@@ -2606,17 +2776,10 @@ fn flow_group_through(
     tip_y: f64,
     far_tip_y: f64,
     reach_out: f64,
+    side_feed: bool,
 ) -> (Vec<DVec3>, f64) {
     let mut raw: Vec<DVec3> = Vec::with_capacity(8);
-    let phi0 = rng.next_f64() * TAU;
-    let mouth = 0.6 + 0.9 * rng.next_f64();
-    for k in 0..3 {
-        let f = k as f64 / 2.0;
-        let h = tip_y + entry * (1.9 - 1.7 * f);
-        let rho = mouth * (1.0 - f) + 0.08;
-        let phi = phi0 + 2.0 * f;
-        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
-    }
+    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, side_feed);
     raw.push(DVec3::new(0.0, (tip_y + far_tip_y) * 0.5, 0.0));
     raw.push(DVec3::new(0.0, far_tip_y, 0.0));
     let out_r = reach_out.max(far_tip_y.abs() + 1.2);
@@ -2642,17 +2805,10 @@ fn flow_group_disc(
     tip_y: f64,
     ring_r: f64,
     ring_y: f64,
+    side_feed: bool,
 ) -> (Vec<DVec3>, f64) {
     let mut raw: Vec<DVec3> = Vec::with_capacity(9);
-    let phi0 = rng.next_f64() * TAU;
-    let mouth = 0.6 + 0.9 * rng.next_f64();
-    for k in 0..3 {
-        let f = k as f64 / 2.0;
-        let h = tip_y + entry * (1.9 - 1.7 * f);
-        let rho = mouth * (1.0 - f) + 0.08;
-        let phi = phi0 + 2.0 * f;
-        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
-    }
+    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, side_feed);
     raw.push(DVec3::new(0.0, (tip_y + ring_y) * 0.5, 0.0));
     raw.push(DVec3::new(0.0, ring_y, 0.0));
     let yj = ring_y + (rng.next_f64() - 0.5) * 0.3;
@@ -3040,11 +3196,11 @@ mod tests {
         );
     }
 
-    /// Electron-capped pole: the inflow is CAPTURED at the rider — no
-    /// parcel entering the capped side passes through the body; the open
-    /// pole still runs full recycling loops.
+    /// Electron-capped pole: the rider only SKIMS the stream — part of
+    /// the inflow is captured and dispersed at the electron, the rest
+    /// still recycles through, at a visibly damped rate vs the open pole.
     #[test]
-    fn flow_captured_at_electron_capped_pole() {
+    fn flow_damped_and_skimmed_at_electron_capped_pole() {
         let dir = config_dir();
         let mut core = AtomCore::new();
         let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
@@ -3056,7 +3212,9 @@ mod tests {
         for _ in 0..60 {
             core.advance_clouds(1.0 / 60.0);
         }
-        let (mut north_in, mut north_through, mut south_in) = (0usize, 0usize, 0usize);
+        // Captures end high at the rider (last.y > 0.5); loops entering
+        // north exit on the far hemisphere (last.y < 0).
+        let (mut captures, mut north_loops, mut south_in) = (0usize, 0usize, 0usize);
         for vp in &core.vfx_particles {
             if let VfxKind::Flow {
                 anchor: VfxAnchor::Particle(0),
@@ -3067,18 +3225,25 @@ mod tests {
                 let first = pts[0];
                 let last = pts[pts.len() - 1];
                 if first.y > 0.0 {
-                    north_in += 1;
-                    if last.y < -0.5 {
-                        north_through += 1;
+                    if last.y > 0.5 {
+                        captures += 1;
+                    } else if last.y < -0.1 {
+                        north_loops += 1;
                     }
                 } else {
                     south_in += 1;
                 }
             }
         }
-        assert!(north_in > 0, "capped pole should show captured inflow");
-        assert_eq!(north_through, 0, "no parcel may pass the stoppered channel");
-        assert!(south_in > 0, "open pole should run full recycling loops");
+        assert!(captures > 0, "rider should skim and disperse part of the inflow");
+        assert!(
+            north_loops > 0,
+            "damped flow must still pass the electron, not be destroyed"
+        );
+        assert!(
+            north_loops < south_in,
+            "capped pole should be visibly damped: north={north_loops} south={south_in}"
+        );
     }
 
     /// Nucleus flow: parcels enter the open stack ends; some peel off at
@@ -3157,6 +3322,20 @@ mod tests {
             .expect("carbon preset");
         let rings = core.build_group_emission_rings(0);
         assert_eq!(rings[0] as usize, 3, "carbon = three alphas, three rings");
+
+        // Carousel alphas are NOT axial engines: neon rings only its
+        // center alpha, argon its five axial disks.
+        core.clear_particles();
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        let rings = core.build_group_emission_rings(0);
+        assert_eq!(rings[0] as usize, 1, "neon = one axial alpha, one ring");
+
+        core.clear_particles();
+        core.spawn_preset("argon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("argon preset");
+        let rings = core.build_group_emission_rings(0);
+        assert_eq!(rings[0] as usize, 5, "argon = five axial alphas, five rings");
     }
 
     /// Composite alpha skin: a sane lathe whose equatorial reach exceeds a

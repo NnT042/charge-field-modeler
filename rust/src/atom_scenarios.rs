@@ -603,7 +603,7 @@ mod tests {
     /// Stretch presets (C/N/O) smoke test: spawn, run, stay rigid and finite.
     #[test]
     fn heavier_presets_smoke() {
-        for name in ["carbon", "nitrogen", "oxygen"] {
+        for name in ["carbon", "nitrogen", "oxygen", "neon", "argon"] {
             let mut core = standard_core();
             let gid = core
                 .spawn_preset(name, DVec3::ZERO, DVec3::new(0.1, 0.0, 0.05), DVec3::Y)
@@ -613,6 +613,8 @@ mod tests {
                 "carbon" => 12,
                 "nitrogen" => 14,
                 "oxygen" => 16,
+                "neon" => 20,   // center alpha + 4 carousel alphas
+                "argon" => 36,  // 9 alphas: axial line of 5 + 4 carousel
                 _ => unreachable!(),
             };
             assert_eq!(members.len(), expected, "{name} constituent count");
@@ -668,7 +670,10 @@ mod tests {
             }
 
             let initial = pair_dists(&core, &members[..4.min(members.len())]);
-            core.step_n(50_000);
+            // Big carousel presets (Ne/Ar) pay O(n²) per step — a shorter
+            // run keeps the ~10 s test gate while still proving rigidity.
+            let steps = if expected > 16 { 10_000 } else { 50_000 };
+            core.step_n(steps);
             let after = pair_dists(&core, &members[..4.min(members.len())]);
             for (a, b) in initial.iter().zip(&after) {
                 assert!((a - b).abs() < 1e-9, "{name} rigidity violated");

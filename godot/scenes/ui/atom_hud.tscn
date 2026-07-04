@@ -168,6 +168,18 @@ layout_mode = 2
 tooltip_text = "Carbon stack + proton plugs in both poles"
 text = "Oxygen"
 
+[node name="NeonBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "First carousel configuration: center alpha + 4 carousel alphas"
+text = "Neon"
+
+[node name="ArgonBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Neon carousel + axial posts and caps: 9 alphas, fully engaged"
+text = "Argon"
+
 [node name="Sep2" type="HSeparator" parent="ScenarioPanel/Margin/VBox"]
 layout_mode = 2
 

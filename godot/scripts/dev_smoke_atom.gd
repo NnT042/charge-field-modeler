@@ -35,10 +35,16 @@ func _process(_delta: float) -> bool:
 			mode.spawn_scenario("oxygen")
 		25:
 			_check_groups(1, "oxygen")
-			mode.spawn_scenario("protons")
+			mode.spawn_scenario("neon")
 		30:
+			_check_groups(1, "neon")
+			mode.spawn_scenario("argon")
+		35:
+			_check_groups(1, "argon")
+			mode.spawn_scenario("protons")
+		40:
 			_check_groups(0, "protons")
-	if frames >= 35:
+	if frames >= 45:
 		if failed:
 			print("[smoke] FAILED")
 			quit(1)

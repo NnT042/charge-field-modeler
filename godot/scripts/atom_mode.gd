@@ -257,7 +257,7 @@ func spawn_scenario(scenario: String) -> void:
 			# the pair is driven out past molecular range.
 			_spawn_formed_h(Vector3(0, -3, 0), 1.0)
 			_spawn_formed_h(Vector3(0, 3, 0), -1.0)
-		"alpha", "carbon", "nitrogen", "oxygen":
+		"alpha", "carbon", "nitrogen", "oxygen", "neon", "argon":
 			atom_sim.spawn_preset(scenario, Vector3.ZERO, Vector3.ZERO, Vector3.UP)
 		"helium":
 			atom_sim.spawn_preset("alpha", Vector3.ZERO, Vector3.ZERO, Vector3.UP)
