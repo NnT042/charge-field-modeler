@@ -313,8 +313,23 @@ func _create_vfx_renderer() -> void:
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	mat.no_depth_test = true
 
+	# Round photon dots: radial-gradient billboard texture (soft circle),
+	# not bare squares.
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 1), Color(1, 1, 1, 0.8), Color(1, 1, 1, 0)])
+	var dot_tex := GradientTexture2D.new()
+	dot_tex.gradient = grad
+	dot_tex.fill = GradientTexture2D.FILL_RADIAL
+	dot_tex.fill_from = Vector2(0.5, 0.5)
+	dot_tex.fill_to = Vector2(1.0, 0.5)
+	dot_tex.width = 32
+	dot_tex.height = 32
+	mat.albedo_texture = dot_tex
+
 	# Unit quad — the per-instance transform scale (set in Rust) carries the
-	# actual puff size, so smoke can grow as it drifts.
+	# actual dot size.
 	mat.billboard_keep_scale = true
 	var mesh := QuadMesh.new()
 	mesh.size = Vector2(1.0, 1.0)

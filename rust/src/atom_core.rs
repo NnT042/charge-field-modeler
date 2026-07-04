@@ -5,7 +5,7 @@
 //! scenario harness (atom_scenarios.rs) + `atom_lab` bin drive this
 //! directly for fast physics iteration without opening the editor.
 
-use glam::{DQuat, DVec3};
+use glam::{DMat3, DQuat, DVec3};
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::path::{Path, PathBuf};
 
@@ -346,8 +346,11 @@ pub struct RigidGroup {
     /// Azimuth-averaged skin reach vs polar angle (SKIN_REACH_RINGS samples
     /// over θ ∈ [0, π]), computed once at spawn — the group is rigid.
     /// Feeds the composite skin mesh, the emission-ring overlay, and the
-    /// smoke lifetimes (dots die AT this boundary).
+    /// flow-parcel exit paths (parcels die AT this boundary).
     pub skin_reach: Vec<f64>,
+    /// (ring radius, y) per alpha block: where each alpha's disc meets the
+    /// reach surface. Feeds the ring overlay and the flow disc exits.
+    pub disc_exits: Vec<(f64, f64)>,
 }
 
 /// Samples in a group's stored `skin_reach` table.
@@ -383,23 +386,33 @@ pub struct VfxParticle {
 
 /// Motion model for a cloud particle.
 enum VfxKind {
-    /// Free ballistic smoke puff (`position += velocity·dt`).
+    /// Free ballistic puff (bond stream bridges).
     Smoke,
-    /// Kinematic intake-funnel rider: its position is recomputed every
-    /// frame around the emitter's CURRENT pole, so the tornado follows a
-    /// moving particle instead of detaching as straight-line puffs.
-    Tornado {
-        /// Index into `self.particles` (cleared with the particle list).
-        emitter: usize,
-        /// true = −pole_axis end.
-        south: bool,
-        /// Azimuth at spawn (rad).
-        phase0: f64,
-        /// Funnel mouth radius at the top of the descent (world units) —
-        /// set by the intake cone angle sampled from the A²-CDF, so the
-        /// funnel width IS the capture cone.
-        mouth: f64,
+    /// Charge parcel on a complete recycling path: polar funnel in,
+    /// through the body/stack, out where the emission maps send it (disc
+    /// spray, far pole, alpha ring, or captured by a cap electron).
+    /// `pts` is an arc-length-uniform polyline in the anchor's local
+    /// frame (pole = +Y, fast axial spin excluded); the whole path swirls
+    /// about the pole at `swirl` rad/s so intake AND exhaust visibly
+    /// corotate. Color lerps from the intake tint to `color_end` as the
+    /// parcel recycles through.
+    Flow {
+        anchor: VfxAnchor,
+        swirl: f64,
+        color_end: (f32, f32, f32),
+        pts: Vec<DVec3>,
     },
+}
+
+/// What a flow parcel's path is expressed relative to.
+enum VfxAnchor {
+    /// A free particle: position + pole frame (build_frame — the visual
+    /// swirl is applied separately at a readable rate, not the physical
+    /// TAU·3 axial spin).
+    Particle(usize),
+    /// A rigid group: com + orientation. One frame for the whole nucleus,
+    /// so axial paths span the full stack.
+    Group(usize),
 }
 
 pub const SOFTENING: f64 = 0.05;
@@ -683,10 +696,13 @@ impl AtomCore {
             mass,
             inertia: inertia.max(1e-9),
             skin_reach: Vec::new(),
+            disc_exits: Vec::new(),
         });
         self.sync_group_members(gid);
         let reach = self.compute_group_reach(gid, SKIN_REACH_RINGS);
         self.groups[gid].skin_reach = reach;
+        let exits = self.compute_disc_exits(gid);
+        self.groups[gid].disc_exits = exits;
         Some(gid)
     }
 
@@ -1110,13 +1126,24 @@ impl AtomCore {
     /// electron, a sideways baryon, or the next nucleon in a rigid stack
     /// (interior stack poles read as plugged; only the open ends drain).
     pub fn pole_occlusion(&self) -> Vec<[f64; 2]> {
+        self.pole_occlusion_blockers()
+            .into_iter()
+            .map(|p| [p[0].0, p[1].0])
+            .collect()
+    }
+
+    /// Per-pole occlusion plus WHO stoppers it, when the dominant blocker
+    /// is an ELECTRON: a cap rider doesn't deaden the intake, it CAPTURES
+    /// and disperses it — the flow VFX shows that instead of nothing.
+    pub fn pole_occlusion_blockers(&self) -> Vec<[(f64, Option<usize>); 2]> {
         let n = self.particles.len();
-        let mut occ = vec![[0.0f64; 2]; n];
+        let mut occ = vec![[(0.0f64, None); 2]; n];
         for i in 0..n {
             let pole = self.particles[i].pole_axis();
             let a = self.particles[i].position;
             for (side, dir) in [pole, -pole].into_iter().enumerate() {
                 let mut worst = 0.0f64;
+                let mut who: Option<usize> = None;
                 for (k, other) in self.particles.iter().enumerate() {
                     if k == i {
                         continue;
@@ -1127,9 +1154,13 @@ impl AtomCore {
                         continue;
                     }
                     let lat = (rel - dir * along).length();
-                    worst = worst.max(((0.8 - lat) / 0.5).clamp(0.0, 1.0));
+                    let block = ((0.8 - lat) / 0.5).clamp(0.0, 1.0);
+                    if block > worst {
+                        worst = block;
+                        who = (self.profiles[other.profile_id].mass < 0.5).then_some(k);
+                    }
                 }
-                occ[i][side] = worst;
+                occ[i][side] = (worst, who);
             }
         }
         occ
@@ -1921,14 +1952,11 @@ impl AtomCore {
         buf
     }
 
-    /// Max-emission ring overlay for the composite skin: one circle per
-    /// ALPHA BLOCK, drawn ON the reach surface at that alpha's disc
-    /// latitude — "this is where this alpha's disc pushes farthest", the
-    /// quantitative line the old wireframe rings carried. Group-local
-    /// units, same frame as the skin mesh.
-    /// Packed: [ring_count, pts_per_ring, ring_count·pts_per_ring × (x,y,z)].
-    pub fn build_group_emission_rings(&self, group_idx: usize) -> Vec<f32> {
-        const PTS: usize = 65;
+    /// Where each alpha block's disc meets the composite reach surface:
+    /// (ring radius, y) per alpha, group-local. Computed once at spawn and
+    /// stored as `RigidGroup::disc_exits` — feeds the ring overlay and the
+    /// flow-VFX disc exit paths.
+    pub fn compute_disc_exits(&self, group_idx: usize) -> Vec<(f64, f64)> {
         let g = match self.groups.get(group_idx) {
             Some(g) => g,
             None => return Vec::new(),
@@ -1988,10 +2016,25 @@ impl AtomCore {
                 }
             }
         }
+        rings
+    }
+
+    /// Max-emission ring overlay for the composite skin: one circle per
+    /// ALPHA BLOCK, drawn ON the reach surface at that alpha's disc
+    /// latitude — "this is where this alpha's disc pushes farthest", the
+    /// quantitative line the old wireframe rings carried. Group-local
+    /// units, same frame as the skin mesh.
+    /// Packed: [ring_count, pts_per_ring, ring_count·pts_per_ring × (x,y,z)].
+    pub fn build_group_emission_rings(&self, group_idx: usize) -> Vec<f32> {
+        const PTS: usize = 65;
+        let rings = match self.groups.get(group_idx) {
+            Some(g) if !g.disc_exits.is_empty() => g.disc_exits.clone(),
+            Some(_) => self.compute_disc_exits(group_idx),
+            None => return Vec::new(),
+        };
         if rings.is_empty() {
             return Vec::new();
         }
-
         let mut buf = Vec::with_capacity(2 + rings.len() * PTS * 3);
         buf.push(rings.len() as f32);
         buf.push(PTS as f32);
@@ -2016,40 +2059,37 @@ impl AtomCore {
     }
 
     // ── Charge cloud VFX ─────────────────────────────────────────────────
-    // Replaces the old wireframe rings + sprinkler dots. Two families per
-    // particle, both shaped by the actual force-model profiles:
-    // - EMISSION SMOKE (type color): spawned at the surface with directions
-    //   from the emission CDF, drifting slowly outward in coherent spiral
-    //   arms that ride the particle's spin — a rotating nozzle of smoke.
-    // - INTAKE VORTEX (cyan): spawned OUTSIDE in the polar cone (A²-CDF),
-    //   spiraling inward and dying at the surface — charge circling the
-    //   drain into the pole.
+    // Charge-recycling FLOW visualization: every dot is a photon parcel on
+    // a COMPLETE path — pulled down the polar funnel, through the body (or
+    // the whole nuclear stack), and back out where the emission maps send
+    // it: the equatorial disc for protons, the far pole for neutrons and
+    // through-charge, an alpha's max-emission ring for nuclei, or captured
+    // and dispersed by a cap electron riding the pole. Paths are kinematic
+    // illustrations of the force model (probability maps + composite
+    // reach), not collision-checked trajectories — spin mode does that.
 
     /// Advance the cloud particles by wall-clock `delta` seconds and return
     /// the MultiMesh buffer (12 transform + 4 color floats per particle).
     pub fn advance_clouds(&mut self, delta: f64) -> Vec<f32> {
-        const MAX_POOL: usize = 10_000;
-        const EMIT_PER_SEC: f64 = 120.0; // per sim particle
-        const INTAKE_PER_SEC: f64 = 160.0;
-        /// Radial drift speed. Smoke LIFETIME is travel/EMIT_DRIFT where
-        /// travel runs from the body surface to the field-extent boundary
-        /// (free-skin reach or the group's stored reach table) — the dots
-        /// carry the push all the way to the skin and die there.
-        const EMIT_DRIFT: f64 = 1.3;
-        const INTAKE_SPEED: f64 = 1.5; // infall speed
-        const ARM_COUNT: usize = 3;
-        /// Visual rotation rate of the spiral arms (rad/s wall clock) —
-        /// deliberately far below the physical spin rate so the eye can
-        /// track it.
-        const ARM_RATE: f64 = 1.6;
+        const MAX_POOL: usize = 12_000;
+        /// Parcel speed along its path (natural units / wall second).
+        const FLOW_SPEED: f64 = 2.0;
+        /// Recycling loops per second through a free baryon (split across
+        /// the two poles). Electrons recycle a sliver of this.
+        const FLOW_FREE_PER_SEC: f64 = 260.0;
+        /// Loops per second per alpha engine in a nucleus — more engines
+        /// in the stack, denser flow.
+        const FLOW_GROUP_PER_ENGINE: f64 = 130.0;
+        /// Destination weight for passing straight through the stack vs
+        /// peeling off at one alpha disc (weight 1 each).
+        const THROUGH_WEIGHT: f64 = 0.7;
+        /// Visible swirl of the whole path about the pole (rad/s wall
+        /// clock) — far below the physical spin rate so CW/CCW reads.
+        const FLOW_SWIRL: f64 = 1.6;
         const INTAKE_COLOR: (f32, f32, f32) = (0.30, 0.65, 1.0);
-        /// Tornado mouth height, in emitter radii — matches the old intake
-        /// spawn shell (2.3–2.6 r, just inside the skin's polar pinch).
-        const TORNADO_TOP: f64 = 2.6;
-        /// Swirl revolutions over the descent: base + acceleration term —
-        /// the drain spins up as the funnel necks down.
-        const TORNADO_REVS_BASE: f64 = 0.8;
-        const TORNADO_REVS_ACCEL: f64 = 1.4;
+        const THROUGH_COLOR: (f32, f32, f32) = (0.75, 0.90, 1.00);
+        const ELECTRON_COLOR: (f32, f32, f32) = (0.20, 0.90, 0.35);
+        const PROTON_COLOR: (f32, f32, f32) = (0.92, 0.30, 0.20);
 
         if !self.vfx_enabled || self.particles.is_empty() {
             self.vfx_particles.clear();
@@ -2058,12 +2098,12 @@ impl AtomCore {
 
         self.vfx_time += delta;
 
-        // Collect per-particle data to avoid borrow conflicts
+        // Per-frame anchor frames. Particle frames come from the pole only
+        // (build_frame) — the physical TAU·3 axial spin is excluded and the
+        // readable FLOW_SWIRL is applied in the path eval instead.
         struct Emitter {
             pos: DVec3,
-            pole: DVec3,
-            right: DVec3,
-            forward: DVec3,
+            rot: DQuat,
             radius: f64,
             color: (f32, f32, f32),
             pid: usize,
@@ -2079,9 +2119,7 @@ impl AtomCore {
                 let (right, forward) = build_frame(pole);
                 Emitter {
                     pos: p.position,
-                    pole,
-                    right,
-                    forward,
+                    rot: DQuat::from_mat3(&DMat3::from_cols(right, pole, forward)),
                     radius: prof.radius.max(MIN_RENDER_RADIUS as f64),
                     color: profile_color(&prof.name),
                     pid: p.profile_id,
@@ -2090,50 +2128,45 @@ impl AtomCore {
                 }
             })
             .collect();
-        // Group frames for reach lookups (smoke from a fused member dies at
-        // the GROUP's gold skin, not at a free-particle reach).
-        let group_frames: Vec<(DVec3, DVec3)> = self
+        let group_frames: Vec<(DVec3, DQuat)> = self
             .groups
             .iter()
-            .map(|g| (g.com, g.orientation * DVec3::Y))
+            .map(|g| (g.com, g.orientation))
             .collect();
 
-        let pole_occ = self.pole_occlusion();
-
-        // Age and move existing. Smoke is ballistic; tornado riders are
-        // kinematic around their emitter's CURRENT pole.
+        // Age + kinematic path evaluation.
         for vp in &mut self.vfx_particles {
             vp.age += delta;
             match vp.kind {
                 VfxKind::Smoke => vp.position += vp.velocity * delta,
-                VfxKind::Tornado {
-                    emitter,
-                    south,
-                    phase0,
-                    mouth,
+                VfxKind::Flow {
+                    ref anchor,
+                    swirl,
+                    ref pts,
+                    ..
                 } => {
-                    if emitter >= emitters.len() {
-                        vp.age = vp.lifetime + 1.0; // emitter gone — cull
+                    let frame = match *anchor {
+                        VfxAnchor::Particle(i) => emitters.get(i).map(|e| (e.pos, e.rot)),
+                        VfxAnchor::Group(gi) => group_frames.get(gi).copied(),
+                    };
+                    let Some((origin, rot)) = frame else {
+                        vp.age = vp.lifetime + 1.0; // anchor gone — cull
                         continue;
-                    }
-                    let em = &emitters[emitter];
+                    };
                     let u = (vp.age / vp.lifetime).clamp(0.0, 1.0);
-                    // Descend from the mouth to the surface (u=1 lands ON
-                    // the surface whatever the jittered lifetime — jitter
-                    // varies descent speed, not the endpoint)…
-                    let s = em.radius * (TORNADO_TOP - (TORNADO_TOP - 1.0) * u);
-                    // …necking from the capture-cone mouth to the channel
-                    // throat…
-                    let taper =
-                        ((s / em.radius - 1.0) / (TORNADO_TOP - 1.0)).clamp(0.0, 1.0);
-                    let rho = mouth * taper.powf(0.65) + 0.06 * em.radius;
-                    // …swirling faster as the drain tightens.
-                    let revs = TORNADO_REVS_BASE * u + TORNADO_REVS_ACCEL * u * u;
-                    let phi = phase0 + em.spin_sign * TAU * revs;
-                    let dir = if south { -em.pole } else { em.pole };
-                    vp.position = em.pos
-                        + dir * s
-                        + (em.right * phi.cos() + em.forward * phi.sin()) * rho;
+                    let t = u * (pts.len() - 1) as f64;
+                    let i = (t as usize).min(pts.len().saturating_sub(2));
+                    let f = t - i as f64;
+                    let local = pts[i].lerp(pts[i + 1], f);
+                    // Whole-path swirl about the pole.
+                    let a = swirl * vp.age;
+                    let (s, c) = a.sin_cos();
+                    let sw = DVec3::new(
+                        local.x * c + local.z * s,
+                        local.y,
+                        -local.x * s + local.z * c,
+                    );
+                    vp.position = origin + rot * sw;
                 }
             }
         }
@@ -2146,112 +2179,199 @@ impl AtomCore {
             base + usize::from(rng.next_f64() < x.fract())
         };
 
+        let occ = self.pole_occlusion_blockers();
+
+        // FREE particles: complete recycling loops — in at an open pole,
+        // through the body, out on the far hemisphere at the angle the
+        // emission CDF picks (protons → the disc, neutrons → the far pole,
+        // electrons → their tiny flat disc).
         for (ei, em) in emitters.iter().enumerate() {
-            let arm_phase = em.spin_sign * ARM_RATE * self.vfx_time;
-
-            // Emission smoke — coherent spiral arms. Tight azimuth jitter
-            // and slow growth keep the arms readable as a rotating disc
-            // (CW/CCW per the spin sign) instead of merging blobs.
-            let n_emit = spawn_count(&mut self.rng, EMIT_PER_SEC);
-            for _ in 0..n_emit {
-                if self.vfx_particles.len() >= MAX_POOL {
-                    break;
-                }
-                let theta = self.profiles[em.pid].emission_cdf.sample(self.rng.next_f64());
-                let north = self.rng.next_f64() > 0.5;
-                let arm = (self.rng.next_f64() * ARM_COUNT as f64) as usize;
-                let phi = arm_phase
-                    + arm as f64 * (TAU / ARM_COUNT as f64)
-                    + (self.rng.next_f64() - 0.5) * 0.35;
-
-                let cos_t = theta.cos();
-                let sin_t = theta.sin();
-                let local_y = if north { cos_t } else { -cos_t };
-                let dir = em.right * (sin_t * phi.cos())
-                    + em.pole * local_y
-                    + em.forward * (sin_t * phi.sin());
-                // Tangential kick in the spin direction keeps the arms
-                // curved as they drift out (rotating-sprinkler look).
-                let tangent = em.pole.cross(dir);
-                let tangent = if tangent.length_squared() > 1e-12 {
-                    tangent.normalize() * em.spin_sign
-                } else {
-                    DVec3::ZERO
-                };
-                let spawn_pos = em.pos + dir * em.radius;
-                // Travel distance: to the field-extent boundary — the
-                // group's stored reach surface for fused members, the
-                // free-skin ¼-power reach otherwise.
-                let travel = match em.group {
-                    Some(gi) if gi < group_frames.len() => {
-                        let (com, axis) = group_frames[gi];
-                        let v = spawn_pos - com;
-                        let vlen = v.length().max(1e-6);
-                        let theta_g = (v.dot(axis) / vlen).clamp(-1.0, 1.0).acos();
-                        reach_at_theta(&self.groups[gi].skin_reach, theta_g) - vlen
-                    }
-                    _ => {
-                        let e = self.profiles[em.pid].emission.sample(cos_t);
-                        let mass = self.profiles[em.pid].mass;
-                        (self.couplings.c_q * mass * e).max(0.0).powf(0.25) - em.radius
-                    }
-                }
-                .max(0.4);
-                self.vfx_particles.push(VfxParticle {
-                    position: spawn_pos,
-                    velocity: dir * EMIT_DRIFT + tangent * (ARM_RATE * em.radius * 0.55),
-                    age: 0.0,
-                    // Dies AT the skin (small jitter so the edge breathes).
-                    lifetime: travel / EMIT_DRIFT * (0.9 + 0.2 * self.rng.next_f64()),
-                    color: em.color,
-                    base_scale: 0.05 * em.radius.max(0.35) as f32,
-                    grow: 0.25,
-                    kind: VfxKind::Smoke,
-                });
+            if em.group.is_some() {
+                continue; // fused members flow as their GROUP, below
             }
-
-            // Intake tornado — per pole, kinematic funnel riders. Spawn
-            // rate scales with (1 − occlusion): a stoppered channel's
-            // tornado dies out (diatom.pdf — the wall-riding electron or a
-            // sideways baryon blocks the drain).
-            for (side, &occ) in pole_occ[ei].iter().enumerate() {
-                let rate = INTAKE_PER_SEC * 0.5 * (1.0 - occ);
-                let n_intake = spawn_count(&mut self.rng, rate);
-                for _ in 0..n_intake {
+            let mass = self.profiles[em.pid].mass;
+            let rate_scale = if mass < 0.5 { 0.2 } else { 1.0 };
+            for (side, &(occ_v, blocker)) in occ[ei].iter().enumerate() {
+                let entry = if side == 0 { 1.0 } else { -1.0 };
+                let n = spawn_count(
+                    &mut self.rng,
+                    FLOW_FREE_PER_SEC * 0.5 * (1.0 - occ_v) * rate_scale,
+                );
+                for _ in 0..n {
                     if self.vfx_particles.len() >= MAX_POOL {
                         break;
                     }
-                    // Funnel mouth radius = where the sampled capture-cone
-                    // angle crosses the mouth height: the tornado's width
-                    // IS the A²-weighted intake cone.
-                    let theta =
+                    let theta_in =
                         self.profiles[em.pid].intake_cdf.sample(self.rng.next_f64());
-                    let mouth = (em.radius * TORNADO_TOP * theta.sin().abs())
-                        .max(0.05 * em.radius);
-                    let phase0 = self.rng.next_f64() * TAU;
-                    let south = side == 1;
-                    let lifetime = (TORNADO_TOP - 1.0) * em.radius / INTAKE_SPEED
-                        * (0.8 + 0.4 * self.rng.next_f64());
-                    let dir = if south { -em.pole } else { em.pole };
+                    let theta_out =
+                        self.profiles[em.pid].emission_cdf.sample(self.rng.next_f64());
+                    let reach = (self.couplings.c_q
+                        * mass
+                        * self.profiles[em.pid].emission.sample(theta_out.cos()))
+                    .max(0.0)
+                    .powf(0.25)
+                    .max(em.radius * 1.5);
+                    let (pts, len) = flow_free_loop(
+                        &mut self.rng,
+                        em.radius,
+                        entry,
+                        theta_in,
+                        theta_out,
+                        reach,
+                        em.spin_sign,
+                    );
                     self.vfx_particles.push(VfxParticle {
-                        // Mouth position now; kinematic from the next frame.
-                        position: em.pos
-                            + dir * (em.radius * TORNADO_TOP)
-                            + (em.right * phase0.cos() + em.forward * phase0.sin())
-                                * (mouth + 0.06 * em.radius),
+                        position: em.pos + em.rot * pts[0],
                         velocity: DVec3::ZERO,
                         age: 0.0,
-                        lifetime,
+                        lifetime: len / FLOW_SPEED * (0.85 + 0.3 * self.rng.next_f64()),
                         color: INTAKE_COLOR,
-                        base_scale: 0.04 * em.radius.max(0.35) as f32,
-                        grow: -0.25, // tightens as it falls in
-                        kind: VfxKind::Tornado {
-                            emitter: ei,
-                            south,
-                            phase0,
-                            mouth,
+                        base_scale: (0.016 * em.radius.max(0.35)) as f32,
+                        grow: 0.0,
+                        kind: VfxKind::Flow {
+                            anchor: VfxAnchor::Particle(ei),
+                            swirl: em.spin_sign * FLOW_SWIRL,
+                            color_end: em.color,
+                            pts,
                         },
                     });
+                }
+                // Electron-capped pole: the inflow doesn't die, it gets
+                // CAPTURED at the rider and dispersed off its disc.
+                if blocker.is_some() && occ_v > 0.5 {
+                    let n = spawn_count(&mut self.rng, FLOW_FREE_PER_SEC * 0.3 * rate_scale);
+                    for _ in 0..n {
+                        if self.vfx_particles.len() >= MAX_POOL {
+                            break;
+                        }
+                        let (pts, len) =
+                            flow_capture(&mut self.rng, entry * em.radius, entry, em.radius);
+                        self.vfx_particles.push(VfxParticle {
+                            position: em.pos + em.rot * pts[0],
+                            velocity: DVec3::ZERO,
+                            age: 0.0,
+                            lifetime: len / FLOW_SPEED * (0.85 + 0.3 * self.rng.next_f64()),
+                            color: INTAKE_COLOR,
+                            base_scale: (0.016 * em.radius.max(0.35)) as f32,
+                            grow: 0.0,
+                            kind: VfxKind::Flow {
+                                anchor: VfxAnchor::Particle(ei),
+                                swirl: em.spin_sign * FLOW_SWIRL,
+                                color_end: ELECTRON_COLOR,
+                                pts,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
+        // NUCLEI: one engine per alpha block. Parcels enter an OPEN stack
+        // end, ride the axial channel, and either peel off at an alpha's
+        // max-emission ring (weight 1 per alpha) or pass all the way
+        // through and out the far pole (THROUGH_WEIGHT) — more engines,
+        // proportionally denser flow.
+        for gi in 0..self.groups.len() {
+            let (com, g_rot) = group_frames[gi];
+            let axis = g_rot * DVec3::Y;
+            let (mut y_top, mut y_bot) = (f64::MIN, f64::MAX);
+            for (k, &m) in self.groups[gi].members.iter().enumerate() {
+                let r = self.profiles[self.particles[m].profile_id].radius;
+                let y = self.groups[gi].local_offsets[k].y;
+                y_top = y_top.max(y + r);
+                y_bot = y_bot.min(y - r);
+            }
+            let exits = self.groups[gi].disc_exits.clone();
+            let engines = exits.len().max(1);
+            let reach_n = reach_at_theta(&self.groups[gi].skin_reach, 0.0);
+            let reach_s = reach_at_theta(&self.groups[gi].skin_reach, std::f64::consts::PI);
+            for side in 0..2 {
+                let (entry, tip_y, far_tip, reach_out) = if side == 0 {
+                    (1.0, y_top, y_bot, reach_s)
+                } else {
+                    (-1.0, y_bot, y_top, reach_n)
+                };
+                // End occlusion: a particle sitting over this stack end
+                // stoppers it; an electron rider captures instead.
+                let tip_world = com + axis * tip_y;
+                let dir_out = axis * entry;
+                let mut occ_v = 0.0f64;
+                let mut blocker: Option<usize> = None;
+                for (k, p) in self.particles.iter().enumerate() {
+                    if p.group == Some(gi) {
+                        continue;
+                    }
+                    let rel = p.position - tip_world;
+                    let along = rel.dot(dir_out);
+                    if along <= 0.05 || along >= 3.0 {
+                        continue;
+                    }
+                    let lat = (rel - dir_out * along).length();
+                    let block = ((0.8 - lat) / 0.5).clamp(0.0, 1.0);
+                    if block > occ_v {
+                        occ_v = block;
+                        blocker = (self.profiles[p.profile_id].mass < 0.5).then_some(k);
+                    }
+                }
+                let end_rate = FLOW_GROUP_PER_ENGINE * engines as f64 * 0.5;
+                let n = spawn_count(&mut self.rng, end_rate * (1.0 - occ_v));
+                for _ in 0..n {
+                    if self.vfx_particles.len() >= MAX_POOL {
+                        break;
+                    }
+                    let w_total = exits.len() as f64 + THROUGH_WEIGHT;
+                    let pick = self.rng.next_f64() * w_total;
+                    let (pts, len, color_end) = if pick >= exits.len() as f64 {
+                        let (pts, len) = flow_group_through(
+                            &mut self.rng, entry, tip_y, far_tip, reach_out,
+                        );
+                        (pts, len, THROUGH_COLOR)
+                    } else {
+                        let (rr, ry) = exits[pick as usize];
+                        let (pts, len) =
+                            flow_group_disc(&mut self.rng, entry, tip_y, rr, ry);
+                        (pts, len, PROTON_COLOR)
+                    };
+                    self.vfx_particles.push(VfxParticle {
+                        position: com + g_rot * pts[0],
+                        velocity: DVec3::ZERO,
+                        age: 0.0,
+                        lifetime: len / FLOW_SPEED * (0.85 + 0.3 * self.rng.next_f64()),
+                        color: INTAKE_COLOR,
+                        base_scale: 0.016,
+                        grow: 0.0,
+                        kind: VfxKind::Flow {
+                            anchor: VfxAnchor::Group(gi),
+                            swirl: FLOW_SWIRL,
+                            color_end,
+                            pts,
+                        },
+                    });
+                }
+                // Cap electron on this end: captured + dispersed inflow.
+                if blocker.is_some() && occ_v > 0.5 {
+                    let n = spawn_count(&mut self.rng, end_rate * 0.5);
+                    for _ in 0..n {
+                        if self.vfx_particles.len() >= MAX_POOL {
+                            break;
+                        }
+                        let (pts, len) = flow_capture(&mut self.rng, tip_y, entry, 1.0);
+                        self.vfx_particles.push(VfxParticle {
+                            position: com + g_rot * pts[0],
+                            velocity: DVec3::ZERO,
+                            age: 0.0,
+                            lifetime: len / FLOW_SPEED * (0.85 + 0.3 * self.rng.next_f64()),
+                            color: INTAKE_COLOR,
+                            base_scale: 0.016,
+                            grow: 0.0,
+                            kind: VfxKind::Flow {
+                                anchor: VfxAnchor::Group(gi),
+                                swirl: FLOW_SWIRL,
+                                color_end: ELECTRON_COLOR,
+                                pts,
+                            },
+                        });
+                    }
                 }
             }
         }
@@ -2293,7 +2413,7 @@ impl AtomCore {
                         // Dies AT the collision plane — the cushion.
                         lifetime: travel / BRIDGE_SPEED,
                         color: BRIDGE_COLOR,
-                        base_scale: 0.035 * em.radius.max(0.35) as f32,
+                        base_scale: 0.022 * em.radius.max(0.35) as f32,
                         grow: 0.5, // splashes wider as it nears the plane
                         kind: VfxKind::Smoke,
                     });
@@ -2308,15 +2428,26 @@ impl AtomCore {
         for vp in &self.vfx_particles {
             let t = (vp.age / vp.lifetime) as f32;
             // Quick fade-in; stays bright most of the trip and drops off
-            // near the end — the push visibly REACHES the skin before
+            // near the end — the parcel visibly REACHES its exit before
             // dying there.
             let fade = (t / 0.12).min(1.0) * (1.0 - t * t * t).max(0.0);
-            let scale = (vp.base_scale * (1.0 + vp.grow * vp.age as f32)).max(0.008);
+            let scale = (vp.base_scale * (1.0 + vp.grow * vp.age as f32)).max(0.004);
+            // Flow parcels recolor as they recycle: intake tint on the way
+            // in, exit tint on the way out.
+            let (cr, cg, cb, brightness) = match vp.kind {
+                VfxKind::Flow { color_end, .. } => (
+                    vp.color.0 + (color_end.0 - vp.color.0) * t,
+                    vp.color.1 + (color_end.1 - vp.color.1) * t,
+                    vp.color.2 + (color_end.2 - vp.color.2) * t,
+                    0.9f32, // tiny dots need the extra alpha
+                ),
+                VfxKind::Smoke => (vp.color.0, vp.color.1, vp.color.2, 0.6),
+            };
             buf.extend_from_slice(&[
                 scale, 0.0, 0.0, vp.position.x as f32,
                 0.0, scale, 0.0, vp.position.y as f32,
                 0.0, 0.0, scale, vp.position.z as f32,
-                vp.color.0, vp.color.1, vp.color.2, fade * 0.55,
+                cr, cg, cb, fade * brightness,
             ]);
         }
 
@@ -2361,6 +2492,182 @@ pub fn build_frame(pole: DVec3) -> (DVec3, DVec3) {
     };
     let forward = right.cross(pole);
     (right, forward)
+}
+
+// ── Charge-flow path builders (VFX) ──────────────────────────────────────
+// All paths are polylines in an anchor's LOCAL frame (pole = +Y),
+// resampled to uniform arc length so parcels travel at constant speed.
+
+/// Resample a polyline to `n` points spaced uniformly by arc length.
+/// Returns (points, total length).
+fn resample_polyline_uniform(raw: &[DVec3], n: usize) -> (Vec<DVec3>, f64) {
+    let n = n.max(2);
+    if raw.len() < 2 {
+        let p = raw.first().copied().unwrap_or(DVec3::ZERO);
+        return (vec![p; n], 0.0);
+    }
+    let mut cum = Vec::with_capacity(raw.len());
+    let mut total = 0.0;
+    cum.push(0.0);
+    for w in raw.windows(2) {
+        total += (w[1] - w[0]).length();
+        cum.push(total);
+    }
+    if total < 1e-9 {
+        return (vec![raw[0]; n], 0.0);
+    }
+    let mut out = Vec::with_capacity(n);
+    let mut seg = 0usize;
+    for k in 0..n {
+        let d = total * k as f64 / (n - 1) as f64;
+        while seg + 2 < cum.len() && cum[seg + 1] < d {
+            seg += 1;
+        }
+        let span = (cum[seg + 1] - cum[seg]).max(1e-12);
+        let f = ((d - cum[seg]) / span).clamp(0.0, 1.0);
+        out.push(raw[seg].lerp(raw[seg + 1], f));
+    }
+    (out, total)
+}
+
+/// Complete free-particle recycling loop: polar funnel in at `entry`
+/// (+1 north / −1 south), through the body, out on the FAR hemisphere at
+/// `theta_out` from the exit pole (sampled from the emission CDF — protons
+/// leave via the disc, neutrons via the far pole), ending at `reach`.
+fn flow_free_loop(
+    rng: &mut Rng,
+    radius: f64,
+    entry: f64,
+    theta_in: f64,
+    theta_out: f64,
+    reach: f64,
+    spin: f64,
+) -> (Vec<DVec3>, f64) {
+    let mut raw: Vec<DVec3> = Vec::with_capacity(12);
+    let phi0 = rng.next_f64() * TAU;
+    let top = 2.6 * radius;
+    let mouth = (top * theta_in.sin()).max(0.1 * radius);
+    for k in 0..4 {
+        let f = k as f64 / 3.0;
+        let h = top - (top - radius) * f;
+        let taper = ((h / radius - 1.0) / 1.6).clamp(0.0, 1.0);
+        let rho = mouth * taper.powf(0.65) + 0.05 * radius;
+        let phi = phi0 + spin * 2.2 * f;
+        raw.push(DVec3::new(rho * phi.cos(), entry * h, rho * phi.sin()));
+    }
+    raw.push(DVec3::new(0.0, entry * 0.45 * radius, 0.0));
+    raw.push(DVec3::new(0.0, -entry * 0.55 * radius, 0.0));
+    let phi_e = phi0 + spin * 2.9;
+    let (st, ct) = (theta_out.sin(), theta_out.cos());
+    for j in 0..4 {
+        let f = j as f64 / 3.0;
+        let rr = radius * 0.95 + (reach - radius * 0.95) * f;
+        let phi = phi_e + spin * 1.2 * f;
+        raw.push(DVec3::new(
+            st * phi.cos() * rr,
+            -entry * ct * rr,
+            st * phi.sin() * rr,
+        ));
+    }
+    resample_polyline_uniform(&raw, 16)
+}
+
+/// Inflow toward an electron-capped pole (`tip_y` = signed local y of the
+/// pole tip): down the funnel, intercepted at the rider's altitude, then
+/// dispersed sideways off its little disc.
+fn flow_capture(rng: &mut Rng, tip_y: f64, entry: f64, radius: f64) -> (Vec<DVec3>, f64) {
+    let mut raw: Vec<DVec3> = Vec::with_capacity(7);
+    let phi0 = rng.next_f64() * TAU;
+    let mouth = radius * (0.5 + 0.8 * rng.next_f64());
+    for k in 0..3 {
+        let f = k as f64 / 2.0;
+        let h = tip_y + entry * radius * (1.9 - 1.5 * f);
+        let rho = mouth * (1.0 - f) + 0.10 * radius;
+        let phi = phi0 + 1.8 * f;
+        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+    }
+    let phi_e = phi0 + 2.4;
+    for j in 0..3 {
+        let f = j as f64 / 2.0;
+        let rho = radius * (0.25 + 1.3 * f);
+        let h = tip_y + entry * radius * (0.35 - 0.15 * f);
+        let phi = phi_e + 1.4 * f;
+        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+    }
+    resample_polyline_uniform(&raw, 12)
+}
+
+/// Through-charge in a nucleus: open end (`tip_y`) → the whole axial
+/// channel → out the far pole to the composite reach — the stack's
+/// pole-to-pole channel.
+fn flow_group_through(
+    rng: &mut Rng,
+    entry: f64,
+    tip_y: f64,
+    far_tip_y: f64,
+    reach_out: f64,
+) -> (Vec<DVec3>, f64) {
+    let mut raw: Vec<DVec3> = Vec::with_capacity(8);
+    let phi0 = rng.next_f64() * TAU;
+    let mouth = 0.6 + 0.9 * rng.next_f64();
+    for k in 0..3 {
+        let f = k as f64 / 2.0;
+        let h = tip_y + entry * (1.9 - 1.7 * f);
+        let rho = mouth * (1.0 - f) + 0.08;
+        let phi = phi0 + 2.0 * f;
+        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+    }
+    raw.push(DVec3::new(0.0, (tip_y + far_tip_y) * 0.5, 0.0));
+    raw.push(DVec3::new(0.0, far_tip_y, 0.0));
+    let out_r = reach_out.max(far_tip_y.abs() + 1.2);
+    let phi_e = phi0 + 0.8;
+    raw.push(DVec3::new(
+        0.12 * phi_e.cos(),
+        far_tip_y - entry * 0.6,
+        0.12 * phi_e.sin(),
+    ));
+    raw.push(DVec3::new(
+        0.18 * (phi_e + 0.7).cos(),
+        -entry * out_r,
+        0.18 * (phi_e + 0.7).sin(),
+    ));
+    resample_polyline_uniform(&raw, 16)
+}
+
+/// Disc exit in a nucleus: open end → axial channel down to one alpha's
+/// latitude → flung out to that alpha's max-emission ring on the skin.
+fn flow_group_disc(
+    rng: &mut Rng,
+    entry: f64,
+    tip_y: f64,
+    ring_r: f64,
+    ring_y: f64,
+) -> (Vec<DVec3>, f64) {
+    let mut raw: Vec<DVec3> = Vec::with_capacity(9);
+    let phi0 = rng.next_f64() * TAU;
+    let mouth = 0.6 + 0.9 * rng.next_f64();
+    for k in 0..3 {
+        let f = k as f64 / 2.0;
+        let h = tip_y + entry * (1.9 - 1.7 * f);
+        let rho = mouth * (1.0 - f) + 0.08;
+        let phi = phi0 + 2.0 * f;
+        raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
+    }
+    raw.push(DVec3::new(0.0, (tip_y + ring_y) * 0.5, 0.0));
+    raw.push(DVec3::new(0.0, ring_y, 0.0));
+    let yj = ring_y + (rng.next_f64() - 0.5) * 0.3;
+    let phi_e = phi0 + 2.6;
+    for j in 0..3 {
+        let f = (j as f64 + 1.0) / 3.0;
+        let rho = 0.4 + (ring_r - 0.4).max(0.3) * f;
+        let phi = phi_e + 1.3 * f;
+        raw.push(DVec3::new(
+            rho * phi.cos(),
+            ring_y + (yj - ring_y) * f,
+            rho * phi.sin(),
+        ));
+    }
+    resample_polyline_uniform(&raw, 16)
 }
 
 pub fn default_spin_rate(name: &str) -> f64 {
@@ -2733,10 +3040,11 @@ mod tests {
         );
     }
 
-    /// The VFX link: a stoppered pole spawns NO tornado riders, the open
-    /// pole keeps its tornado.
+    /// Electron-capped pole: the inflow is CAPTURED at the rider — no
+    /// parcel entering the capped side passes through the body; the open
+    /// pole still runs full recycling loops.
     #[test]
-    fn tornado_dies_on_stoppered_pole() {
+    fn flow_captured_at_electron_capped_pole() {
         let dir = config_dir();
         let mut core = AtomCore::new();
         let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
@@ -2748,23 +3056,66 @@ mod tests {
         for _ in 0..60 {
             core.advance_clouds(1.0 / 60.0);
         }
-        let (mut north, mut south) = (0usize, 0usize);
+        let (mut north_in, mut north_through, mut south_in) = (0usize, 0usize, 0usize);
         for vp in &core.vfx_particles {
-            if let VfxKind::Tornado {
-                emitter: 0,
-                south: s,
+            if let VfxKind::Flow {
+                anchor: VfxAnchor::Particle(0),
+                ref pts,
                 ..
             } = vp.kind
             {
-                if s {
-                    south += 1;
+                let first = pts[0];
+                let last = pts[pts.len() - 1];
+                if first.y > 0.0 {
+                    north_in += 1;
+                    if last.y < -0.5 {
+                        north_through += 1;
+                    }
                 } else {
-                    north += 1;
+                    south_in += 1;
                 }
             }
         }
-        assert_eq!(north, 0, "stoppered north pole must not spawn tornado riders");
-        assert!(south > 0, "open south pole should have an active tornado");
+        assert!(north_in > 0, "capped pole should show captured inflow");
+        assert_eq!(north_through, 0, "no parcel may pass the stoppered channel");
+        assert!(south_in > 0, "open pole should run full recycling loops");
+    }
+
+    /// Nucleus flow: parcels enter the open stack ends; some peel off at
+    /// alpha disc rings, some pass through the whole stack and out the far
+    /// pole.
+    #[test]
+    fn group_flow_disc_and_through_exits() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        for _ in 0..90 {
+            core.advance_clouds(1.0 / 60.0);
+        }
+        let (mut disc, mut through) = (0usize, 0usize);
+        for vp in &core.vfx_particles {
+            if let VfxKind::Flow {
+                anchor: VfxAnchor::Group(0),
+                ref pts,
+                ..
+            } = vp.kind
+            {
+                let last = pts[pts.len() - 1];
+                let lat = (last.x * last.x + last.z * last.z).sqrt();
+                if lat > 2.0 {
+                    disc += 1;
+                } else if last.y.abs() > 4.6 {
+                    through += 1;
+                }
+            }
+        }
+        assert!(disc > 0, "expected disc-ring exits, got none");
+        assert!(through > 0, "expected through-channel exits, got none");
     }
 
     /// The charge-field lock: a spun-up nucleus relaxes back to rest
