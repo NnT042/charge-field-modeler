@@ -1440,6 +1440,26 @@ impl AtomCore {
         buf
     }
 
+    /// Instance buffer for the field-extent SKINS: FREE particles only.
+    /// Rigid-group constituents are fused — pushed inside each other's
+    /// free-field reach and locked there (nuclear.pdf: "great forces
+    /// pushing baryons into configurations they couldn't otherwise
+    /// achieve"), recycling as one unit. Their individual free-field skins
+    /// don't exist any more, for the same reason intra-group pair forces
+    /// are skipped in compute_forces.
+    pub fn build_skin_multimesh_buffer_for_profile(&self, profile_id: usize) -> Vec<f32> {
+        let mut buf: Vec<f32> = Vec::new();
+        for p in &self.particles {
+            if p.profile_id != profile_id || p.group.is_some() {
+                continue;
+            }
+            let profile = &self.profiles[p.profile_id];
+            let scale = (profile.radius as f32).max(MIN_RENDER_RADIUS);
+            push_transform_color(&mut buf, p, scale, (1.0, 1.0, 1.0), 1.0);
+        }
+        buf
+    }
+
     /// Line buffer for pole axis indicators.
     /// 2 vertices per particle (center and pole tip), 6 floats each (pos xyz + color rgb).
     pub fn build_pole_indicator_buffer(&self) -> Vec<f32> {
@@ -2316,6 +2336,26 @@ mod tests {
         }
         assert_eq!(north, 0, "stoppered north pole must not spawn tornado riders");
         assert!(south > 0, "open south pole should have an active tornado");
+    }
+
+    /// Fused constituents draw no free-field skin: an alpha (2p+2n) plus
+    /// one free proton must produce a 3-instance body buffer but a
+    /// 1-instance skin buffer for the proton profile.
+    #[test]
+    fn fused_constituents_have_no_skin_instances() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        let p_id = core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        core.spawn_particle(p_id, DVec3::new(6.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
+        let bodies = core.build_multimesh_buffer_for_profile(p_id).len() / 16;
+        let skins = core.build_skin_multimesh_buffer_for_profile(p_id).len() / 16;
+        assert_eq!(bodies, 3, "2 fused + 1 free proton bodies");
+        assert_eq!(skins, 1, "only the free proton gets a skin");
     }
 
     /// Skin radius carries the reach law r(θ) = (C_q·m·E(θ))^¼, clamped to

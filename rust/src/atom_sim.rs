@@ -475,6 +475,17 @@ impl AtomSim {
         packed(&self.core.advance_clouds(delta))
     }
 
+    /// Skin instance transforms: free particles of this profile only —
+    /// fused (rigid-group) constituents draw no free-field skin.
+    #[func]
+    fn build_skin_multimesh_buffer_for_profile(&self, profile_id: i32) -> PackedFloat32Array {
+        packed(
+            &self
+                .core
+                .build_skin_multimesh_buffer_for_profile(profile_id.max(0) as usize),
+        )
+    }
+
     /// Field-extent skin mesh for a profile (translucent reach envelope).
     /// Same packed format as `build_profile_mesh`.
     #[func]

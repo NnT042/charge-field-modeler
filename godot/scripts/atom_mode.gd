@@ -451,10 +451,15 @@ func _update_rendering():
 			mmi.multimesh.instance_count = count
 		var buf: PackedFloat32Array = atom_sim.build_multimesh_buffer_for_profile(pid)
 		mmi.multimesh.set_buffer(buf)
+		# Skins draw for FREE particles only — fused nucleus constituents
+		# have no individual free-field reach (they recycle as a unit).
 		if skin and skin.visible:
-			if skin.multimesh.instance_count != count:
-				skin.multimesh.instance_count = count
-			skin.multimesh.set_buffer(buf)
+			var skin_buf: PackedFloat32Array = atom_sim.build_skin_multimesh_buffer_for_profile(pid)
+			var skin_count: int = skin_buf.size() / 16
+			if skin.multimesh.instance_count != skin_count:
+				skin.multimesh.instance_count = skin_count
+			if skin_count > 0:
+				skin.multimesh.set_buffer(skin_buf)
 
 	# Pole indicator lines (debug — hidden by default; the Christmas
 	# ornaments are retired)
