@@ -617,28 +617,26 @@ mod tests {
             };
             assert_eq!(members.len(), expected, "{name} constituent count");
 
-            // Polar plug geometry (session-29 corrections): every non-alpha
-            // plug nucleon sits EDGE-ON to the stack (pole ⊥ Y), and
+            // Polar plug geometry (session-29): plug PROTONS edge-on to the
+            // stack (disc feeds the hole), plug NEUTRONS pole-down on the
+            // axis direction (graphene.pdf: neutrons channel pole-to-pole);
             // oxygen's plugs come as side-by-side proton+neutron pairs.
             let cons = crate::atom_core::preset_constituents(name).unwrap();
+            let assert_plug = |c: &crate::atom_core::Constituent| match c.profile_name {
+                "proton" => assert!(
+                    c.local_pole.dot(DVec3::Y).abs() < 1e-9,
+                    "plug proton must be edge-on to the stack"
+                ),
+                "neutron" => assert!(
+                    c.local_pole.dot(DVec3::Y).abs() > 1.0 - 1e-9,
+                    "plug neutron must keep its pole on the stack axis"
+                ),
+                other => panic!("unexpected plug profile {other}"),
+            };
             match name {
-                "nitrogen" => {
-                    for c in &cons[12..14] {
-                        assert!(
-                            c.local_pole.dot(DVec3::Y).abs() < 1e-9,
-                            "nitrogen plug {} must be edge-on to the stack",
-                            c.profile_name
-                        );
-                    }
-                }
+                "nitrogen" => cons[12..14].iter().for_each(assert_plug),
                 "oxygen" => {
-                    for c in &cons[12..16] {
-                        assert!(
-                            c.local_pole.dot(DVec3::Y).abs() < 1e-9,
-                            "oxygen plug {} must be edge-on to the stack",
-                            c.profile_name
-                        );
-                    }
+                    cons[12..16].iter().for_each(assert_plug);
                     for pair in [[12usize, 13], [14, 15]] {
                         let (a, b) = (&cons[pair[0]], &cons[pair[1]]);
                         assert_eq!(a.profile_name, "proton", "pair leads with proton");
@@ -650,10 +648,6 @@ mod tests {
                         assert!(
                             (a.local_pos - b.local_pos).length() > 0.5,
                             "pair members must sit beside each other, not overlap"
-                        );
-                        assert!(
-                            (a.local_pole - b.local_pole).length() < 1e-9,
-                            "pair members must be parallel to each other"
                         );
                     }
                 }
@@ -670,6 +664,37 @@ mod tests {
                 assert!(p.position.is_finite(), "{name}: non-finite state");
             }
         }
+    }
+
+    /// Bond detection matches the h2 matrix: electrons-outside reads as a
+    /// molecular bond, electron-between is a stoppered channel (no bond),
+    /// and the equator-facing two-proton standoff is repulsion, not a bond.
+    #[test]
+    fn molecular_bond_detection_matches_h2_matrix() {
+        let mut core = standard_core();
+        let ids = spawn_h2(&mut core, true, 1.0, 1.0, 4.7);
+        let bonds = core.molecular_bonds();
+        assert!(
+            bonds.contains(&(ids[0], ids[2])) || bonds.contains(&(ids[2], ids[0])),
+            "electrons-outside H2 should read as bonded: {bonds:?}"
+        );
+
+        let mut core = standard_core();
+        spawn_h2(&mut core, false, 1.0, 1.0, 4.7);
+        let bonds = core.molecular_bonds();
+        assert!(
+            bonds.is_empty(),
+            "electron-between = stoppered channel, no bond: {bonds:?}"
+        );
+
+        let mut core = standard_core();
+        let p_id = core.profile_id_by_name("proton").unwrap();
+        core.spawn_particle(p_id, DVec3::new(-2.95, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
+        core.spawn_particle(p_id, DVec3::new(2.95, 0.0, 0.0), DVec3::ZERO, DVec3::Y);
+        assert!(
+            core.molecular_bonds().is_empty(),
+            "side-by-side protons at standoff are repelling, not bonded"
+        );
     }
 
     fn pair_dists(core: &AtomCore, ids: &[usize]) -> Vec<f64> {

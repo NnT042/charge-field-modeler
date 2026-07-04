@@ -233,16 +233,17 @@ fn plug_proton(y: f64, z: f64) -> Constituent {
     }
 }
 
-/// Polar plug neutron: turned 90° onto its side like the plug proton —
-/// EDGE-ON to the stack, its pole parallel to a paired plug proton's
-/// (atmo2.pdf: in N/O the non-alpha neutrons are "paired with an outermost
-/// proton, pulling charge into the axial holes"; session-29 diagram
-/// correction — the earlier axial orientation was wrong).
+/// Polar plug neutron: pole ON the stack axis — "the neutron is plugged in
+/// with its pole pointing down … protons channel charge pole to equator,
+/// while neutrons channel pole to pole" (graphene.pdf), so its axial pole
+/// pulls charge into the stack's hole (atmo2.pdf: paired neutrons are
+/// "pulling charge into the axial holes"). `z` offsets it off-axis to sit
+/// side by side with a paired plug proton (0 for a lone plug).
 fn plug_neutron(y: f64, z: f64) -> Constituent {
     Constituent {
         profile_name: "neutron",
         local_pos: DVec3::new(0.0, y, z),
-        local_pole: DVec3::X,
+        local_pole: DVec3::Y,
         spin_sign: 1.0,
         carousel: false,
     }
@@ -272,9 +273,9 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
             ]
             .concat(),
         ),
-        // Nitrogen: carbon stack + 7th proton plugged in the south pole and
-        // the balancing neutron in the north (ammon.pdf) — BOTH edge-on to
-        // the stack.
+        // Nitrogen: carbon stack + 7th proton plugged in the south pole
+        // (edge-on, disc feeding the hole) and the balancing neutron in the
+        // north (ammon.pdf), pole-down per graphene.pdf.
         "nitrogen" => {
             let mut c = preset_constituents("carbon")?;
             c.push(plug_proton(-(ALPHA_PITCH + 1.8), 0.0));
@@ -284,8 +285,8 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // Oxygen: carbon stack + BOTH poles capped by a proton+neutron PAIR
         // (oxygen.pdf: the 7th and 8th protons go on the ends because four
         // alphas can't stack; atmo2.pdf: their neutrons are paired with
-        // them in the hole). Each pair sits side by side, members parallel
-        // to each other and edge-on to the core.
+        // them in the hole). Each pair sits side by side — proton edge-on
+        // (disc feeds the hole), neutron pole-down (channels axially).
         "oxygen" => {
             let mut c = preset_constituents("carbon")?;
             let y = ALPHA_PITCH + 1.8;
@@ -1084,6 +1085,61 @@ impl AtomCore {
         occ
     }
 
+    /// Molecular bond detection: pairs of BARYONS standing at molecular
+    /// range with both poles facing along the pair axis — the
+    /// stream-cushion geometry H₂ settles into (diatom.pdf;
+    /// h2_bond_matrix). Exclusions carry the physics:
+    /// - same-group pairs are FUSED, not bonded (a molecule is "backed out
+    ///   a distance" — ethane.pdf/ammon.pdf; fusion is a forcefully filled
+    ///   plug — deut.pdf);
+    /// - a stoppered channel is no bond (electron-between drives atoms
+    ///   apart), so occluded pairs are excluded — which also makes
+    ///   electron-capped helium poles correctly inert;
+    /// - electrons don't count (their streams are 1/1836 — no cushion).
+    pub fn molecular_bonds(&self) -> Vec<(usize, usize)> {
+        const D_MIN: f64 = 2.5;
+        const D_MAX: f64 = 8.0;
+        /// |cos| of pole vs pair axis — poles must face each other.
+        const ALIGN: f64 = 0.7;
+        let n = self.particles.len();
+        let mut out = Vec::new();
+        if n < 2 {
+            return out;
+        }
+        let occ = self.compute_occlusion();
+        for i in 0..n {
+            if self.profiles[self.particles[i].profile_id].mass < 0.5 {
+                continue;
+            }
+            for j in (i + 1)..n {
+                if self.profiles[self.particles[j].profile_id].mass < 0.5 {
+                    continue;
+                }
+                if self.particles[i].group.is_some()
+                    && self.particles[i].group == self.particles[j].group
+                {
+                    continue;
+                }
+                let d_vec = self.particles[j].position - self.particles[i].position;
+                let d = d_vec.length();
+                if !(D_MIN..=D_MAX).contains(&d) {
+                    continue;
+                }
+                let d_hat = d_vec / d;
+                if self.particles[i].pole_axis().dot(d_hat).abs() < ALIGN
+                    || self.particles[j].pole_axis().dot(d_hat).abs() < ALIGN
+                {
+                    continue;
+                }
+                if occ[i * n + j] > 0.5 {
+                    continue;
+                }
+                out.push((i, j));
+            }
+        }
+        out
+    }
+
     fn compute_forces(&mut self) {
         let n = self.particles.len();
         for p in &mut self.particles {
@@ -1660,6 +1716,139 @@ impl AtomCore {
         buf
     }
 
+    /// Composite nucleus skin: the reach envelope of a WHOLE rigid group —
+    /// the surface where the group's SUMMED charge push on a unit absorber
+    /// falls to the natural force unit (same F=1 reference as the free
+    /// skin), found by marching the actual member fields outward in the
+    /// group-local frame. Fused constituents draw no individual skins
+    /// (they recycle as one unit); this is the field the locked
+    /// configuration projects instead. Azimuthally averaged into a lathe
+    /// (the carousel sweeps azimuth anyway). GROUP-LOCAL units — render it
+    /// riding the group transform, unscaled. Gold, to read as "one fused
+    /// unit" against the per-type skins of free particles. Same packing as
+    /// `build_profile_mesh`.
+    pub fn build_group_skin_mesh(
+        &self,
+        group_idx: usize,
+        lon_segments: usize,
+        lat_segments: usize,
+    ) -> Vec<f32> {
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        struct Src {
+            pos: DVec3,
+            pole: DVec3,
+            mass: f64,
+            radius: f64,
+            profile: usize,
+        }
+        let srcs: Vec<Src> = g
+            .members
+            .iter()
+            .enumerate()
+            .map(|(k, &pid)| {
+                let profile = self.particles[pid].profile_id;
+                Src {
+                    pos: g.local_offsets[k],
+                    pole: g.local_orients[k] * DVec3::Y,
+                    mass: self.profiles[profile].mass,
+                    radius: self.profiles[profile].radius.max(MIN_RENDER_RADIUS as f64),
+                    profile,
+                }
+            })
+            .collect();
+
+        let cq = self.couplings.c_q;
+        let push = |x: DVec3| -> f64 {
+            let mut f = DVec3::ZERO;
+            for s in &srcs {
+                let d_vec = x - s.pos;
+                let r = d_vec.length().max(SOFTENING);
+                let d_hat = d_vec / r;
+                let e = self.profiles[s.profile].emission.sample(s.pole.dot(d_hat));
+                f += d_hat * (cq * s.mass * e / (r * r * r * r));
+            }
+            f.length()
+        };
+
+        const F_REF: f64 = 1.0;
+        const DR: f64 = 0.08;
+        const R_MAX: f64 = 40.0;
+        const AZ_SAMPLES: usize = 8;
+
+        let lon = lon_segments.max(8);
+        let lat = lat_segments.max(4);
+        let rings = lat * 2 + 1;
+        let verts_per_ring = lon + 1;
+        let total_verts = rings * verts_per_ring;
+        let total_indices = (rings - 1) * lon * 6;
+
+        // Azimuth-averaged reach per latitude, never dipping inside the
+        // member bodies' silhouette.
+        let mut reach = Vec::with_capacity(rings);
+        for lat_idx in 0..rings {
+            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
+            let (sin_t, cos_t) = (theta.sin(), theta.cos());
+            let mut sum = 0.0;
+            for az in 0..AZ_SAMPLES {
+                let phi = TAU * az as f64 / AZ_SAMPLES as f64;
+                let dir = DVec3::new(sin_t * phi.cos(), cos_t, sin_t * phi.sin());
+                let hull = srcs
+                    .iter()
+                    .map(|s| s.pos.dot(dir) + s.radius)
+                    .fold(0.3f64, f64::max);
+                let mut r = hull;
+                while r < R_MAX && push(dir * r) >= F_REF {
+                    r += DR;
+                }
+                sum += r;
+            }
+            reach.push(sum / AZ_SAMPLES as f64);
+        }
+        let reach_max = reach.iter().fold(1e-6f64, |m, &v| v.max(m));
+
+        let mut buf: Vec<f32> = Vec::with_capacity(2 + total_verts * 10 + total_indices);
+        buf.push(total_verts as f32);
+        buf.push(total_indices as f32);
+
+        const GOLD: (f32, f32, f32) = (0.95, 0.80, 0.50);
+        for (lat_idx, &rho) in reach.iter().enumerate() {
+            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
+            let (sin_t, cos_t) = (theta.sin(), theta.cos());
+            // reach ∝ F^¼ ⇒ reach⁴ recovers the field-strength analog the
+            // free skin maps to opacity.
+            let strength = ((rho / reach_max).powi(4)).clamp(0.0, 1.0) as f32;
+            let alpha = 0.03 + 0.20 * strength;
+            for lon_idx in 0..=lon {
+                let phi = TAU * lon_idx as f64 / lon as f64;
+                let nx = sin_t * phi.cos();
+                let ny = cos_t;
+                let nz = sin_t * phi.sin();
+                buf.extend_from_slice(&[
+                    (rho * nx) as f32,
+                    (rho * ny) as f32,
+                    (rho * nz) as f32,
+                ]);
+                buf.extend_from_slice(&[nx as f32, ny as f32, nz as f32]);
+                buf.extend_from_slice(&[GOLD.0, GOLD.1, GOLD.2, alpha]);
+            }
+        }
+
+        for lat_idx in 0..(rings - 1) {
+            for lon_idx in 0..lon {
+                let tl = (lat_idx * verts_per_ring + lon_idx) as f32;
+                let tr = tl + 1.0;
+                let bl = ((lat_idx + 1) * verts_per_ring + lon_idx) as f32;
+                let br = bl + 1.0;
+                buf.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            }
+        }
+
+        buf
+    }
+
     pub fn count_particles_with_profile(&self, profile_id: usize) -> usize {
         self.particles
             .iter()
@@ -1869,6 +2058,51 @@ impl AtomCore {
                             phase0,
                             mouth,
                         },
+                    });
+                }
+            }
+        }
+
+        // Bond stream bridges — a molecular bond IS two facing polar
+        // streams meeting head-on (fourier.pdf/jup3.pdf): show charge
+        // flowing from both poles into the collision plane at the
+        // midpoint. This is what visually separates a BONDED neighbor
+        // (backed out, streams meeting across the gap) from a FUSED one
+        // (no gap, no streams — one body).
+        const BRIDGE_PER_SEC: f64 = 70.0; // per bond end
+        const BRIDGE_SPEED: f64 = 2.4;
+        const BRIDGE_COLOR: (f32, f32, f32) = (0.80, 0.92, 1.0);
+        for (i, j) in self.molecular_bonds() {
+            let mid = (emitters[i].pos + emitters[j].pos) * 0.5;
+            for &a in &[i, j] {
+                let em = &emitters[a];
+                let gap = (mid - em.pos).length();
+                let travel = gap - em.radius;
+                if travel <= 0.05 {
+                    continue;
+                }
+                let axis = (mid - em.pos) / gap;
+                let (r1, r2) = build_frame(axis);
+                let n_spawn = spawn_count(&mut self.rng, BRIDGE_PER_SEC);
+                for _ in 0..n_spawn {
+                    if self.vfx_particles.len() >= MAX_POOL {
+                        break;
+                    }
+                    let ang = self.rng.next_f64() * TAU;
+                    let lat_off = self.rng.next_f64() * 0.12;
+                    let start = em.pos
+                        + axis * em.radius
+                        + (r1 * ang.cos() + r2 * ang.sin()) * lat_off;
+                    self.vfx_particles.push(VfxParticle {
+                        position: start,
+                        velocity: axis * BRIDGE_SPEED,
+                        age: 0.0,
+                        // Dies AT the collision plane — the cushion.
+                        lifetime: travel / BRIDGE_SPEED,
+                        color: BRIDGE_COLOR,
+                        base_scale: 0.035 * em.radius.max(0.35) as f32,
+                        grow: 0.5, // splashes wider as it nears the plane
+                        kind: VfxKind::Smoke,
                     });
                 }
             }
@@ -2336,6 +2570,41 @@ mod tests {
         }
         assert_eq!(north, 0, "stoppered north pole must not spawn tornado riders");
         assert!(south > 0, "open south pole should have an active tornado");
+    }
+
+    /// Composite alpha skin: a sane lathe whose equatorial reach exceeds a
+    /// single free proton's (two fused discs push farther, ≈ ×2^¼).
+    #[test]
+    fn group_skin_reach_sane_for_alpha() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        let p_id = core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        let (lon, lat) = (16usize, 8usize);
+        let buf = core.build_group_skin_mesh(0, lon, lat);
+        let rings = lat * 2 + 1;
+        let vpr = lon + 1;
+        assert_eq!(buf[0] as usize, rings * vpr);
+        let ring_r = |ring: usize| -> f64 {
+            let o = 2 + ring * vpr * 10;
+            DVec3::new(buf[o] as f64, buf[o + 1] as f64, buf[o + 2] as f64).length()
+        };
+        let eq = ring_r(rings / 2);
+        let single =
+            (core.couplings.c_q * core.profiles[p_id].emission.sample(0.0)).powf(0.25);
+        assert!(
+            eq > single * 1.05,
+            "alpha equator reach {eq} should exceed a single proton's {single}"
+        );
+        assert!(eq < 12.0, "alpha equator reach implausibly large: {eq}");
+        for ring in 0..rings {
+            let r = ring_r(ring);
+            assert!(r.is_finite() && r < 40.0, "ring {ring} reach bad: {r}");
+        }
     }
 
     /// Fused constituents draw no free-field skin: an alpha (2p+2n) plus

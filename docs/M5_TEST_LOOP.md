@@ -47,6 +47,16 @@ the physics the app runs.
    Pass = exit 0 and no `SCRIPT ERROR` lines. (`field_sim` prints one
    intended warning headless — the GPU field sim needs a real device.)
 
+   The scene smoke never leaves the default "protons" scenario, so also run
+   the scripted smoke, which drives preset/bond scenario switches
+   (rigid groups → composite skins, h2 → bond bridges):
+
+   ```
+   & "D:\App\Godot\Godot_v4.6.1-stable_win64.exe" --headless --path godot -s res://scripts/dev_smoke_atom.gd
+   ```
+
+   Pass = exit 0 and `[smoke] OK`.
+
 4. Human visual check only at milestone boundaries.
 
 ## Rules

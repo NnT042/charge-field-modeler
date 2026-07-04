@@ -475,6 +475,54 @@ impl AtomSim {
         packed(&self.core.advance_clouds(delta))
     }
 
+    /// Number of rigid groups (nuclei) currently in the sim.
+    #[func]
+    fn get_group_count(&self) -> i32 {
+        self.core.groups.len() as i32
+    }
+
+    /// World transform of a rigid group (orientation + center of mass).
+    #[func]
+    fn get_group_transform(&self, group_idx: i32) -> Transform3D {
+        match self.core.groups.get(group_idx.max(0) as usize) {
+            Some(g) => {
+                let q = g.orientation;
+                let basis = Basis::from_quaternion(Quaternion::new(
+                    q.x as f32, q.y as f32, q.z as f32, q.w as f32,
+                ));
+                Transform3D::new(basis, gv(g.com))
+            }
+            None => Transform3D::IDENTITY,
+        }
+    }
+
+    /// Composite nucleus skin mesh for a rigid group, in group-local units.
+    /// Same packed format as `build_profile_mesh`.
+    #[func]
+    fn build_group_skin_mesh(
+        &self,
+        group_idx: i32,
+        lon_segments: i32,
+        lat_segments: i32,
+    ) -> PackedFloat32Array {
+        packed(&self.core.build_group_skin_mesh(
+            group_idx.max(0) as usize,
+            lon_segments.max(0) as usize,
+            lat_segments.max(0) as usize,
+        ))
+    }
+
+    /// Detected molecular bonds as a flat [i0, j0, i1, j1, …] index array.
+    #[func]
+    fn get_bond_pairs(&self) -> PackedInt32Array {
+        let mut arr = PackedInt32Array::new();
+        for (i, j) in self.core.molecular_bonds() {
+            arr.push(i as i32);
+            arr.push(j as i32);
+        }
+        arr
+    }
+
     /// Skin instance transforms: free particles of this profile only —
     /// fused (rigid-group) constituents draw no free-field skin.
     #[func]

@@ -15,6 +15,9 @@ var tuning_panel: CanvasLayer
 var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
 var skin_renderers := {}  # "proton" -> MultiMeshInstance3D (field-extent skin)
+var group_skins: Array[MeshInstance3D] = []  # composite nucleus skins, one per rigid group
+var _group_skins_dirty := false
+var _skin_mat: StandardMaterial3D
 var substeps_per_frame := 100
 var paused := false
 var show_clouds := true          # emission smoke + intake vortex clouds
@@ -82,12 +85,13 @@ func _create_envelope_renderers():
 	# Field-extent skin: soft translucent reach envelope (radius = charge
 	# push reach, opacity = emission strength) — the wireframe rings'
 	# information, layered over the body. Drawn after the body.
-	var skin_mat := StandardMaterial3D.new()
-	skin_mat.vertex_color_use_as_albedo = true
-	skin_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	skin_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	skin_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	skin_mat.render_priority = 1
+	_skin_mat = StandardMaterial3D.new()
+	_skin_mat.vertex_color_use_as_albedo = true
+	_skin_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_skin_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_skin_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_skin_mat.render_priority = 1
+	var skin_mat := _skin_mat
 
 	for type_name in profile_ids:
 		var pid: int = profile_ids[type_name]
@@ -223,6 +227,7 @@ func reset_scenario() -> void:
 func spawn_scenario(scenario: String) -> void:
 	current_scenario = scenario
 	atom_sim.clear_particles()
+	_group_skins_dirty = true
 	match scenario:
 		"protons":
 			# Two free protons, poles parallel: the stream cushion stands
@@ -461,6 +466,8 @@ func _update_rendering():
 			if skin_count > 0:
 				skin.multimesh.set_buffer(skin_buf)
 
+	_update_group_skins()
+
 	# Pole indicator lines (debug — hidden by default; the Christmas
 	# ornaments are retired)
 	var total: int = atom_sim.get_particle_count()
@@ -493,3 +500,25 @@ func _update_pole_mesh(buf: PackedFloat32Array, count: int):
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
 	pole_lines.mesh = mesh
+
+## Composite nucleus skins: one reach-envelope mesh per rigid group. The
+## mesh is built once per scenario spawn (the group geometry is rigid) and
+## rides the group's transform every frame. Fused constituents draw no
+## individual skins; this gold envelope is the field the nucleus projects
+## as a unit.
+func _update_group_skins() -> void:
+	var gcount: int = atom_sim.get_group_count()
+	if _group_skins_dirty or gcount != group_skins.size():
+		_group_skins_dirty = false
+		for mi in group_skins:
+			mi.queue_free()
+		group_skins.clear()
+		for gi in range(gcount):
+			var buf: PackedFloat32Array = atom_sim.build_group_skin_mesh(gi, 48, 24)
+			var mi := MeshInstance3D.new()
+			mi.mesh = _build_array_mesh(buf, _skin_mat)
+			add_child(mi)
+			group_skins.append(mi)
+	for gi in range(group_skins.size()):
+		group_skins[gi].visible = show_clouds
+		group_skins[gi].transform = atom_sim.get_group_transform(gi)
