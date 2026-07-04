@@ -18,6 +18,7 @@ var skin_renderers := {}  # "proton" -> MultiMeshInstance3D (field-extent skin)
 var group_skins: Array[MeshInstance3D] = []  # composite nucleus skins, one per rigid group
 var _group_skins_dirty := false
 var _skin_mat: StandardMaterial3D
+var _ring_mat: StandardMaterial3D  # max-emission rings on the gold skin
 var substeps_per_frame := 100
 var paused := false
 var show_clouds := true          # emission smoke + intake vortex clouds
@@ -92,6 +93,12 @@ func _create_envelope_renderers():
 	_skin_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_skin_mat.render_priority = 1
 	var skin_mat := _skin_mat
+
+	_ring_mat = StandardMaterial3D.new()
+	_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_ring_mat.albedo_color = Color(1.0, 0.88, 0.55, 0.65)
+	_ring_mat.render_priority = 2
 
 	for type_name in profile_ids:
 		var pid: int = profile_ids[type_name]
@@ -516,9 +523,31 @@ func _update_group_skins() -> void:
 		for gi in range(gcount):
 			var buf: PackedFloat32Array = atom_sim.build_group_skin_mesh(gi, 48, 24)
 			var mi := MeshInstance3D.new()
-			mi.mesh = _build_array_mesh(buf, _skin_mat)
+			var mesh := _build_array_mesh(buf, _skin_mat)
+			_add_emission_ring_surfaces(mesh, gi)
+			mi.mesh = mesh
 			add_child(mi)
 			group_skins.append(mi)
 	for gi in range(group_skins.size()):
 		group_skins[gi].visible = show_clouds
 		group_skins[gi].transform = atom_sim.get_group_transform(gi)
+
+## Add the per-alpha max-emission ring circles (bright gold lines on the
+## skin surface) as extra line-strip surfaces of the skin mesh.
+func _add_emission_ring_surfaces(mesh: ArrayMesh, gi: int) -> void:
+	var rbuf: PackedFloat32Array = atom_sim.build_group_emission_rings(gi)
+	if rbuf.size() < 2:
+		return
+	var nrings := int(rbuf[0])
+	var ppr := int(rbuf[1])
+	for r in range(nrings):
+		var verts := PackedVector3Array()
+		verts.resize(ppr)
+		for v in range(ppr):
+			var o := 2 + (r * ppr + v) * 3
+			verts[v] = Vector3(rbuf[o], rbuf[o + 1], rbuf[o + 2])
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)

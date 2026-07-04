@@ -512,6 +512,13 @@ impl AtomSim {
         ))
     }
 
+    /// Max-emission ring overlay for a group's composite skin, group-local
+    /// units. Packed: [ring_count, pts_per_ring, ring_count·pts × (x,y,z)].
+    #[func]
+    fn build_group_emission_rings(&self, group_idx: i32) -> PackedFloat32Array {
+        packed(&self.core.build_group_emission_rings(group_idx.max(0) as usize))
+    }
+
     /// Detected molecular bonds as a flat [i0, j0, i1, j1, …] index array.
     #[func]
     fn get_bond_pairs(&self) -> PackedInt32Array {

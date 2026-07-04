@@ -222,14 +222,22 @@ fn alpha_block(y: f64) -> Vec<Constituent> {
 /// polar channel (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton
 /// in the south pole, neutron in the north; O = protons in both poles).
 /// `z` offsets the plug off-axis so a proton+neutron pair can share the
-/// polar hole side by side (0 for a lone plug).
+/// polar hole side by side (0 for a lone plug); a paired proton points its
+/// pole AT its partner across the hole. Plugs ride the carousel like the
+/// alpha posts — they roll around the polar socket rather than sitting
+/// welded (session-29 user note).
 fn plug_proton(y: f64, z: f64) -> Constituent {
+    let local_pole = if z.abs() > 1e-9 {
+        DVec3::new(0.0, 0.0, -z.signum()) // toward the paired plug
+    } else {
+        DVec3::X
+    };
     Constituent {
         profile_name: "proton",
         local_pos: DVec3::new(0.0, y, z),
-        local_pole: DVec3::X,
+        local_pole,
         spin_sign: 1.0,
-        carousel: false,
+        carousel: true,
     }
 }
 
@@ -238,14 +246,15 @@ fn plug_proton(y: f64, z: f64) -> Constituent {
 /// while neutrons channel pole to pole" (graphene.pdf), so its axial pole
 /// pulls charge into the stack's hole (atmo2.pdf: paired neutrons are
 /// "pulling charge into the axial holes"). `z` offsets it off-axis to sit
-/// side by side with a paired plug proton (0 for a lone plug).
+/// side by side with a paired plug proton (0 for a lone plug). Rides the
+/// carousel like the alpha posts.
 fn plug_neutron(y: f64, z: f64) -> Constituent {
     Constituent {
         profile_name: "neutron",
         local_pos: DVec3::new(0.0, y, z),
         local_pole: DVec3::Y,
         spin_sign: 1.0,
-        carousel: false,
+        carousel: true,
     }
 }
 
@@ -320,11 +329,10 @@ pub struct RigidGroup {
     /// about their own poles even though the group frame is rigid.
     pub member_spin_phase: Vec<f64>,
     /// Members that ride the carousel around the group's stack axis
-    /// (alpha neutron posts). Kinematic: preserves all pair distances
-    /// among alpha members (carousel members are 180° apart, the alpha
-    /// protons are on-axis). Oxygen's off-axis polar plug pairs see a tiny
-    /// distance modulation against the posts — harmless: intra-group
-    /// forces are skipped, so this is purely visual kinematics.
+    /// (alpha neutron posts, polar plugs). Kinematic: preserves ALL pair
+    /// distances — every off-axis member rides the carousel at the same
+    /// phase, everything else is on-axis. Riders' orientations rotate with
+    /// the ride (they roll around the axis, not slide).
     pub carousel: Vec<bool>,
     pub carousel_rate: f64,
     pub carousel_phase: f64,
@@ -335,6 +343,28 @@ pub struct RigidGroup {
     pub mass: f64,
     /// Scalar inertia approximation: Σ m(|offset|² + 0.4 r²).
     pub inertia: f64,
+    /// Azimuth-averaged skin reach vs polar angle (SKIN_REACH_RINGS samples
+    /// over θ ∈ [0, π]), computed once at spawn — the group is rigid.
+    /// Feeds the composite skin mesh, the emission-ring overlay, and the
+    /// smoke lifetimes (dots die AT this boundary).
+    pub skin_reach: Vec<f64>,
+}
+
+/// Samples in a group's stored `skin_reach` table.
+pub const SKIN_REACH_RINGS: usize = 49;
+
+/// Linear interpolation into a reach-vs-θ table (θ ∈ [0, π]).
+pub fn reach_at_theta(table: &[f64], theta: f64) -> f64 {
+    if table.is_empty() {
+        return 0.0;
+    }
+    if table.len() == 1 {
+        return table[0];
+    }
+    let t = (theta / std::f64::consts::PI).clamp(0.0, 1.0) * (table.len() - 1) as f64;
+    let i = (t as usize).min(table.len() - 2);
+    let frac = t - i as f64;
+    table[i] * (1.0 - frac) + table[i + 1] * frac
 }
 
 // ── VFX Particle (charge emission sprinkler) ─────────────────────────────
@@ -374,6 +404,14 @@ enum VfxKind {
 
 pub const SOFTENING: f64 = 0.05;
 pub const ANGULAR_DAMPING: f64 = 0.998;
+/// Charge-field lock on nuclei (1/s): the ambient field that fused a
+/// nucleus also LOCKS its orientation (nuclear.pdf: "The charge field then
+/// locks them into these configurations") — group tumble relaxes as
+/// exp(−RELAX·t) instead of letting every passing particle pump angular
+/// momentum into the nucleus ("wild turning", session-29 user report).
+/// Torques still act, so slow molecular alignment remains possible; the
+/// steady state is ω ≈ τ/(I·RELAX).
+pub const GROUP_SPIN_RELAX: f64 = 20.0;
 pub const MIN_RENDER_RADIUS: f32 = 0.15;
 pub const ENVELOPE_MIN_R: f64 = 0.25;
 pub const CONTACT_STIFFNESS: f64 = 100.0;
@@ -644,8 +682,11 @@ impl AtomCore {
             angular_velocity: DVec3::ZERO,
             mass,
             inertia: inertia.max(1e-9),
+            skin_reach: Vec::new(),
         });
         self.sync_group_members(gid);
+        let reach = self.compute_group_reach(gid, SKIN_REACH_RINGS);
+        self.groups[gid].skin_reach = reach;
         Some(gid)
     }
 
@@ -684,16 +725,23 @@ impl AtomCore {
             let world_off = orientation * local_off;
             let p = &mut self.particles[ms.id];
             p.position = com + world_off;
-            // Rigid frame × constituent frame × accumulated axial spin —
-            // members visibly rotate about their own poles.
+            // Rigid frame × (carousel ride) × constituent frame ×
+            // accumulated axial spin — members visibly rotate about their
+            // own poles, and carousel riders ROLL around the stack axis
+            // (their orientation tracks the ride, so an edge-on plug keeps
+            // facing its partner all the way around).
+            let member_orient = if ms.carousel { car_rot * ms.orient } else { ms.orient };
             p.orientation =
-                (orientation * ms.orient * DQuat::from_rotation_y(ms.spin_phase)).normalize();
+                (orientation * member_orient * DQuat::from_rotation_y(ms.spin_phase)).normalize();
             p.velocity = vel + omega.cross(world_off);
             if ms.carousel {
                 p.velocity += car_omega.cross(world_off);
             }
             let pole = p.pole_axis();
             p.angular_velocity = omega + pole * ms.spin;
+            if ms.carousel {
+                p.angular_velocity += car_omega;
+            }
         }
     }
 
@@ -965,6 +1013,8 @@ impl AtomCore {
             let g = &mut self.groups[gi];
             g.velocity += f / g.mass * dt;
             g.angular_velocity += tau / g.inertia * dt;
+            // Charge-field lock — see GROUP_SPIN_RELAX.
+            g.angular_velocity *= (-GROUP_SPIN_RELAX * dt).exp();
         }
     }
 
@@ -1716,23 +1766,12 @@ impl AtomCore {
         buf
     }
 
-    /// Composite nucleus skin: the reach envelope of a WHOLE rigid group —
-    /// the surface where the group's SUMMED charge push on a unit absorber
-    /// falls to the natural force unit (same F=1 reference as the free
-    /// skin), found by marching the actual member fields outward in the
-    /// group-local frame. Fused constituents draw no individual skins
-    /// (they recycle as one unit); this is the field the locked
-    /// configuration projects instead. Azimuthally averaged into a lathe
-    /// (the carousel sweeps azimuth anyway). GROUP-LOCAL units — render it
-    /// riding the group transform, unscaled. Gold, to read as "one fused
-    /// unit" against the per-type skins of free particles. Same packing as
-    /// `build_profile_mesh`.
-    pub fn build_group_skin_mesh(
-        &self,
-        group_idx: usize,
-        lon_segments: usize,
-        lat_segments: usize,
-    ) -> Vec<f32> {
+    /// March the group's summed charge push outward to find its reach
+    /// surface (the composite-skin boundary): azimuth-averaged reach per
+    /// polar angle, group-local frame, never dipping inside the member
+    /// bodies' silhouette. Called once at spawn (the group is rigid) and
+    /// stored as `RigidGroup::skin_reach`.
+    pub fn compute_group_reach(&self, group_idx: usize, rings: usize) -> Vec<f64> {
         let g = match self.groups.get(group_idx) {
             Some(g) => g,
             None => return Vec::new(),
@@ -1778,18 +1817,10 @@ impl AtomCore {
         const R_MAX: f64 = 40.0;
         const AZ_SAMPLES: usize = 8;
 
-        let lon = lon_segments.max(8);
-        let lat = lat_segments.max(4);
-        let rings = lat * 2 + 1;
-        let verts_per_ring = lon + 1;
-        let total_verts = rings * verts_per_ring;
-        let total_indices = (rings - 1) * lon * 6;
-
-        // Azimuth-averaged reach per latitude, never dipping inside the
-        // member bodies' silhouette.
+        let rings = rings.max(2);
         let mut reach = Vec::with_capacity(rings);
         for lat_idx in 0..rings {
-            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
+            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1) as f64;
             let (sin_t, cos_t) = (theta.sin(), theta.cos());
             let mut sum = 0.0;
             for az in 0..AZ_SAMPLES {
@@ -1807,6 +1838,47 @@ impl AtomCore {
             }
             reach.push(sum / AZ_SAMPLES as f64);
         }
+        reach
+    }
+
+    /// Composite nucleus skin: the reach envelope of a WHOLE rigid group —
+    /// the surface where the group's SUMMED charge push on a unit absorber
+    /// falls to the natural force unit (same F=1 reference as the free
+    /// skin), from the group's stored `skin_reach` table. Fused
+    /// constituents draw no individual skins (they recycle as one unit);
+    /// this is the field the locked configuration projects instead.
+    /// GROUP-LOCAL units — render it riding the group transform, unscaled.
+    /// Gold, to read as "one fused unit" against the per-type skins of
+    /// free particles. Same packing as `build_profile_mesh`.
+    pub fn build_group_skin_mesh(
+        &self,
+        group_idx: usize,
+        lon_segments: usize,
+        lat_segments: usize,
+    ) -> Vec<f32> {
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        let lon = lon_segments.max(8);
+        let lat = lat_segments.max(4);
+        let rings = lat * 2 + 1;
+        let verts_per_ring = lon + 1;
+        let total_verts = rings * verts_per_ring;
+        let total_indices = (rings - 1) * lon * 6;
+
+        let table = if g.skin_reach.len() >= 2 {
+            g.skin_reach.clone()
+        } else {
+            self.compute_group_reach(group_idx, SKIN_REACH_RINGS)
+        };
+        let reach: Vec<f64> = (0..rings)
+            .map(|lat_idx| {
+                let theta =
+                    std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
+                reach_at_theta(&table, theta)
+            })
+            .collect();
         let reach_max = reach.iter().fold(1e-6f64, |m, &v| v.max(m));
 
         let mut buf: Vec<f32> = Vec::with_capacity(2 + total_verts * 10 + total_indices);
@@ -1849,6 +1921,93 @@ impl AtomCore {
         buf
     }
 
+    /// Max-emission ring overlay for the composite skin: one circle per
+    /// ALPHA BLOCK, drawn ON the reach surface at that alpha's disc
+    /// latitude — "this is where this alpha's disc pushes farthest", the
+    /// quantitative line the old wireframe rings carried. Group-local
+    /// units, same frame as the skin mesh.
+    /// Packed: [ring_count, pts_per_ring, ring_count·pts_per_ring × (x,y,z)].
+    pub fn build_group_emission_rings(&self, group_idx: usize) -> Vec<f32> {
+        const PTS: usize = 65;
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        if g.skin_reach.len() < 2 {
+            return Vec::new();
+        }
+        // Alpha disc latitudes: cluster the AXIAL protons' heights (each
+        // alpha = two stacked protons ±0.9 around its center; plug protons
+        // are edge-on and don't count).
+        let mut ys: Vec<f64> = Vec::new();
+        for (k, &pid) in g.members.iter().enumerate() {
+            let prof = &self.profiles[self.particles[pid].profile_id];
+            let axial = (g.local_orients[k] * DVec3::Y).dot(DVec3::Y).abs() > 0.9;
+            if prof.name == "proton" && axial {
+                ys.push(g.local_offsets[k].y);
+            }
+        }
+        if ys.is_empty() {
+            return Vec::new();
+        }
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Axial protons come as one stacked pair per alpha block, and
+        // blocks don't interleave — consecutive sorted heights pair up.
+        // (A gap-based clustering fails here: adjacent-block protons are
+        // CLOSER (0.8) than an alpha's own pair (1.8) at ALPHA_PITCH 2.6.)
+        let mut centers: Vec<f64> = Vec::new();
+        let mut i = 0;
+        while i < ys.len() {
+            if i + 1 < ys.len() {
+                centers.push((ys[i] + ys[i + 1]) / 2.0);
+                i += 2;
+            } else {
+                centers.push(ys[i]);
+                i += 1;
+            }
+        }
+
+        // For each alpha center find where the skin surface crosses that
+        // height: y(θ) = reach(θ)·cosθ runs from +reach to −reach over
+        // θ ∈ [0, π] — take the first crossing.
+        let table = &g.skin_reach;
+        let n = table.len();
+        let mut rings: Vec<(f64, f64)> = Vec::new(); // (ring radius, y)
+        for &yc in &centers {
+            for i in 0..(n - 1) {
+                let th0 = std::f64::consts::PI * i as f64 / (n - 1) as f64;
+                let th1 = std::f64::consts::PI * (i + 1) as f64 / (n - 1) as f64;
+                let y0 = table[i] * th0.cos();
+                let y1 = table[i + 1] * th1.cos();
+                if (y0 - yc) * (y1 - yc) <= 0.0 && (y0 - y1).abs() > 1e-12 {
+                    let f = ((y0 - yc) / (y0 - y1)).clamp(0.0, 1.0);
+                    let th = th0 + (th1 - th0) * f;
+                    let r = reach_at_theta(table, th);
+                    rings.push((r * th.sin(), r * th.cos()));
+                    break;
+                }
+            }
+        }
+        if rings.is_empty() {
+            return Vec::new();
+        }
+
+        let mut buf = Vec::with_capacity(2 + rings.len() * PTS * 3);
+        buf.push(rings.len() as f32);
+        buf.push(PTS as f32);
+        for (rr, y) in rings {
+            for p in 0..PTS {
+                let phi = TAU * p as f64 / (PTS - 1) as f64;
+                buf.extend_from_slice(&[
+                    (rr * phi.cos()) as f32,
+                    y as f32,
+                    (rr * phi.sin()) as f32,
+                ]);
+            }
+        }
+        buf
+    }
+
     pub fn count_particles_with_profile(&self, profile_id: usize) -> usize {
         self.particles
             .iter()
@@ -1869,11 +2028,14 @@ impl AtomCore {
     /// Advance the cloud particles by wall-clock `delta` seconds and return
     /// the MultiMesh buffer (12 transform + 4 color floats per particle).
     pub fn advance_clouds(&mut self, delta: f64) -> Vec<f32> {
-        const MAX_POOL: usize = 4096;
-        const EMIT_PER_SEC: f64 = 260.0; // per sim particle
+        const MAX_POOL: usize = 10_000;
+        const EMIT_PER_SEC: f64 = 120.0; // per sim particle
         const INTAKE_PER_SEC: f64 = 160.0;
-        const EMIT_DRIFT: f64 = 0.55; // radial drift speed
-        const EMIT_LIFE: f64 = 1.6;
+        /// Radial drift speed. Smoke LIFETIME is travel/EMIT_DRIFT where
+        /// travel runs from the body surface to the field-extent boundary
+        /// (free-skin reach or the group's stored reach table) — the dots
+        /// carry the push all the way to the skin and die there.
+        const EMIT_DRIFT: f64 = 1.3;
         const INTAKE_SPEED: f64 = 1.5; // infall speed
         const ARM_COUNT: usize = 3;
         /// Visual rotation rate of the spiral arms (rad/s wall clock) —
@@ -1906,6 +2068,7 @@ impl AtomCore {
             color: (f32, f32, f32),
             pid: usize,
             spin_sign: f64,
+            group: Option<usize>,
         }
         let emitters: Vec<Emitter> = self
             .particles
@@ -1923,8 +2086,16 @@ impl AtomCore {
                     color: profile_color(&prof.name),
                     pid: p.profile_id,
                     spin_sign: p.angular_velocity.dot(pole).signum(),
+                    group: p.group,
                 }
             })
+            .collect();
+        // Group frames for reach lookups (smoke from a fused member dies at
+        // the GROUP's gold skin, not at a free-particle reach).
+        let group_frames: Vec<(DVec3, DVec3)> = self
+            .groups
+            .iter()
+            .map(|g| (g.com, g.orientation * DVec3::Y))
             .collect();
 
         let pole_occ = self.pole_occlusion();
@@ -1978,7 +2149,9 @@ impl AtomCore {
         for (ei, em) in emitters.iter().enumerate() {
             let arm_phase = em.spin_sign * ARM_RATE * self.vfx_time;
 
-            // Emission smoke — coherent spiral arms.
+            // Emission smoke — coherent spiral arms. Tight azimuth jitter
+            // and slow growth keep the arms readable as a rotating disc
+            // (CW/CCW per the spin sign) instead of merging blobs.
             let n_emit = spawn_count(&mut self.rng, EMIT_PER_SEC);
             for _ in 0..n_emit {
                 if self.vfx_particles.len() >= MAX_POOL {
@@ -1989,7 +2162,7 @@ impl AtomCore {
                 let arm = (self.rng.next_f64() * ARM_COUNT as f64) as usize;
                 let phi = arm_phase
                     + arm as f64 * (TAU / ARM_COUNT as f64)
-                    + (self.rng.next_f64() - 0.5) * 0.9;
+                    + (self.rng.next_f64() - 0.5) * 0.35;
 
                 let cos_t = theta.cos();
                 let sin_t = theta.sin();
@@ -2005,14 +2178,34 @@ impl AtomCore {
                 } else {
                     DVec3::ZERO
                 };
+                let spawn_pos = em.pos + dir * em.radius;
+                // Travel distance: to the field-extent boundary — the
+                // group's stored reach surface for fused members, the
+                // free-skin ¼-power reach otherwise.
+                let travel = match em.group {
+                    Some(gi) if gi < group_frames.len() => {
+                        let (com, axis) = group_frames[gi];
+                        let v = spawn_pos - com;
+                        let vlen = v.length().max(1e-6);
+                        let theta_g = (v.dot(axis) / vlen).clamp(-1.0, 1.0).acos();
+                        reach_at_theta(&self.groups[gi].skin_reach, theta_g) - vlen
+                    }
+                    _ => {
+                        let e = self.profiles[em.pid].emission.sample(cos_t);
+                        let mass = self.profiles[em.pid].mass;
+                        (self.couplings.c_q * mass * e).max(0.0).powf(0.25) - em.radius
+                    }
+                }
+                .max(0.4);
                 self.vfx_particles.push(VfxParticle {
-                    position: em.pos + dir * em.radius,
+                    position: spawn_pos,
                     velocity: dir * EMIT_DRIFT + tangent * (ARM_RATE * em.radius * 0.55),
                     age: 0.0,
-                    lifetime: EMIT_LIFE * (0.7 + 0.6 * self.rng.next_f64()),
+                    // Dies AT the skin (small jitter so the edge breathes).
+                    lifetime: travel / EMIT_DRIFT * (0.9 + 0.2 * self.rng.next_f64()),
                     color: em.color,
-                    base_scale: 0.045 * em.radius.max(0.35) as f32,
-                    grow: 0.9,
+                    base_scale: 0.05 * em.radius.max(0.35) as f32,
+                    grow: 0.25,
                     kind: VfxKind::Smoke,
                 });
             }
@@ -2114,8 +2307,10 @@ impl AtomCore {
 
         for vp in &self.vfx_particles {
             let t = (vp.age / vp.lifetime) as f32;
-            // Quick fade-in, slow fade-out.
-            let fade = (t / 0.12).min(1.0) * (1.0 - t).max(0.0);
+            // Quick fade-in; stays bright most of the trip and drops off
+            // near the end — the push visibly REACHES the skin before
+            // dying there.
+            let fade = (t / 0.12).min(1.0) * (1.0 - t * t * t).max(0.0);
             let scale = (vp.base_scale * (1.0 + vp.grow * vp.age as f32)).max(0.008);
             buf.extend_from_slice(&[
                 scale, 0.0, 0.0, vp.position.x as f32,
@@ -2570,6 +2765,47 @@ mod tests {
         }
         assert_eq!(north, 0, "stoppered north pole must not spawn tornado riders");
         assert!(south > 0, "open south pole should have an active tornado");
+    }
+
+    /// The charge-field lock: a spun-up nucleus relaxes back to rest
+    /// instead of tumbling forever.
+    #[test]
+    fn group_tumble_relaxes() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        core.running = true;
+        core.groups[0].angular_velocity = DVec3::new(3.0, 1.0, 2.0);
+        core.step_n(2000); // 1.0 sim s ⇒ e^{−20} decay
+        let w = core.groups[0].angular_velocity.length();
+        assert!(w < 0.05, "nucleus should relax to rest, |ω|={w}");
+    }
+
+    /// One max-emission ring per alpha block: alpha → 1, carbon → 3.
+    #[test]
+    fn emission_rings_one_per_alpha() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        let rings = core.build_group_emission_rings(0);
+        assert!(!rings.is_empty(), "alpha should have an emission ring");
+        assert_eq!(rings[0] as usize, 1, "alpha = one alpha block, one ring");
+
+        core.clear_particles();
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        let rings = core.build_group_emission_rings(0);
+        assert_eq!(rings[0] as usize, 3, "carbon = three alphas, three rings");
     }
 
     /// Composite alpha skin: a sane lathe whose equatorial reach exceeds a

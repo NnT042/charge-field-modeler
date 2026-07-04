@@ -634,9 +634,17 @@ mod tests {
                 other => panic!("unexpected plug profile {other}"),
             };
             match name {
-                "nitrogen" => cons[12..14].iter().for_each(assert_plug),
+                "nitrogen" => {
+                    cons[12..14].iter().for_each(assert_plug);
+                    for c in &cons[12..14] {
+                        assert!(c.carousel, "nitrogen plugs should ride the carousel");
+                    }
+                }
                 "oxygen" => {
                     cons[12..16].iter().for_each(assert_plug);
+                    for c in &cons[12..16] {
+                        assert!(c.carousel, "oxygen plugs should ride the carousel");
+                    }
                     for pair in [[12usize, 13], [14, 15]] {
                         let (a, b) = (&cons[pair[0]], &cons[pair[1]]);
                         assert_eq!(a.profile_name, "proton", "pair leads with proton");
@@ -648,6 +656,11 @@ mod tests {
                         assert!(
                             (a.local_pos - b.local_pos).length() > 0.5,
                             "pair members must sit beside each other, not overlap"
+                        );
+                        let to_partner = (b.local_pos - a.local_pos).normalize();
+                        assert!(
+                            a.local_pole.dot(to_partner) > 0.99,
+                            "plug proton pole should point at its paired neutron"
                         );
                     }
                 }
