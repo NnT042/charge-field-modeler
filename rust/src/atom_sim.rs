@@ -475,6 +475,38 @@ impl AtomSim {
         packed(&self.core.advance_clouds(delta))
     }
 
+    /// Field-extent skin mesh for a profile (translucent reach envelope).
+    /// Same packed format as `build_profile_mesh`.
+    #[func]
+    fn build_field_skin_mesh(
+        &self,
+        profile_id: i32,
+        lon_segments: i32,
+        lat_segments: i32,
+    ) -> PackedFloat32Array {
+        packed(&self.core.build_field_skin_mesh(
+            profile_id.max(0) as usize,
+            lon_segments.max(0) as usize,
+            lat_segments.max(0) as usize,
+        ))
+    }
+
+    /// Rotate a saved spin-mode trace so its symmetry axis (the axial hole
+    /// the pattern spins around) lands on local +Y — the pole axis atom
+    /// mode spins bodies about. Pure math in atom_core (spin math stays in
+    /// Rust).
+    #[func]
+    fn reorient_trace_points(&self, points: PackedVector3Array) -> PackedVector3Array {
+        let pts: Vec<DVec3> = (0..points.len()).map(|i| dv(points[i])).collect();
+        let out = crate::atom_core::reorient_trace_to_pole(&pts);
+        let mut arr = PackedVector3Array::new();
+        arr.resize(out.len());
+        for (i, p) in out.iter().enumerate() {
+            arr[i] = gv(*p);
+        }
+        arr
+    }
+
     #[func]
     fn get_vfx_count(&self) -> i32 {
         self.core.vfx_count() as i32

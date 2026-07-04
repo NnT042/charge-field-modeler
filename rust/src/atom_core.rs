@@ -221,28 +221,37 @@ fn alpha_block(y: f64) -> Vec<Constituent> {
 /// to the stack axis, so its equatorial disc output feeds the stack's open
 /// polar channel (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton
 /// in the south pole, neutron in the north; O = protons in both poles).
-fn plug_proton(y: f64) -> Constituent {
+/// `z` offsets the plug off-axis so a proton+neutron pair can share the
+/// polar hole side by side (0 for a lone plug).
+fn plug_proton(y: f64, z: f64) -> Constituent {
     Constituent {
         profile_name: "proton",
-        local_pos: DVec3::new(0.0, y, 0.0),
+        local_pos: DVec3::new(0.0, y, z),
         local_pole: DVec3::X,
         spin_sign: 1.0,
         carousel: false,
     }
 }
 
-/// Polar blocking neutron: keeps its pole ON the stack axis — neutrons
-/// channel pole-to-pole (through-charge), so an axial pole feeds the
-/// stack's channel rather than blowing across it.
-fn plug_neutron(y: f64) -> Constituent {
+/// Polar plug neutron: turned 90° onto its side like the plug proton —
+/// EDGE-ON to the stack, its pole parallel to a paired plug proton's
+/// (atmo2.pdf: in N/O the non-alpha neutrons are "paired with an outermost
+/// proton, pulling charge into the axial holes"; session-29 diagram
+/// correction — the earlier axial orientation was wrong).
+fn plug_neutron(y: f64, z: f64) -> Constituent {
     Constituent {
         profile_name: "neutron",
-        local_pos: DVec3::new(0.0, y, 0.0),
-        local_pole: DVec3::Y,
+        local_pos: DVec3::new(0.0, y, z),
+        local_pole: DVec3::X,
         spin_sign: 1.0,
         carousel: false,
     }
 }
+
+/// Half-gap between the members of a proton+neutron pair sharing a polar
+/// hole ("two baryons in the hole fill the hole much better" — atmo2.pdf).
+/// Same nestling scale as the alpha's neutron posts (±0.5 off-axis).
+const PLUG_PAIR_GAP: f64 = 0.55;
 
 /// Alpha stack pitch: adjacent alpha centers along the axis. Tight enough
 /// that the disks read as plugged (nuclear.pdf), loose enough to see the
@@ -264,22 +273,26 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
             .concat(),
         ),
         // Nitrogen: carbon stack + 7th proton plugged in the south pole and
-        // the balancing neutron in the north (ammon.pdf).
+        // the balancing neutron in the north (ammon.pdf) — BOTH edge-on to
+        // the stack.
         "nitrogen" => {
             let mut c = preset_constituents("carbon")?;
-            c.push(plug_proton(-(ALPHA_PITCH + 1.8)));
-            c.push(plug_neutron(ALPHA_PITCH + 1.8));
+            c.push(plug_proton(-(ALPHA_PITCH + 1.8), 0.0));
+            c.push(plug_neutron(ALPHA_PITCH + 1.8, 0.0));
             Some(c)
         }
-        // Oxygen: carbon stack + protons plugged in BOTH poles (oxygen.pdf:
-        // the 7th and 8th protons go on the ends because four alphas can't
-        // stack), plus their companion neutrons alongside.
+        // Oxygen: carbon stack + BOTH poles capped by a proton+neutron PAIR
+        // (oxygen.pdf: the 7th and 8th protons go on the ends because four
+        // alphas can't stack; atmo2.pdf: their neutrons are paired with
+        // them in the hole). Each pair sits side by side, members parallel
+        // to each other and edge-on to the core.
         "oxygen" => {
             let mut c = preset_constituents("carbon")?;
-            c.push(plug_proton(-(ALPHA_PITCH + 1.8)));
-            c.push(plug_proton(ALPHA_PITCH + 1.8));
-            c.push(plug_neutron(-(ALPHA_PITCH + 2.9)));
-            c.push(plug_neutron(ALPHA_PITCH + 2.9));
+            let y = ALPHA_PITCH + 1.8;
+            c.push(plug_proton(-y, -PLUG_PAIR_GAP));
+            c.push(plug_neutron(-y, PLUG_PAIR_GAP));
+            c.push(plug_proton(y, -PLUG_PAIR_GAP));
+            c.push(plug_neutron(y, PLUG_PAIR_GAP));
             Some(c)
         }
         _ => None,
@@ -307,7 +320,10 @@ pub struct RigidGroup {
     pub member_spin_phase: Vec<f64>,
     /// Members that ride the carousel around the group's stack axis
     /// (alpha neutron posts). Kinematic: preserves all pair distances
-    /// (carousel members are 180° apart, everything else is on-axis).
+    /// among alpha members (carousel members are 180° apart, the alpha
+    /// protons are on-axis). Oxygen's off-axis polar plug pairs see a tiny
+    /// distance modulation against the posts — harmless: intra-group
+    /// forces are skipped, so this is purely visual kinematics.
     pub carousel: Vec<bool>,
     pub carousel_rate: f64,
     pub carousel_phase: f64,
@@ -331,6 +347,28 @@ pub struct VfxParticle {
     base_scale: f32,
     /// Scale growth per second — smoke expands as it drifts.
     grow: f32,
+    kind: VfxKind,
+}
+
+/// Motion model for a cloud particle.
+enum VfxKind {
+    /// Free ballistic smoke puff (`position += velocity·dt`).
+    Smoke,
+    /// Kinematic intake-funnel rider: its position is recomputed every
+    /// frame around the emitter's CURRENT pole, so the tornado follows a
+    /// moving particle instead of detaching as straight-line puffs.
+    Tornado {
+        /// Index into `self.particles` (cleared with the particle list).
+        emitter: usize,
+        /// true = −pole_axis end.
+        south: bool,
+        /// Azimuth at spawn (rad).
+        phase0: f64,
+        /// Funnel mouth radius at the top of the descent (world units) —
+        /// set by the intake cone angle sampled from the A²-CDF, so the
+        /// funnel width IS the capture cone.
+        mouth: f64,
+    },
 }
 
 pub const SOFTENING: f64 = 0.05;
@@ -1013,6 +1051,39 @@ impl AtomCore {
         occ
     }
 
+    /// Per-particle, per-pole intake occlusion in [0,1] for the cloud VFX:
+    /// `[north, south]` where north = +pole_axis. Same lateral falloff as
+    /// the pairwise `compute_occlusion` (full block within 0.3 of the
+    /// channel line, faded out by 0.8): anything sitting over a pole within
+    /// ~3 units stoppers that pole's visible intake tornado — a wall-riding
+    /// electron, a sideways baryon, or the next nucleon in a rigid stack
+    /// (interior stack poles read as plugged; only the open ends drain).
+    pub fn pole_occlusion(&self) -> Vec<[f64; 2]> {
+        let n = self.particles.len();
+        let mut occ = vec![[0.0f64; 2]; n];
+        for i in 0..n {
+            let pole = self.particles[i].pole_axis();
+            let a = self.particles[i].position;
+            for (side, dir) in [pole, -pole].into_iter().enumerate() {
+                let mut worst = 0.0f64;
+                for (k, other) in self.particles.iter().enumerate() {
+                    if k == i {
+                        continue;
+                    }
+                    let rel = other.position - a;
+                    let along = rel.dot(dir);
+                    if along <= 0.05 || along >= 3.0 {
+                        continue;
+                    }
+                    let lat = (rel - dir * along).length();
+                    worst = worst.max(((0.8 - lat) / 0.5).clamp(0.0, 1.0));
+                }
+                occ[i][side] = worst;
+            }
+        }
+        occ
+    }
+
     fn compute_forces(&mut self) {
         let n = self.particles.len();
         for p in &mut self.particles {
@@ -1472,6 +1543,103 @@ impl AtomCore {
         buf
     }
 
+    /// Field-extent skin: a translucent surface of revolution whose RADIUS
+    /// at each latitude is the REACH of this profile's charge push — the
+    /// distance where the emission force on a unit test absorber decays to
+    /// the natural force unit (gravity of two unit masses at r=1):
+    ///     C_q·m·E(θ)/r⁴ = 1  ⇒  r(θ) = (C_q·m·E(θ))^¼.
+    /// Opacity carries strength (alpha ∝ E(θ)/E_max). Together these
+    /// restore the wireframe rings' information — how strong, how far — as
+    /// a soft envelope: a proton reads as a wide equatorial ledge
+    /// (~4.7 natural units at C_q=500) pinching down to the body at the
+    /// polar holes, where the skin goes transparent and the intake tornado
+    /// shows through.
+    /// Mesh-local units are PARTICLE RADII (the instance transform scales
+    /// by profile radius, same as the body mesh). Same packing as
+    /// `build_profile_mesh`:
+    /// [vert_count, idx_count, verts(x,y,z,nx,ny,nz,r,g,b,a)…, indices…].
+    pub fn build_field_skin_mesh(
+        &self,
+        profile_id: usize,
+        lon_segments: usize,
+        lat_segments: usize,
+    ) -> Vec<f32> {
+        let prof = match self.profiles.get(profile_id) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+
+        let lon = lon_segments.max(8);
+        let lat = lat_segments.max(4);
+        let rings = lat * 2 + 1;
+        let verts_per_ring = lon + 1;
+        let total_verts = rings * verts_per_ring;
+        let quad_count = (rings - 1) * lon;
+        let total_indices = quad_count * 6;
+
+        let mut buf: Vec<f32> = Vec::with_capacity(2 + total_verts * 10 + total_indices);
+        buf.push(total_verts as f32);
+        buf.push(total_indices as f32);
+
+        let (type_r, type_g, type_b) = profile_color(&prof.name);
+        let render_r = prof.radius.max(MIN_RENDER_RADIUS as f64);
+        let e_max = prof
+            .emission
+            .bins
+            .iter()
+            .fold(0.0f64, |m, &v| m.max(v as f64))
+            .max(1e-6);
+        let cq_m = self.couplings.c_q * prof.mass;
+
+        for lat_idx in 0..rings {
+            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
+            let cos_theta = theta.cos();
+            let sin_theta = theta.sin();
+
+            let emission = prof.emission.sample(cos_theta);
+            // Reach in natural units, clamped to hug the body where the
+            // emission vanishes (the polar holes), then converted to
+            // mesh-local units.
+            let reach = (cq_m * emission).max(0.0).powf(0.25).max(render_r * 1.06);
+            let rho = reach / render_r;
+
+            let strength = (emission / e_max).clamp(0.0, 1.0) as f32;
+            let alpha = 0.03 + 0.20 * strength;
+
+            for lon_idx in 0..=lon {
+                let phi = TAU * lon_idx as f64 / lon as f64;
+                let nx = sin_theta * phi.cos();
+                let ny = cos_theta;
+                let nz = sin_theta * phi.sin();
+
+                buf.extend_from_slice(&[
+                    (rho * nx) as f32,
+                    (rho * ny) as f32,
+                    (rho * nz) as f32,
+                ]);
+                buf.extend_from_slice(&[nx as f32, ny as f32, nz as f32]);
+                buf.extend_from_slice(&[
+                    0.4 + 0.6 * type_r,
+                    0.4 + 0.6 * type_g,
+                    0.4 + 0.6 * type_b,
+                    alpha,
+                ]);
+            }
+        }
+
+        for lat_idx in 0..(rings - 1) {
+            for lon_idx in 0..lon {
+                let tl = (lat_idx * verts_per_ring + lon_idx) as f32;
+                let tr = tl + 1.0;
+                let bl = ((lat_idx + 1) * verts_per_ring + lon_idx) as f32;
+                let br = bl + 1.0;
+                buf.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            }
+        }
+
+        buf
+    }
+
     pub fn count_particles_with_profile(&self, profile_id: usize) -> usize {
         self.particles
             .iter()
@@ -1504,6 +1672,13 @@ impl AtomCore {
         /// track it.
         const ARM_RATE: f64 = 1.6;
         const INTAKE_COLOR: (f32, f32, f32) = (0.30, 0.65, 1.0);
+        /// Tornado mouth height, in emitter radii — matches the old intake
+        /// spawn shell (2.3–2.6 r, just inside the skin's polar pinch).
+        const TORNADO_TOP: f64 = 2.6;
+        /// Swirl revolutions over the descent: base + acceleration term —
+        /// the drain spins up as the funnel necks down.
+        const TORNADO_REVS_BASE: f64 = 0.8;
+        const TORNADO_REVS_ACCEL: f64 = 1.4;
 
         if !self.vfx_enabled || self.particles.is_empty() {
             self.vfx_particles.clear();
@@ -1511,13 +1686,6 @@ impl AtomCore {
         }
 
         self.vfx_time += delta;
-
-        // Age and move existing
-        for vp in &mut self.vfx_particles {
-            vp.age += delta;
-            vp.position += vp.velocity * delta;
-        }
-        self.vfx_particles.retain(|vp| vp.age < vp.lifetime);
 
         // Collect per-particle data to avoid borrow conflicts
         struct Emitter {
@@ -1550,6 +1718,47 @@ impl AtomCore {
             })
             .collect();
 
+        let pole_occ = self.pole_occlusion();
+
+        // Age and move existing. Smoke is ballistic; tornado riders are
+        // kinematic around their emitter's CURRENT pole.
+        for vp in &mut self.vfx_particles {
+            vp.age += delta;
+            match vp.kind {
+                VfxKind::Smoke => vp.position += vp.velocity * delta,
+                VfxKind::Tornado {
+                    emitter,
+                    south,
+                    phase0,
+                    mouth,
+                } => {
+                    if emitter >= emitters.len() {
+                        vp.age = vp.lifetime + 1.0; // emitter gone — cull
+                        continue;
+                    }
+                    let em = &emitters[emitter];
+                    let u = (vp.age / vp.lifetime).clamp(0.0, 1.0);
+                    // Descend from the mouth to the surface (u=1 lands ON
+                    // the surface whatever the jittered lifetime — jitter
+                    // varies descent speed, not the endpoint)…
+                    let s = em.radius * (TORNADO_TOP - (TORNADO_TOP - 1.0) * u);
+                    // …necking from the capture-cone mouth to the channel
+                    // throat…
+                    let taper =
+                        ((s / em.radius - 1.0) / (TORNADO_TOP - 1.0)).clamp(0.0, 1.0);
+                    let rho = mouth * taper.powf(0.65) + 0.06 * em.radius;
+                    // …swirling faster as the drain tightens.
+                    let revs = TORNADO_REVS_BASE * u + TORNADO_REVS_ACCEL * u * u;
+                    let phi = phase0 + em.spin_sign * TAU * revs;
+                    let dir = if south { -em.pole } else { em.pole };
+                    vp.position = em.pos
+                        + dir * s
+                        + (em.right * phi.cos() + em.forward * phi.sin()) * rho;
+                }
+            }
+        }
+        self.vfx_particles.retain(|vp| vp.age < vp.lifetime);
+
         // Fractional spawn counts via random rounding.
         let spawn_count = |rng: &mut Rng, rate: f64| -> usize {
             let x = rate * delta;
@@ -1557,7 +1766,7 @@ impl AtomCore {
             base + usize::from(rng.next_f64() < x.fract())
         };
 
-        for em in &emitters {
+        for (ei, em) in emitters.iter().enumerate() {
             let arm_phase = em.spin_sign * ARM_RATE * self.vfx_time;
 
             // Emission smoke — coherent spiral arms.
@@ -1595,43 +1804,53 @@ impl AtomCore {
                     color: em.color,
                     base_scale: 0.045 * em.radius.max(0.35) as f32,
                     grow: 0.9,
+                    kind: VfxKind::Smoke,
                 });
             }
 
-            // Intake vortex — spawned out in the polar cone, spiraling in.
-            let n_intake = spawn_count(&mut self.rng, INTAKE_PER_SEC);
-            for _ in 0..n_intake {
-                if self.vfx_particles.len() >= MAX_POOL {
-                    break;
+            // Intake tornado — per pole, kinematic funnel riders. Spawn
+            // rate scales with (1 − occlusion): a stoppered channel's
+            // tornado dies out (diatom.pdf — the wall-riding electron or a
+            // sideways baryon blocks the drain).
+            for (side, &occ) in pole_occ[ei].iter().enumerate() {
+                let rate = INTAKE_PER_SEC * 0.5 * (1.0 - occ);
+                let n_intake = spawn_count(&mut self.rng, rate);
+                for _ in 0..n_intake {
+                    if self.vfx_particles.len() >= MAX_POOL {
+                        break;
+                    }
+                    // Funnel mouth radius = where the sampled capture-cone
+                    // angle crosses the mouth height: the tornado's width
+                    // IS the A²-weighted intake cone.
+                    let theta =
+                        self.profiles[em.pid].intake_cdf.sample(self.rng.next_f64());
+                    let mouth = (em.radius * TORNADO_TOP * theta.sin().abs())
+                        .max(0.05 * em.radius);
+                    let phase0 = self.rng.next_f64() * TAU;
+                    let south = side == 1;
+                    let lifetime = (TORNADO_TOP - 1.0) * em.radius / INTAKE_SPEED
+                        * (0.8 + 0.4 * self.rng.next_f64());
+                    let dir = if south { -em.pole } else { em.pole };
+                    self.vfx_particles.push(VfxParticle {
+                        // Mouth position now; kinematic from the next frame.
+                        position: em.pos
+                            + dir * (em.radius * TORNADO_TOP)
+                            + (em.right * phase0.cos() + em.forward * phase0.sin())
+                                * (mouth + 0.06 * em.radius),
+                        velocity: DVec3::ZERO,
+                        age: 0.0,
+                        lifetime,
+                        color: INTAKE_COLOR,
+                        base_scale: 0.04 * em.radius.max(0.35) as f32,
+                        grow: -0.25, // tightens as it falls in
+                        kind: VfxKind::Tornado {
+                            emitter: ei,
+                            south,
+                            phase0,
+                            mouth,
+                        },
+                    });
                 }
-                let theta = self.profiles[em.pid].intake_cdf.sample(self.rng.next_f64());
-                let north = self.rng.next_f64() > 0.5;
-                let phi = self.rng.next_f64() * TAU;
-
-                let cos_t = theta.cos();
-                let sin_t = theta.sin();
-                let local_y = if north { cos_t } else { -cos_t };
-                let dir = em.right * (sin_t * phi.cos())
-                    + em.pole * local_y
-                    + em.forward * (sin_t * phi.sin());
-                let spawn_r = em.radius * 2.3;
-                let tangent = em.pole.cross(dir);
-                let tangent = if tangent.length_squared() > 1e-12 {
-                    tangent.normalize() * em.spin_sign
-                } else {
-                    DVec3::ZERO
-                };
-                // Dies right as it reaches the surface — the drain swallows it.
-                let lifetime = (spawn_r - em.radius) / INTAKE_SPEED;
-                self.vfx_particles.push(VfxParticle {
-                    position: em.pos + dir * spawn_r,
-                    velocity: dir * -INTAKE_SPEED + tangent * (ARM_RATE * em.radius * 0.8),
-                    age: 0.0,
-                    lifetime,
-                    color: INTAKE_COLOR,
-                    base_scale: 0.04 * em.radius.max(0.35) as f32,
-                    grow: -0.35, // tightens as it falls in
-                });
             }
         }
 
@@ -1731,6 +1950,125 @@ fn push_transform_color(
         z.x as f32 * scale, z.y as f32 * scale, z.z as f32 * scale, pos.z as f32,
     ]);
     buf.extend_from_slice(&[color.0, color.1, color.2, alpha]);
+}
+
+// ── Trace-model reorientation ─────────────────────────────────────────────
+
+/// Reorient a saved spin-mode path trace so the pattern's symmetry axis —
+/// the axial hole the body spins around, which in spin mode is the
+/// outermost orbital level's LAB axis (X, Y or Z depending on the stack) —
+/// lands on +Y, the pole axis atom-mode bodies spin about
+/// (`member_spin_phase` / axial spin rotate meshes about local +Y).
+///
+/// The axis is recovered from the data itself, so traces saved before this
+/// fix reorient too: for a surface of revolution the covariance eigenvalue
+/// along the symmetry axis is distinct from the two (equal) transverse
+/// ones — take the eigenvector whose eigenvalue is farthest from the other
+/// two. Works for both oblate (disc) and prolate (spindle) patterns.
+pub fn reorient_trace_to_pole(points: &[DVec3]) -> Vec<DVec3> {
+    if points.len() < 8 {
+        return points.to_vec();
+    }
+    let n = points.len() as f64;
+    let centroid: DVec3 = points.iter().copied().sum::<DVec3>() / n;
+    let mut cov = [[0.0f64; 3]; 3];
+    for p in points {
+        let d = *p - centroid;
+        let v = [d.x, d.y, d.z];
+        for (r, row) in cov.iter_mut().enumerate() {
+            for (c, cell) in row.iter_mut().enumerate() {
+                *cell += v[r] * v[c];
+            }
+        }
+    }
+    let (eigvals, eigvecs) = jacobi_eigen_3x3(cov);
+    // Symmetry axis = the eigenvalue farthest from both others.
+    let mut best = 0usize;
+    let mut best_gap = f64::MIN;
+    for k in 0..3 {
+        let gap = (0..3)
+            .filter(|&j| j != k)
+            .map(|j| (eigvals[k] - eigvals[j]).abs())
+            .fold(f64::MAX, f64::min);
+        if gap > best_gap {
+            best_gap = gap;
+            best = k;
+        }
+    }
+    let mut axis = eigvecs[best];
+    if axis.length_squared() < 1e-12 {
+        return points.to_vec();
+    }
+    axis = axis.normalize();
+    if axis.dot(DVec3::Y) < 0.0 {
+        axis = -axis; // hemisphere choice is free (body of revolution)
+    }
+    let rot = DQuat::from_rotation_arc(axis, DVec3::Y);
+    points.iter().map(|p| rot * *p).collect()
+}
+
+/// Eigen-decomposition of a symmetric 3×3 matrix via cyclic Jacobi
+/// rotations (Numerical Recipes convention). Returns (eigenvalues,
+/// eigenvectors) with `eigenvectors[k]` paired to `eigenvalues[k]`.
+fn jacobi_eigen_3x3(mut a: [[f64; 3]; 3]) -> ([f64; 3], [DVec3; 3]) {
+    fn mat_mul(l: &[[f64; 3]; 3], r: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+        let mut out = [[0.0; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                for (k, lk) in l[i].iter().enumerate() {
+                    out[i][j] += lk * r[k][j];
+                }
+            }
+        }
+        out
+    }
+    let mut v = [[0.0f64; 3]; 3];
+    for (i, row) in v.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    for _ in 0..64 {
+        // Largest off-diagonal element.
+        let (mut p, mut q, mut max) = (0usize, 1usize, 0.0f64);
+        for r in 0..3 {
+            for c in (r + 1)..3 {
+                if a[r][c].abs() > max {
+                    max = a[r][c].abs();
+                    p = r;
+                    q = c;
+                }
+            }
+        }
+        if max < 1e-13 {
+            break;
+        }
+        let tau = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+        let t = tau.signum() / (tau.abs() + (1.0 + tau * tau).sqrt());
+        let c = 1.0 / (1.0 + t * t).sqrt();
+        let s = t * c;
+        let mut j = [[0.0f64; 3]; 3];
+        for (i, row) in j.iter_mut().enumerate() {
+            row[i] = 1.0;
+        }
+        j[p][p] = c;
+        j[q][q] = c;
+        j[p][q] = s;
+        j[q][p] = -s;
+        let jt = [
+            [j[0][0], j[1][0], j[2][0]],
+            [j[0][1], j[1][1], j[2][1]],
+            [j[0][2], j[1][2], j[2][2]],
+        ];
+        a = mat_mul(&mat_mul(&jt, &a), &j);
+        v = mat_mul(&v, &j);
+    }
+    (
+        [a[0][0], a[1][1], a[2][2]],
+        [
+            DVec3::new(v[0][0], v[1][0], v[2][0]),
+            DVec3::new(v[0][1], v[1][1], v[2][1]),
+            DVec3::new(v[0][2], v[1][2], v[2][2]),
+        ],
+    )
 }
 
 // ── Headless CSV loading (tests + atom_lab bin) ──────────────────────────
@@ -1857,5 +2195,164 @@ mod tests {
         let proton = &core.profiles[0];
         assert!(proton.emission.sample(0.0) > 0.5);
         assert!(proton.emission.sample(1.0) < 0.1);
+    }
+
+    /// Oblate (disc) trace wound around the X axis: the hole must land on Y.
+    #[test]
+    fn trace_reorients_disc_hole_to_y() {
+        let mut pts = Vec::new();
+        for i in 0..400 {
+            let a = i as f64 * 0.377;
+            let jig = (((i * 7) % 13) as f64 / 13.0 - 0.5) * 0.3; // thin along X
+            pts.push(DVec3::new(jig, a.cos(), a.sin()));
+        }
+        let out = reorient_trace_to_pole(&pts);
+        let max_y = out.iter().map(|p| p.y.abs()).fold(0.0, f64::max);
+        assert!(max_y < 0.2, "hole axis should land on Y, max|y|={max_y}");
+        let max_ring = out
+            .iter()
+            .map(|p| (p.x * p.x + p.z * p.z).sqrt())
+            .fold(0.0, f64::max);
+        assert!(
+            (max_ring - 1.0).abs() < 0.05,
+            "ring radius should be preserved: {max_ring}"
+        );
+    }
+
+    /// Prolate (spindle) trace along Z: the long axis must land on Y.
+    #[test]
+    fn trace_reorients_spindle_to_y() {
+        let mut pts = Vec::new();
+        for i in 0..400 {
+            let a = i as f64 * 0.377;
+            let h = ((i % 41) as f64 / 40.0 - 0.5) * 4.0; // long along Z
+            pts.push(DVec3::new(0.5 * a.cos(), 0.5 * a.sin(), h));
+        }
+        let out = reorient_trace_to_pole(&pts);
+        let max_y = out.iter().map(|p| p.y.abs()).fold(0.0, f64::max);
+        assert!(max_y > 1.8, "long axis should land on Y, max|y|={max_y}");
+        let max_lat = out
+            .iter()
+            .map(|p| (p.x * p.x + p.z * p.z).sqrt())
+            .fold(0.0, f64::max);
+        assert!(max_lat < 0.6, "transverse spread should stay small: {max_lat}");
+    }
+
+    /// A trace already aligned to Y must come back (near-)unchanged.
+    #[test]
+    fn trace_reorient_is_stable_for_canonical_input() {
+        let mut pts = Vec::new();
+        for i in 0..400 {
+            let a = i as f64 * 0.377;
+            let jig = (((i * 7) % 13) as f64 / 13.0 - 0.5) * 0.3;
+            pts.push(DVec3::new(a.cos(), jig, a.sin()));
+        }
+        let out = reorient_trace_to_pole(&pts);
+        // Data-driven axis recovery on jittered data is exact only to
+        // ~milliradians — "stable" means no visible rotation, not bitwise.
+        for (a, b) in pts.iter().zip(&out) {
+            assert!(
+                (*a - *b).length() < 0.01,
+                "canonical trace moved: {a:?} -> {b:?}"
+            );
+        }
+    }
+
+    /// The wall-riding electron geometry (r=1.3, θ≈11°) must fully occlude
+    /// the pole it rides and leave the far pole open.
+    #[test]
+    fn pole_occlusion_stoppers_ridden_pole_only() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let e_csv = load_histogram_csv(&dir.join("histogram_electron.csv"));
+        let p_id = core.register_profile("proton", 1.0, 1.0, &p_csv);
+        let e_id = core.register_profile("electron", 1.0 / 1836.0, 0.3, &e_csv);
+        core.spawn_particle(p_id, DVec3::ZERO, DVec3::ZERO, DVec3::Y);
+        // Rider over the +Y pole at the session-28 orbit geometry.
+        core.spawn_particle(e_id, DVec3::new(0.248, 1.276, 0.0), DVec3::ZERO, DVec3::Y);
+        let occ = core.pole_occlusion();
+        assert!(
+            occ[0][0] > 0.9,
+            "north pole should be stoppered by the rider: {:?}",
+            occ[0]
+        );
+        assert!(
+            occ[0][1] < 1e-9,
+            "south pole should stay open: {:?}",
+            occ[0]
+        );
+    }
+
+    /// The VFX link: a stoppered pole spawns NO tornado riders, the open
+    /// pole keeps its tornado.
+    #[test]
+    fn tornado_dies_on_stoppered_pole() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let e_csv = load_histogram_csv(&dir.join("histogram_electron.csv"));
+        let p_id = core.register_profile("proton", 1.0, 1.0, &p_csv);
+        let e_id = core.register_profile("electron", 1.0 / 1836.0, 0.3, &e_csv);
+        core.spawn_particle(p_id, DVec3::ZERO, DVec3::ZERO, DVec3::Y);
+        core.spawn_particle(e_id, DVec3::new(0.248, 1.276, 0.0), DVec3::ZERO, DVec3::Y);
+        for _ in 0..60 {
+            core.advance_clouds(1.0 / 60.0);
+        }
+        let (mut north, mut south) = (0usize, 0usize);
+        for vp in &core.vfx_particles {
+            if let VfxKind::Tornado {
+                emitter: 0,
+                south: s,
+                ..
+            } = vp.kind
+            {
+                if s {
+                    south += 1;
+                } else {
+                    north += 1;
+                }
+            }
+        }
+        assert_eq!(north, 0, "stoppered north pole must not spawn tornado riders");
+        assert!(south > 0, "open south pole should have an active tornado");
+    }
+
+    /// Skin radius carries the reach law r(θ) = (C_q·m·E(θ))^¼, clamped to
+    /// hug the body at the polar holes.
+    #[test]
+    fn field_skin_reach_matches_quarter_power_law() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let p_id = core.register_profile("proton", 1.0, 1.0, &p_csv);
+        let (lon, lat) = (16usize, 8usize);
+        let buf = core.build_field_skin_mesh(p_id, lon, lat);
+        let rings = lat * 2 + 1;
+        let verts_per_ring = lon + 1;
+        assert_eq!(buf[0] as usize, rings * verts_per_ring);
+
+        let vert_pos = |ring: usize| -> DVec3 {
+            let o = 2 + ring * verts_per_ring * 10;
+            DVec3::new(buf[o] as f64, buf[o + 1] as f64, buf[o + 2] as f64)
+        };
+        // Equator (middle ring): reach = (C_q · E_eq)^¼ in particle radii.
+        let e_eq = core.profiles[p_id].emission.sample(0.0);
+        let expected = (core.couplings.c_q * e_eq).powf(0.25);
+        let rho_eq = vert_pos(rings / 2).length();
+        assert!(
+            (rho_eq - expected).abs() < 0.02 * expected,
+            "equator reach {rho_eq} != (C_q·E)^¼ = {expected}"
+        );
+        // Pole: emission ≈ 0 ⇒ skin hugs the body.
+        let rho_pole = vert_pos(0).length();
+        assert!(
+            rho_pole < 1.5,
+            "polar skin should pinch to the body, got {rho_pole}"
+        );
+        assert!(
+            rho_eq > 3.0 * rho_pole,
+            "skin must read as a wide equatorial ledge: eq={rho_eq} pole={rho_pole}"
+        );
     }
 }

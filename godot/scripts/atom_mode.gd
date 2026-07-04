@@ -14,6 +14,7 @@ var tuning_panel: CanvasLayer
 
 var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
+var skin_renderers := {}  # "proton" -> MultiMeshInstance3D (field-extent skin)
 var substeps_per_frame := 100
 var paused := false
 var show_clouds := true          # emission smoke + intake vortex clouds
@@ -78,6 +79,16 @@ func _create_envelope_renderers():
 	envelope_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	envelope_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
+	# Field-extent skin: soft translucent reach envelope (radius = charge
+	# push reach, opacity = emission strength) — the wireframe rings'
+	# information, layered over the body. Drawn after the body.
+	var skin_mat := StandardMaterial3D.new()
+	skin_mat.vertex_color_use_as_albedo = true
+	skin_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	skin_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	skin_mat.render_priority = 1
+
 	for type_name in profile_ids:
 		var pid: int = profile_ids[type_name]
 		# A trace model saved from spin mode ("Save Model") replaces the
@@ -96,6 +107,18 @@ func _create_envelope_renderers():
 		mmi.multimesh = mm
 		add_child(mmi)
 		type_renderers[type_name] = mmi
+
+		var skin_buf: PackedFloat32Array = atom_sim.build_field_skin_mesh(pid, 48, 24)
+		var skin_mm := MultiMesh.new()
+		skin_mm.transform_format = MultiMesh.TRANSFORM_3D
+		skin_mm.use_colors = true
+		skin_mm.mesh = _build_array_mesh(skin_buf, skin_mat)
+
+		var skin_mmi := MultiMeshInstance3D.new()
+		skin_mmi.multimesh = skin_mm
+		skin_mmi.visible = show_clouds
+		add_child(skin_mmi)
+		skin_renderers[type_name] = skin_mmi
 
 ## Load a normalized spin-mode path trace (user://trace_models/<type>.csv)
 ## as a line-strip mesh in local units of the particle radius, or null.
@@ -120,6 +143,13 @@ func _try_load_trace_mesh(type_name: String, mat: Material) -> ArrayMesh:
 			verts.append(Vector3(float(parts[0]), float(parts[1]), float(parts[2])))
 	if verts.size() < 2:
 		return null
+
+	# Align the trace's symmetry axis (its axial hole) with local +Y — the
+	# pole axis the body spins about in atom mode. Spin-mode traces come out
+	# in the lab frame of the outermost orbital level, which varies by type.
+	var oriented: PackedVector3Array = atom_sim.reorient_trace_points(verts)
+	if oriented.size() == verts.size():
+		verts = oriented
 
 	var type_colors := {
 		"proton": Color(0.92, 0.30, 0.20),
@@ -345,6 +375,9 @@ func _process(_delta):
 func set_clouds(on: bool) -> void:
 	show_clouds = on
 	atom_sim.set_vfx_enabled(on)
+	# The field-extent skins are part of the same visualization family.
+	for type_name in skin_renderers:
+		skin_renderers[type_name].visible = on
 
 func _update_clouds(delta: float) -> void:
 	# Clouds keep swirling while paused — they're visualization, not physics.
@@ -402,18 +435,26 @@ func _unhandled_key_input(event: InputEvent):
 # ── Rendering ──────────────────────────────────────────────────────────
 
 func _update_rendering():
-	# Per-type envelope mesh rendering
+	# Per-type envelope mesh rendering (the field-extent skin rides the
+	# same instance transforms as the body).
 	for type_name in type_renderers:
 		var pid: int = profile_ids[type_name]
 		var count: int = atom_sim.count_particles_with_profile(pid)
 		var mmi: MultiMeshInstance3D = type_renderers[type_name]
+		var skin: MultiMeshInstance3D = skin_renderers.get(type_name)
 		if count == 0:
 			mmi.multimesh.instance_count = 0
+			if skin:
+				skin.multimesh.instance_count = 0
 			continue
 		if mmi.multimesh.instance_count != count:
 			mmi.multimesh.instance_count = count
 		var buf: PackedFloat32Array = atom_sim.build_multimesh_buffer_for_profile(pid)
 		mmi.multimesh.set_buffer(buf)
+		if skin and skin.visible:
+			if skin.multimesh.instance_count != count:
+				skin.multimesh.instance_count = count
+			skin.multimesh.set_buffer(buf)
 
 	# Pole indicator lines (debug — hidden by default; the Christmas
 	# ornaments are retired)

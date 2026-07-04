@@ -616,6 +616,50 @@ mod tests {
                 _ => unreachable!(),
             };
             assert_eq!(members.len(), expected, "{name} constituent count");
+
+            // Polar plug geometry (session-29 corrections): every non-alpha
+            // plug nucleon sits EDGE-ON to the stack (pole ⊥ Y), and
+            // oxygen's plugs come as side-by-side proton+neutron pairs.
+            let cons = crate::atom_core::preset_constituents(name).unwrap();
+            match name {
+                "nitrogen" => {
+                    for c in &cons[12..14] {
+                        assert!(
+                            c.local_pole.dot(DVec3::Y).abs() < 1e-9,
+                            "nitrogen plug {} must be edge-on to the stack",
+                            c.profile_name
+                        );
+                    }
+                }
+                "oxygen" => {
+                    for c in &cons[12..16] {
+                        assert!(
+                            c.local_pole.dot(DVec3::Y).abs() < 1e-9,
+                            "oxygen plug {} must be edge-on to the stack",
+                            c.profile_name
+                        );
+                    }
+                    for pair in [[12usize, 13], [14, 15]] {
+                        let (a, b) = (&cons[pair[0]], &cons[pair[1]]);
+                        assert_eq!(a.profile_name, "proton", "pair leads with proton");
+                        assert_eq!(b.profile_name, "neutron", "pair pairs a neutron");
+                        assert!(
+                            (a.local_pos.y - b.local_pos.y).abs() < 1e-9,
+                            "pair must sit at the same height (side by side)"
+                        );
+                        assert!(
+                            (a.local_pos - b.local_pos).length() > 0.5,
+                            "pair members must sit beside each other, not overlap"
+                        );
+                        assert!(
+                            (a.local_pole - b.local_pole).length() < 1e-9,
+                            "pair members must be parallel to each other"
+                        );
+                    }
+                }
+                _ => {}
+            }
+
             let initial = pair_dists(&core, &members[..4.min(members.len())]);
             core.step_n(50_000);
             let after = pair_dists(&core, &members[..4.min(members.len())]);
