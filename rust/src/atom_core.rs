@@ -154,6 +154,13 @@ pub struct SimParticle {
     /// Index into AtomCore::groups when this particle is a rigid-composite
     /// constituent (nuclear preset); None for free particles.
     pub group: Option<usize>,
+    /// VISIBLE axial-spin phase (rad) about the pole, advanced in wall
+    /// clock by `advance_display` at a readable rate. The PHYSICAL axial
+    /// spin (TAU·3 rad/sim-s) lives in `angular_velocity`/`orientation`,
+    /// but rendering strips that twist and applies this instead —
+    /// otherwise visible rotation strobes and scales with the substep
+    /// count (session-29 "time scaling" report).
+    pub display_spin_phase: f64,
 }
 
 impl SimParticle {
@@ -270,6 +277,44 @@ const PLUG_PAIR_GAP: f64 = 0.55;
 /// sockets").
 const CAROUSEL_R: f64 = 3.1;
 
+/// Connector alpha: mounted SIDEWAYS on the stack axis between the center
+/// and a cap — facing like the polar plugs (edge-on, its disc feeding the
+/// axial channel), riding the carousel rotation and spinning on its own
+/// pole (nuclear.pdf Argon: "Level 3a is the posts up and down" — the
+/// session-29 diagram reading has them turned 90° to the core).
+fn sideways_alpha(y: f64) -> Vec<Constituent> {
+    vec![
+        Constituent {
+            profile_name: "proton",
+            local_pos: DVec3::new(-0.9, y, 0.0),
+            local_pole: DVec3::X,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "proton",
+            local_pos: DVec3::new(0.9, y, 0.0),
+            local_pole: DVec3::X,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: DVec3::new(0.0, y - 0.5, 0.0),
+            local_pole: DVec3::X,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+        Constituent {
+            profile_name: "neutron",
+            local_pos: DVec3::new(0.0, y + 0.5, 0.0),
+            local_pole: DVec3::X,
+            spin_sign: 1.0,
+            carousel: true,
+        },
+    ]
+}
+
 /// One alpha mounted ON THE CAROUSEL at azimuth `phi_deg`: its stack axis
 /// points RADIALLY (the center disk's equatorial output feeds this alpha's
 /// axial hole — nuclear.pdf's first carousel configuration, Neon), and the
@@ -373,13 +418,15 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // disk — "nine disks... Level one is the center disk. Level two
         // consists of the four carousel disks. Level 3a is the posts up
         // and down. Level 3b is the caps top and bottom" (nuclear.pdf).
+        // The connectors (3a) sit SIDEWAYS like the polar plugs; the caps
+        // (3b) are parallel to the core.
         "argon" => Some(
             [
-                alpha_block(-2.0 * ALPHA_PITCH), // cap
-                alpha_block(-ALPHA_PITCH),       // post
-                alpha_block(0.0),                // center
-                alpha_block(ALPHA_PITCH),        // post
-                alpha_block(2.0 * ALPHA_PITCH),  // cap
+                alpha_block(-2.0 * ALPHA_PITCH),    // cap (parallel to core)
+                sideways_alpha(-ALPHA_PITCH),       // connector (edge-on)
+                alpha_block(0.0),                   // center
+                sideways_alpha(ALPHA_PITCH),        // connector (edge-on)
+                alpha_block(2.0 * ALPHA_PITCH),     // cap
                 carousel_alpha(0.0),
                 carousel_alpha(90.0),
                 carousel_alpha(180.0),
@@ -433,6 +480,21 @@ pub struct RigidGroup {
     /// (ring radius, y) per alpha block: where each alpha's disc meets the
     /// reach surface. Feeds the ring overlay and the flow disc exits.
     pub disc_exits: Vec<(f64, f64)>,
+    /// Skin segments: the nucleus is fused from distinct pieces (axial
+    /// stacks, sideways connectors/plugs, the carousel level), and each
+    /// draws its OWN shell — a single averaged envelope smears them into
+    /// an uninformative blob (session-29 user note on Neon).
+    pub skin_segments: Vec<SkinSegment>,
+}
+
+/// One piece of a nucleus for skin purposes.
+pub struct SkinSegment {
+    /// Member indices (k into members/local_offsets/local_orients).
+    pub members: Vec<usize>,
+    /// Lathe center (group-local y); carousel segment sits at 0.
+    pub y_center: f64,
+    /// The equatorial carousel level (drawn as the wide disc).
+    pub carousel: bool,
 }
 
 /// Samples in a group's stored `skin_reach` table.
@@ -450,6 +512,15 @@ pub fn reach_at_theta(table: &[f64], theta: f64) -> f64 {
     let i = (t as usize).min(table.len() - 2);
     let frac = t - i as f64;
     table[i] * (1.0 - frac) + table[i + 1] * frac
+}
+
+/// One member as a charge-field source (group-local), for skin marching.
+struct FieldSrc {
+    pos: DVec3,
+    pole: DVec3,
+    mass: f64,
+    radius: f64,
+    profile: usize,
 }
 
 // ── VFX Particle (charge emission sprinkler) ─────────────────────────────
@@ -507,6 +578,13 @@ pub const ANGULAR_DAMPING: f64 = 0.998;
 /// Torques still act, so slow molecular alignment remains possible; the
 /// steady state is ω ≈ τ/(I·RELAX).
 pub const GROUP_SPIN_RELAX: f64 = 20.0;
+/// VISIBLE axial-spin rate of bodies (rad/s WALL clock — substep
+/// independent), far below the physical TAU·3 rad/sim-s so the eye can
+/// track it. Applied via display_spin_phase at render time. Initial
+/// phases are randomized so members don't turn in lockstep.
+pub const DISPLAY_SPIN_RATE: f64 = 0.9;
+/// VISIBLE carousel ride rate (rad/s WALL clock).
+pub const CAROUSEL_VIS_RATE: f64 = 0.35;
 pub const MIN_RENDER_RADIUS: f32 = 0.15;
 pub const ENVELOPE_MIN_R: f64 = 0.25;
 pub const CONTACT_STIFFNESS: f64 = 100.0;
@@ -704,6 +782,8 @@ impl AtomCore {
         }
         let orientation = orientation_from_pole(pole_dir);
         let pole = orientation * DVec3::Y;
+        // Random display phase so bodies never turn in lockstep.
+        let phase0 = self.rng.next_f64() * TAU;
 
         let id = self.particles.len();
         self.particles.push(SimParticle {
@@ -715,6 +795,7 @@ impl AtomCore {
             force_accum: DVec3::ZERO,
             torque_accum: DVec3::ZERO,
             group: None,
+            display_spin_phase: phase0,
         });
         Some(id)
     }
@@ -759,18 +840,24 @@ impl AtomCore {
         }
 
         let n_members = members.len();
+        // Random display phases: members and nuclei must not turn in
+        // lockstep (the "synchronized ballet", session-29).
+        let member_spin_phase: Vec<f64> = (0..n_members)
+            .map(|_| self.rng.next_f64() * TAU)
+            .collect();
+        let carousel_phase = self.rng.next_f64() * TAU;
         self.groups.push(RigidGroup {
             members,
             local_offsets,
             local_orients,
             member_spin,
-            member_spin_phase: vec![0.0; n_members],
+            member_spin_phase,
             carousel,
-            // Posts ride the disc outputs — they roll in time with the
-            // proton spin (oxygen.pdf: the neutrons keep the protons from
-            // turning by rolling with them, cohering the two fields).
-            carousel_rate: default_spin_rate("proton"),
-            carousel_phase: 0.0,
+            // Posts ride the disc outputs (oxygen.pdf: the neutrons keep
+            // the protons from turning by rolling with them). DISPLAY
+            // rate — wall clock, readable, substep independent.
+            carousel_rate: CAROUSEL_VIS_RATE,
+            carousel_phase,
             com: pos,
             velocity: vel,
             orientation,
@@ -779,13 +866,72 @@ impl AtomCore {
             inertia: inertia.max(1e-9),
             skin_reach: Vec::new(),
             disc_exits: Vec::new(),
+            skin_segments: Vec::new(),
         });
         self.sync_group_members(gid);
         let reach = self.compute_group_reach(gid, SKIN_REACH_RINGS);
         self.groups[gid].skin_reach = reach;
         let exits = self.compute_disc_exits(gid);
         self.groups[gid].disc_exits = exits;
+        let segments = self.compute_skin_segments(gid);
+        self.groups[gid].skin_segments = segments;
         Some(gid)
+    }
+
+    /// Split a group into skin segments: carousel members (lateral > 1.5)
+    /// form one segment; the rest cluster along the axis with a gap
+    /// threshold that keeps a contiguous alpha stack together (intra-stack
+    /// member gaps ≤ 0.9) but splits center/connector/cap pieces (gaps
+    /// ≥ 1.2). Polar plugs merge into their end's cluster (gap 0.9).
+    pub fn compute_skin_segments(&self, group_idx: usize) -> Vec<SkinSegment> {
+        const SEG_GAP: f64 = 1.05;
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        let mut carousel: Vec<usize> = Vec::new();
+        let mut axial: Vec<(f64, usize)> = Vec::new();
+        for (k, off) in g.local_offsets.iter().enumerate() {
+            let lateral = (off.x * off.x + off.z * off.z).sqrt();
+            if lateral > 1.5 {
+                carousel.push(k);
+            } else {
+                axial.push((off.y, k));
+            }
+        }
+        axial.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut segments: Vec<SkinSegment> = Vec::new();
+        let mut cluster: Vec<(f64, usize)> = Vec::new();
+        let flush = |cluster: &mut Vec<(f64, usize)>, segments: &mut Vec<SkinSegment>| {
+            if cluster.is_empty() {
+                return;
+            }
+            let y_center =
+                cluster.iter().map(|c| c.0).sum::<f64>() / cluster.len() as f64;
+            segments.push(SkinSegment {
+                members: cluster.iter().map(|c| c.1).collect(),
+                y_center,
+                carousel: false,
+            });
+            cluster.clear();
+        };
+        for (y, k) in axial {
+            if let Some(&(last_y, _)) = cluster.last() {
+                if y - last_y > SEG_GAP {
+                    flush(&mut cluster, &mut segments);
+                }
+            }
+            cluster.push((y, k));
+        }
+        flush(&mut cluster, &mut segments);
+        if !carousel.is_empty() {
+            segments.push(SkinSegment {
+                members: carousel,
+                y_center: 0.0,
+                carousel: true,
+            });
+        }
+        segments
     }
 
     /// Reposition a group's members from the group frame and give them the
@@ -823,14 +969,14 @@ impl AtomCore {
             let world_off = orientation * local_off;
             let p = &mut self.particles[ms.id];
             p.position = com + world_off;
-            // Rigid frame × (carousel ride) × constituent frame ×
-            // accumulated axial spin — members visibly rotate about their
-            // own poles, and carousel riders ROLL around the stack axis
-            // (their orientation tracks the ride, so an edge-on plug keeps
-            // facing its partner all the way around).
+            // Rigid frame × (carousel ride) × constituent frame. Carousel
+            // riders ROLL around the stack axis (their orientation tracks
+            // the ride, so an edge-on plug keeps facing its partner all
+            // the way around). The member's own axial spin is a DISPLAY
+            // phase applied at render time (render_orientation).
             let member_orient = if ms.carousel { car_rot * ms.orient } else { ms.orient };
-            p.orientation =
-                (orientation * member_orient * DQuat::from_rotation_y(ms.spin_phase)).normalize();
+            p.orientation = (orientation * member_orient).normalize();
+            p.display_spin_phase = ms.spin_phase;
             p.velocity = vel + omega.cross(world_off);
             if ms.carousel {
                 p.velocity += car_omega.cross(world_off);
@@ -840,6 +986,35 @@ impl AtomCore {
             if ms.carousel {
                 p.angular_velocity += car_omega;
             }
+        }
+    }
+
+    /// Advance the VISIBLE kinematic rotations by wall-clock `delta`:
+    /// member axial-spin phases, the carousel ride, and free particles'
+    /// display twist. These run at readable DISPLAY rates, deliberately
+    /// far below the physical spin (TAU·3 rad/sim-s) and INDEPENDENT of
+    /// the substep count — substeps scale physics time, not how fast the
+    /// bodies visibly turn.
+    pub fn advance_display(&mut self, delta: f64) {
+        for p in &mut self.particles {
+            if p.group.is_none() {
+                let pole = p.pole_axis();
+                let sign = p.angular_velocity.dot(pole).signum();
+                p.display_spin_phase =
+                    (p.display_spin_phase + sign * DISPLAY_SPIN_RATE * delta) % TAU;
+            }
+        }
+        for gi in 0..self.groups.len() {
+            {
+                let g = &mut self.groups[gi];
+                g.carousel_phase = (g.carousel_phase + g.carousel_rate * delta) % TAU;
+                for k in 0..g.member_spin_phase.len() {
+                    g.member_spin_phase[k] = (g.member_spin_phase[k]
+                        + g.member_spin[k].signum() * DISPLAY_SPIN_RATE * delta)
+                        % TAU;
+                }
+            }
+            self.sync_group_members(gi);
         }
     }
 
@@ -1141,12 +1316,9 @@ impl AtomCore {
                     let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
                     g.orientation = (rot * g.orientation).normalize();
                 }
-                // Kinematic phases: carousel ride + member axial spins.
-                g.carousel_phase = (g.carousel_phase + g.carousel_rate * dt) % TAU;
-                for k in 0..g.member_spin_phase.len() {
-                    g.member_spin_phase[k] =
-                        (g.member_spin_phase[k] + g.member_spin[k] * dt) % TAU;
-                }
+                // Kinematic display phases (carousel ride, member axial
+                // spins) advance in WALL CLOCK via advance_display(), not
+                // here — visible rotation must not scale with substeps.
             }
             self.sync_group_members(gi);
         }
@@ -1879,30 +2051,17 @@ impl AtomCore {
         buf
     }
 
-    /// March the group's summed charge push outward to find its reach
-    /// surface (the composite-skin boundary): azimuth-averaged reach per
-    /// polar angle, group-local frame, never dipping inside the member
-    /// bodies' silhouette. Called once at spawn (the group is rigid) and
-    /// stored as `RigidGroup::skin_reach`.
-    pub fn compute_group_reach(&self, group_idx: usize, rings: usize) -> Vec<f64> {
-        let g = match self.groups.get(group_idx) {
-            Some(g) => g,
-            None => return Vec::new(),
+    /// Field sources for a subset of a group's members, group-local.
+    fn segment_sources(&self, group_idx: usize, members: Option<&[usize]>) -> Vec<FieldSrc> {
+        let g = &self.groups[group_idx];
+        let pick: Vec<usize> = match members {
+            Some(m) => m.to_vec(),
+            None => (0..g.members.len()).collect(),
         };
-        struct Src {
-            pos: DVec3,
-            pole: DVec3,
-            mass: f64,
-            radius: f64,
-            profile: usize,
-        }
-        let srcs: Vec<Src> = g
-            .members
-            .iter()
-            .enumerate()
-            .map(|(k, &pid)| {
-                let profile = self.particles[pid].profile_id;
-                Src {
+        pick.iter()
+            .map(|&k| {
+                let profile = self.particles[g.members[k]].profile_id;
+                FieldSrc {
                     pos: g.local_offsets[k],
                     pole: g.local_orients[k] * DVec3::Y,
                     mass: self.profiles[profile].mass,
@@ -1910,12 +2069,17 @@ impl AtomCore {
                     profile,
                 }
             })
-            .collect();
+            .collect()
+    }
 
+    /// March a set of member fields outward from `center` to find the
+    /// reach surface (azimuth-averaged reach per polar angle, never
+    /// dipping inside the members' silhouette).
+    fn march_reach(&self, srcs: &[FieldSrc], center: DVec3, rings: usize) -> Vec<f64> {
         let cq = self.couplings.c_q;
         let push = |x: DVec3| -> f64 {
             let mut f = DVec3::ZERO;
-            for s in &srcs {
+            for s in srcs {
                 let d_vec = x - s.pos;
                 let r = d_vec.length().max(SOFTENING);
                 let d_hat = d_vec / r;
@@ -1941,10 +2105,10 @@ impl AtomCore {
                 let dir = DVec3::new(sin_t * phi.cos(), cos_t, sin_t * phi.sin());
                 let hull = srcs
                     .iter()
-                    .map(|s| s.pos.dot(dir) + s.radius)
+                    .map(|s| (s.pos - center).dot(dir) + s.radius)
                     .fold(0.3f64, f64::max);
                 let mut r = hull;
-                while r < R_MAX && push(dir * r) >= F_REF {
+                while r < R_MAX && push(center + dir * r) >= F_REF {
                     r += DR;
                 }
                 sum += r;
@@ -1954,83 +2118,231 @@ impl AtomCore {
         reach
     }
 
-    /// Composite nucleus skin: the reach envelope of a WHOLE rigid group —
-    /// the surface where the group's SUMMED charge push on a unit absorber
-    /// falls to the natural force unit (same F=1 reference as the free
-    /// skin), from the group's stored `skin_reach` table. Fused
-    /// constituents draw no individual skins (they recycle as one unit);
-    /// this is the field the locked configuration projects instead.
-    /// GROUP-LOCAL units — render it riding the group transform, unscaled.
-    /// Gold, to read as "one fused unit" against the per-type skins of
-    /// free particles. Same packing as `build_profile_mesh`.
+    /// Whole-group azimuth-averaged reach from the group center — feeds
+    /// the flow-parcel exits and the disc-exit ring solve. (The SKIN is
+    /// drawn per segment instead; see build_group_skin_mesh.)
+    pub fn compute_group_reach(&self, group_idx: usize, rings: usize) -> Vec<f64> {
+        if self.groups.get(group_idx).is_none() {
+            return Vec::new();
+        }
+        let srcs = self.segment_sources(group_idx, None);
+        self.march_reach(&srcs, DVec3::ZERO, rings)
+    }
+
+    /// Nucleus skin: ONE connected height-profile lathe. At each height y
+    /// the radius is how far the nucleus's SUMMED charge push reaches
+    /// RADIALLY (azimuth-averaged, F = 1 threshold, silhouette-clamped).
+    /// This merges the fused pieces into a single readable envelope:
+    /// alpha stacks bulge into discs, sideways connectors waist thin
+    /// (they don't emit radially), the carousel level flares into the
+    /// wide disc, and the poles taper off past the stack tips — no
+    /// overlapping shells burying the interior (session-29). GROUP-LOCAL
+    /// units — render riding the group transform, unscaled. Gold. Same
+    /// packing as `build_profile_mesh`.
     pub fn build_group_skin_mesh(
         &self,
         group_idx: usize,
         lon_segments: usize,
         lat_segments: usize,
     ) -> Vec<f32> {
-        let g = match self.groups.get(group_idx) {
-            Some(g) => g,
-            None => return Vec::new(),
-        };
+        if self.groups.get(group_idx).is_none() {
+            return Vec::new();
+        }
+        let srcs = self.segment_sources(group_idx, None);
+        if srcs.is_empty() {
+            return Vec::new();
+        }
         let lon = lon_segments.max(8);
-        let lat = lat_segments.max(4);
-        let rings = lat * 2 + 1;
+        let rows = lat_segments.max(4) * 2 + 1;
         let verts_per_ring = lon + 1;
-        let total_verts = rings * verts_per_ring;
-        let total_indices = (rings - 1) * lon * 6;
 
-        let table = if g.skin_reach.len() >= 2 {
-            g.skin_reach.clone()
-        } else {
-            self.compute_group_reach(group_idx, SKIN_REACH_RINGS)
+        // Stack extent + polar pads: the envelope closes where the axial
+        // push dies off past the tips.
+        let (mut y_top, mut y_bot) = (f64::MIN, f64::MAX);
+        for s in &srcs {
+            y_top = y_top.max(s.pos.y + s.radius);
+            y_bot = y_bot.min(s.pos.y - s.radius);
+        }
+        let cq = self.couplings.c_q;
+        let push = |x: DVec3| -> f64 {
+            let mut f = DVec3::ZERO;
+            for s in &srcs {
+                let d_vec = x - s.pos;
+                let r = d_vec.length().max(SOFTENING);
+                let d_hat = d_vec / r;
+                let e = self.profiles[s.profile].emission.sample(s.pole.dot(d_hat));
+                f += d_hat * (cq * s.mass * e / (r * r * r * r));
+            }
+            f.length()
         };
-        let reach: Vec<f64> = (0..rings)
-            .map(|lat_idx| {
-                let theta =
-                    std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
-                reach_at_theta(&table, theta)
-            })
-            .collect();
-        let reach_max = reach.iter().fold(1e-6f64, |m, &v| v.max(m));
+        // Az-averaged radial reach at a given height.
+        let radial_reach = |y: f64, az_samples: usize| -> f64 {
+            let origin = DVec3::new(0.0, y, 0.0);
+            let mut sum = 0.0;
+            for az in 0..az_samples {
+                let phi = TAU * az as f64 / az_samples as f64;
+                let dir = DVec3::new(phi.cos(), 0.0, phi.sin());
+                let hull = srcs
+                    .iter()
+                    .map(|s| (s.pos - origin).dot(dir) + s.radius)
+                    .fold(0.25f64, f64::max);
+                let mut r = hull;
+                while r < 40.0 && push(origin + dir * r) >= 1.0 {
+                    r += 0.08;
+                }
+                sum += r;
+            }
+            sum / az_samples as f64
+        };
 
+        // The envelope closes where the RADIAL reach itself collapses —
+        // NOT at the axial-push distance (the pole axis has E ≈ 0, so an
+        // axial probe dies immediately and would chop the dome mid-width).
+        let mut y_hi = y_top;
+        while y_hi < y_top + 14.0 && radial_reach(y_hi, 4) > 0.8 {
+            y_hi += 0.5;
+        }
+        let mut y_lo = y_bot;
+        while y_lo > y_bot - 14.0 && radial_reach(y_lo, 4) > 0.8 {
+            y_lo -= 0.5;
+        }
+
+        let mut radii = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let y = y_hi + (y_lo - y_hi) * row as f64 / (rows - 1) as f64;
+            radii.push(radial_reach(y, 8));
+        }
+        let r_max = radii.iter().fold(1e-6f64, |m, &v| v.max(m));
+
+        const GOLD: (f32, f32, f32) = (0.95, 0.80, 0.50);
+        let total_verts = rows * verts_per_ring;
+        let total_indices = (rows - 1) * lon * 6;
         let mut buf: Vec<f32> = Vec::with_capacity(2 + total_verts * 10 + total_indices);
         buf.push(total_verts as f32);
         buf.push(total_indices as f32);
-
-        const GOLD: (f32, f32, f32) = (0.95, 0.80, 0.50);
-        for (lat_idx, &rho) in reach.iter().enumerate() {
-            let theta = std::f64::consts::PI * lat_idx as f64 / (rings - 1).max(1) as f64;
-            let (sin_t, cos_t) = (theta.sin(), theta.cos());
-            // reach ∝ F^¼ ⇒ reach⁴ recovers the field-strength analog the
-            // free skin maps to opacity.
-            let strength = ((rho / reach_max).powi(4)).clamp(0.0, 1.0) as f32;
-            let alpha = 0.03 + 0.20 * strength;
+        for (row, &rho) in radii.iter().enumerate() {
+            let y = y_hi + (y_lo - y_hi) * row as f64 / (rows - 1) as f64;
+            // reach ∝ F^¼; square it for the opacity cue — waists stay
+            // faintly visible, discs glow.
+            let strength = ((rho / r_max).powi(2)).clamp(0.0, 1.0) as f32;
+            let alpha = 0.03 + 0.14 * strength;
             for lon_idx in 0..=lon {
                 let phi = TAU * lon_idx as f64 / lon as f64;
-                let nx = sin_t * phi.cos();
-                let ny = cos_t;
-                let nz = sin_t * phi.sin();
+                let (nx, nz) = (phi.cos(), phi.sin());
                 buf.extend_from_slice(&[
                     (rho * nx) as f32,
-                    (rho * ny) as f32,
+                    y as f32,
                     (rho * nz) as f32,
                 ]);
-                buf.extend_from_slice(&[nx as f32, ny as f32, nz as f32]);
+                buf.extend_from_slice(&[nx as f32, 0.0, nz as f32]);
                 buf.extend_from_slice(&[GOLD.0, GOLD.1, GOLD.2, alpha]);
             }
         }
-
-        for lat_idx in 0..(rings - 1) {
+        for row in 0..(rows - 1) {
             for lon_idx in 0..lon {
-                let tl = (lat_idx * verts_per_ring + lon_idx) as f32;
+                let tl = (row * verts_per_ring + lon_idx) as f32;
                 let tr = tl + 1.0;
-                let bl = ((lat_idx + 1) * verts_per_ring + lon_idx) as f32;
+                let bl = ((row + 1) * verts_per_ring + lon_idx) as f32;
                 let br = bl + 1.0;
                 buf.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
             }
         }
+        buf
+    }
 
+    /// Carousel dispersal overlay: one circle per carousel unit, plane ⊥
+    /// the unit's radial axis, radius = how far that unit's field reaches
+    /// perpendicular to the main disc — "4 protruding circles following
+    /// the outside parts". Group-local at carousel phase 0; render in a
+    /// child node rotated by get_group_carousel_phase. Packed like
+    /// emission rings: [ring_count, pts_per_ring, xyz…].
+    pub fn build_group_carousel_overlay(&self, group_idx: usize) -> Vec<f32> {
+        const PTS: usize = 49;
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+        let carousel_members: Vec<usize> = match g
+            .skin_segments
+            .iter()
+            .find(|s| s.carousel)
+        {
+            Some(s) => s.members.clone(),
+            None => return Vec::new(),
+        };
+        // Cluster into units by azimuth.
+        let mut by_az: Vec<(f64, usize)> = carousel_members
+            .iter()
+            .map(|&k| {
+                let o = g.local_offsets[k];
+                (o.z.atan2(o.x), k)
+            })
+            .collect();
+        by_az.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut units: Vec<Vec<usize>> = Vec::new();
+        let mut last_az = f64::NAN;
+        for (az, k) in by_az {
+            if units.is_empty() || (az - last_az).abs() > 0.6 {
+                units.push(vec![k]);
+            } else {
+                units.last_mut().unwrap().push(k);
+            }
+            last_az = az;
+        }
+        if units.is_empty() {
+            return Vec::new();
+        }
+        let mut buf: Vec<f32> = vec![units.len() as f32, PTS as f32];
+        for unit in &units {
+            let center = unit
+                .iter()
+                .map(|&k| g.local_offsets[k])
+                .sum::<DVec3>()
+                / unit.len() as f64;
+            let u = DVec3::new(center.x, 0.0, center.z).normalize_or_zero();
+            if u.length_squared() < 0.5 {
+                continue;
+            }
+            let w = u.cross(DVec3::Y).normalize();
+            // Perpendicular dispersal reach: march this unit's field in
+            // the plane ⊥ its axis, average 4 directions.
+            let srcs = self.segment_sources(group_idx, Some(unit));
+            let mut r_disp = 0.0;
+            for dir in [DVec3::Y, -DVec3::Y, w, -w] {
+                let hull = srcs
+                    .iter()
+                    .map(|s| (s.pos - center).dot(dir) + s.radius)
+                    .fold(0.3f64, f64::max);
+                let cq = self.couplings.c_q;
+                let mut r = hull;
+                while r < 40.0 {
+                    let x = center + dir * r;
+                    let mut f = DVec3::ZERO;
+                    for s in &srcs {
+                        let d_vec = x - s.pos;
+                        let rr = d_vec.length().max(SOFTENING);
+                        let d_hat = d_vec / rr;
+                        let e =
+                            self.profiles[s.profile].emission.sample(s.pole.dot(d_hat));
+                        f += d_hat * (cq * s.mass * e / (rr * rr * rr * rr));
+                    }
+                    if f.length() < 1.0 {
+                        break;
+                    }
+                    r += 0.1;
+                }
+                r_disp += r;
+            }
+            r_disp /= 4.0;
+            for p in 0..PTS {
+                let a = TAU * p as f64 / (PTS - 1) as f64;
+                let pt = center + (DVec3::Y * a.cos() + w * a.sin()) * r_disp;
+                buf.extend_from_slice(&[pt.x as f32, pt.y as f32, pt.z as f32]);
+            }
+        }
+        if buf.len() <= 2 {
+            return Vec::new();
+        }
         buf
     }
 
@@ -2685,16 +2997,30 @@ fn flow_free_loop(
     let phi0 = rng.next_f64() * TAU;
     let top = 2.6 * radius;
     let mouth = (top * theta_in.sin()).max(0.1 * radius);
+    // Impact parameter: the exit angle picks how deep through the body the
+    // parcel bores — polar exits pass through the middle, equatorial exits
+    // ride the outer bore and deflect. Flow spans the WHOLE diameter, not
+    // a few-pixel core.
+    let b = 0.8 * radius * (theta_out / FRAC_PI_2).clamp(0.0, 1.0).powf(0.7);
+    let phi_b = phi0 + spin * 2.2;
     for k in 0..4 {
         let f = k as f64 / 3.0;
         let h = top - (top - radius) * f;
         let taper = ((h / radius - 1.0) / 1.6).clamp(0.0, 1.0);
-        let rho = mouth * taper.powf(0.65) + 0.05 * radius;
+        let rho = b + (mouth - b).max(0.0) * taper.powf(0.65) + 0.03 * radius;
         let phi = phi0 + spin * 2.2 * f;
         raw.push(DVec3::new(rho * phi.cos(), entry * h, rho * phi.sin()));
     }
-    raw.push(DVec3::new(0.0, entry * 0.45 * radius, 0.0));
-    raw.push(DVec3::new(0.0, -entry * 0.55 * radius, 0.0));
+    raw.push(DVec3::new(
+        b * phi_b.cos(),
+        entry * 0.45 * radius,
+        b * phi_b.sin(),
+    ));
+    raw.push(DVec3::new(
+        b * phi_b.cos(),
+        -entry * 0.55 * radius,
+        b * phi_b.sin(),
+    ));
     let phi_e = phi0 + spin * 2.9;
     let (st, ct) = (theta_out.sin(), theta_out.cos());
     for j in 0..4 {
@@ -2717,10 +3043,11 @@ fn flow_capture(rng: &mut Rng, tip_y: f64, entry: f64, radius: f64) -> (Vec<DVec
     let mut raw: Vec<DVec3> = Vec::with_capacity(7);
     let phi0 = rng.next_f64() * TAU;
     let mouth = radius * (0.5 + 0.8 * rng.next_f64());
+    let b = rng.next_f64() * 0.45 * radius;
     for k in 0..3 {
         let f = k as f64 / 2.0;
         let h = tip_y + entry * radius * (1.9 - 1.5 * f);
-        let rho = mouth * (1.0 - f) + 0.10 * radius;
+        let rho = b + (mouth - b).max(0.0) * (1.0 - f) + 0.05 * radius;
         let phi = phi0 + 1.8 * f;
         raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
     }
@@ -2743,13 +3070,14 @@ fn push_group_entry(
     rng: &mut Rng,
     entry: f64,
     tip_y: f64,
+    b: f64,
     side_feed: bool,
 ) -> f64 {
     let phi0 = rng.next_f64() * TAU;
     if side_feed {
         for k in 0..3 {
             let f = k as f64 / 2.0;
-            let rho = 2.9 - 2.3 * f;
+            let rho = b + (2.9 - b) * (1.0 - f);
             let h = tip_y + entry * (0.2 - 0.5 * f);
             let phi = phi0 + 1.6 * f;
             raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
@@ -2759,7 +3087,7 @@ fn push_group_entry(
         for k in 0..3 {
             let f = k as f64 / 2.0;
             let h = tip_y + entry * (1.9 - 1.7 * f);
-            let rho = mouth * (1.0 - f) + 0.08;
+            let rho = b + (mouth - b).max(0.0) * (1.0 - f) + 0.04;
             let phi = phi0 + 2.0 * f;
             raw.push(DVec3::new(rho * phi.cos(), h, rho * phi.sin()));
         }
@@ -2779,20 +3107,28 @@ fn flow_group_through(
     side_feed: bool,
 ) -> (Vec<DVec3>, f64) {
     let mut raw: Vec<DVec3> = Vec::with_capacity(8);
-    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, side_feed);
-    raw.push(DVec3::new(0.0, (tip_y + far_tip_y) * 0.5, 0.0));
-    raw.push(DVec3::new(0.0, far_tip_y, 0.0));
-    let out_r = reach_out.max(far_tip_y.abs() + 1.2);
-    let phi_e = phi0 + 0.8;
+    // Bore radius inside the stack hole — the channel fills the whole
+    // hole, not a hairline on the axis.
+    let b = rng.next_f64().sqrt() * 0.55;
+    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, b, side_feed);
+    let phi_b = phi0 + 2.4;
     raw.push(DVec3::new(
-        0.12 * phi_e.cos(),
+        b * phi_b.cos(),
+        (tip_y + far_tip_y) * 0.5,
+        b * phi_b.sin(),
+    ));
+    raw.push(DVec3::new(b * phi_b.cos(), far_tip_y, b * phi_b.sin()));
+    let out_r = reach_out.max(far_tip_y.abs() + 1.2);
+    let phi_e = phi_b + 0.8;
+    raw.push(DVec3::new(
+        (b * 0.7 + 0.1) * phi_e.cos(),
         far_tip_y - entry * 0.6,
-        0.12 * phi_e.sin(),
+        (b * 0.7 + 0.1) * phi_e.sin(),
     ));
     raw.push(DVec3::new(
-        0.18 * (phi_e + 0.7).cos(),
+        (b * 0.7 + 0.15) * (phi_e + 0.7).cos(),
         -entry * out_r,
-        0.18 * (phi_e + 0.7).sin(),
+        (b * 0.7 + 0.15) * (phi_e + 0.7).sin(),
     ));
     resample_polyline_uniform(&raw, 16)
 }
@@ -2808,9 +3144,15 @@ fn flow_group_disc(
     side_feed: bool,
 ) -> (Vec<DVec3>, f64) {
     let mut raw: Vec<DVec3> = Vec::with_capacity(9);
-    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, side_feed);
-    raw.push(DVec3::new(0.0, (tip_y + ring_y) * 0.5, 0.0));
-    raw.push(DVec3::new(0.0, ring_y, 0.0));
+    let b = rng.next_f64().sqrt() * 0.55;
+    let phi0 = push_group_entry(&mut raw, rng, entry, tip_y, b, side_feed);
+    let phi_b = phi0 + 2.4;
+    raw.push(DVec3::new(
+        b * phi_b.cos(),
+        (tip_y + ring_y) * 0.5,
+        b * phi_b.sin(),
+    ));
+    raw.push(DVec3::new(b * phi_b.cos(), ring_y, b * phi_b.sin()));
     let yj = ring_y + (rng.next_f64() - 0.5) * 0.3;
     let phi_e = phi0 + 2.6;
     for j in 0..3 {
@@ -2844,6 +3186,22 @@ pub fn profile_color(name: &str) -> (f32, f32, f32) {
     }
 }
 
+/// Render orientation: physics orientation with its fast axial twist
+/// stripped (swing–twist decomposition about body Y) and the wall-clock
+/// display spin applied instead. Pole direction is untouched; only the
+/// rotation ABOUT the pole is replaced — the force model never reads that
+/// twist (E/A are symmetric about the pole), so this is purely visual.
+fn render_orientation(p: &SimParticle) -> DQuat {
+    let q = p.orientation;
+    let twist = DQuat::from_xyzw(0.0, q.y, 0.0, q.w);
+    let swing = if twist.length_squared() > 1e-12 {
+        q * twist.normalize().inverse()
+    } else {
+        q
+    };
+    (swing * DQuat::from_rotation_y(p.display_spin_phase)).normalize()
+}
+
 fn push_transform_color(
     buf: &mut Vec<f32>,
     p: &SimParticle,
@@ -2852,9 +3210,10 @@ fn push_transform_color(
     alpha: f32,
 ) {
     let pos = p.position;
-    let x = p.orientation * DVec3::X;
-    let y = p.orientation * DVec3::Y;
-    let z = p.orientation * DVec3::Z;
+    let rq = render_orientation(p);
+    let x = rq * DVec3::X;
+    let y = rq * DVec3::Y;
+    let z = rq * DVec3::Z;
 
     buf.extend_from_slice(&[
         x.x as f32 * scale, x.y as f32 * scale, x.z as f32 * scale, pos.x as f32,
@@ -2916,7 +3275,10 @@ pub fn reorient_trace_to_pole(points: &[DVec3]) -> Vec<DVec3> {
         axis = -axis; // hemisphere choice is free (body of revolution)
     }
     let rot = DQuat::from_rotation_arc(axis, DVec3::Y);
-    points.iter().map(|p| rot * *p).collect()
+    // CENTER the pattern on the spin axis: an off-center trace hula-hoops
+    // around the pole when the display spin turns it — that was the
+    // "twirling in place" / synchronized-ballet report (session-29).
+    points.iter().map(|p| rot * (*p - centroid)).collect()
 }
 
 /// Eigen-decomposition of a symmetric 3×3 matrix via cyclic Jacobi
@@ -3150,13 +3512,16 @@ mod tests {
         assert!(max_lat < 0.6, "transverse spread should stay small: {max_lat}");
     }
 
-    /// A trace already aligned to Y must come back (near-)unchanged.
+    /// A trace already aligned to Y (and centered) must come back
+    /// (near-)unchanged.
     #[test]
     fn trace_reorient_is_stable_for_canonical_input() {
         let mut pts = Vec::new();
         for i in 0..400 {
             let a = i as f64 * 0.377;
-            let jig = (((i * 7) % 13) as f64 / 13.0 - 0.5) * 0.3;
+            // Zero-mean jitter: the reorient now CENTERS the pattern, so
+            // a biased jig would read as an intentional shift.
+            let jig = (((i * 7) % 13) as f64 / 12.0 - 0.5) * 0.3;
             pts.push(DVec3::new(a.cos(), jig, a.sin()));
         }
         let out = reorient_trace_to_pole(&pts);
@@ -3335,7 +3700,79 @@ mod tests {
         core.spawn_preset("argon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("argon preset");
         let rings = core.build_group_emission_rings(0);
-        assert_eq!(rings[0] as usize, 5, "argon = five axial alphas, five rings");
+        assert_eq!(
+            rings[0] as usize,
+            3,
+            "argon = center + two caps axial (connectors are sideways), three rings"
+        );
+    }
+
+    /// Display rotations are WALL-clock: physics stepping must not move
+    /// the carousel or spin phases (that's what made visible speed scale
+    /// with the substep count), advance_display must.
+    #[test]
+    fn display_phases_are_wall_clock() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        core.running = true;
+        let car0 = core.groups[0].carousel_phase;
+        let spin0 = core.groups[0].member_spin_phase[0];
+        core.step_n(2000);
+        assert_eq!(
+            core.groups[0].carousel_phase, car0,
+            "sim steps must not advance the carousel"
+        );
+        assert_eq!(core.groups[0].member_spin_phase[0], spin0);
+        core.advance_display(0.5);
+        assert!(
+            (core.groups[0].carousel_phase - car0).abs() > 1e-6,
+            "advance_display should ride the carousel"
+        );
+        assert!((core.groups[0].member_spin_phase[0] - spin0).abs() > 1e-6);
+    }
+
+    /// Skin segmentation: carbon reads as ONE tube; neon = center +
+    /// carousel; argon = center, 2 connectors, 2 caps, carousel.
+    #[test]
+    fn skin_segments_match_structure() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon");
+        assert_eq!(core.groups[0].skin_segments.len(), 1, "carbon = one tube");
+
+        core.clear_particles();
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon");
+        let segs = &core.groups[0].skin_segments;
+        assert_eq!(segs.len(), 2, "neon = center + carousel");
+        assert_eq!(segs.iter().filter(|s| s.carousel).count(), 1);
+
+        core.clear_particles();
+        core.spawn_preset("argon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("argon");
+        let segs = &core.groups[0].skin_segments;
+        assert_eq!(
+            segs.len(),
+            6,
+            "argon = 2 caps + 2 connectors + center + carousel"
+        );
+        assert_eq!(segs.iter().filter(|s| s.carousel).count(), 1);
+        // Carousel overlay: four dispersal circles riding the ride.
+        let overlay = core.build_group_carousel_overlay(0);
+        assert!(!overlay.is_empty(), "argon carousel should have an overlay");
+        assert_eq!(overlay[0] as usize, 4, "four carousel units, four circles");
     }
 
     /// Composite alpha skin: a sane lathe whose equatorial reach exceeds a
@@ -3352,14 +3789,18 @@ mod tests {
             .expect("alpha preset");
         let (lon, lat) = (16usize, 8usize);
         let buf = core.build_group_skin_mesh(0, lon, lat);
-        let rings = lat * 2 + 1;
+        // Height-profile lathe: lat·2+1 uniform rows from above the top
+        // tip to below the bottom tip.
+        let rows = lat * 2 + 1;
         let vpr = lon + 1;
-        assert_eq!(buf[0] as usize, rings * vpr);
-        let ring_r = |ring: usize| -> f64 {
-            let o = 2 + ring * vpr * 10;
-            DVec3::new(buf[o] as f64, buf[o + 1] as f64, buf[o + 2] as f64).length()
+        assert_eq!(buf[0] as usize, rows * vpr);
+        let row_radius = |row: usize| -> f64 {
+            let o = 2 + row * vpr * 10;
+            ((buf[o] as f64).powi(2) + (buf[o + 2] as f64).powi(2)).sqrt()
         };
-        let eq = ring_r(rings / 2);
+        // Middle row = equator (rows symmetric about y=0 for the alpha):
+        // the group's radial reach must exceed a single free proton's.
+        let eq = row_radius(rows / 2);
         let single =
             (core.couplings.c_q * core.profiles[p_id].emission.sample(0.0)).powf(0.25);
         assert!(
@@ -3367,10 +3808,13 @@ mod tests {
             "alpha equator reach {eq} should exceed a single proton's {single}"
         );
         assert!(eq < 12.0, "alpha equator reach implausibly large: {eq}");
-        for ring in 0..rings {
-            let r = ring_r(ring);
-            assert!(r.is_finite() && r < 40.0, "ring {ring} reach bad: {r}");
-        }
+        // Poles taper off past the tips — no fat cylinder.
+        assert!(
+            row_radius(0) < eq * 0.4 && row_radius(rows - 1) < eq * 0.4,
+            "skin must taper at the poles: top={} bottom={} eq={eq}",
+            row_radius(0),
+            row_radius(rows - 1)
+        );
     }
 
     /// Fused constituents draw no free-field skin: an alpha (2p+2n) plus

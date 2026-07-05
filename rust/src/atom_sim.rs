@@ -519,6 +519,31 @@ impl AtomSim {
         packed(&self.core.build_group_emission_rings(group_idx.max(0) as usize))
     }
 
+    /// Carousel dispersal circles (group-local, carousel phase 0) —
+    /// render in a child node rotated by get_group_carousel_phase.
+    #[func]
+    fn build_group_carousel_overlay(&self, group_idx: i32) -> PackedFloat32Array {
+        packed(&self.core.build_group_carousel_overlay(group_idx.max(0) as usize))
+    }
+
+    /// Current carousel ride angle (rad) of a group.
+    #[func]
+    fn get_group_carousel_phase(&self, group_idx: i32) -> f64 {
+        self.core
+            .groups
+            .get(group_idx.max(0) as usize)
+            .map(|g| g.carousel_phase)
+            .unwrap_or(0.0)
+    }
+
+    /// Advance the VISIBLE kinematic rotations (member spins, carousel,
+    /// free-particle display twist) by wall-clock seconds — call once per
+    /// rendered frame; substep count does not affect these.
+    #[func]
+    fn advance_display(&mut self, delta: f64) {
+        self.core.advance_display(delta);
+    }
+
     /// Detected molecular bonds as a flat [i0, j0, i1, j1, …] index array.
     #[func]
     fn get_bond_pairs(&self) -> PackedInt32Array {

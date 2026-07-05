@@ -74,7 +74,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb: InputEventMouseButton = event
 		match mb.button_index:
 			MOUSE_BUTTON_LEFT:
-				_rotating = mb.pressed
+				# Shift+LMB pans (alias for MMB drag); plain LMB orbits.
+				if mb.pressed and mb.shift_pressed:
+					_panning = true
+					_rotating = false
+				else:
+					_rotating = mb.pressed
+					if not mb.pressed:
+						_panning = false
 				if mb.pressed:
 					_kill_snap()
 			MOUSE_BUTTON_MIDDLE:

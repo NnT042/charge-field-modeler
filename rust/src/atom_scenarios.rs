@@ -669,12 +669,16 @@ mod tests {
                 _ => {}
             }
 
-            let initial = pair_dists(&core, &members[..4.min(members.len())]);
+            let probe = &members[..8.min(members.len())];
+            let initial = pair_dists(&core, probe);
             // Big carousel presets (Ne/Ar) pay O(n²) per step — a shorter
             // run keeps the ~10 s test gate while still proving rigidity.
             let steps = if expected > 16 { 10_000 } else { 50_000 };
             core.step_n(steps);
-            let after = pair_dists(&core, &members[..4.min(members.len())]);
+            // Ride the carousel too: rigidity must hold under the display
+            // rotation (all off-axis members share one phase).
+            core.advance_display(0.8);
+            let after = pair_dists(&core, probe);
             for (a, b) in initial.iter().zip(&after) {
                 assert!((a - b).abs() < 1e-9, "{name} rigidity violated");
             }

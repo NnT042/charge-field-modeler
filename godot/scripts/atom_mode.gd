@@ -16,6 +16,7 @@ var profile_ids := {}  # "proton" -> int
 var type_renderers := {}  # "proton" -> MultiMeshInstance3D
 var skin_renderers := {}  # "proton" -> MultiMeshInstance3D (field-extent skin)
 var group_skins: Array[MeshInstance3D] = []  # composite nucleus skins, one per rigid group
+var group_skin_overlays: Array = []  # carousel dispersal circles (or null), ride the carousel
 var _group_skins_dirty := false
 var _skin_mat: StandardMaterial3D
 var _ring_mat: StandardMaterial3D  # max-emission rings on the gold skin
@@ -395,6 +396,9 @@ func _draw_force_profiles() -> void:
 func _process(_delta):
 	if not paused and atom_sim.is_running():
 		atom_sim.step_n(substeps_per_frame)
+	# Visible rotations (member spin, carousel) advance in WALL clock —
+	# substeps scale physics, not how fast bodies visibly turn.
+	atom_sim.advance_display(_delta)
 	_update_rendering()
 	_update_clouds(_delta)
 	_draw_force_profiles()
@@ -535,6 +539,7 @@ func _update_group_skins() -> void:
 		for mi in group_skins:
 			mi.queue_free()
 		group_skins.clear()
+		group_skin_overlays.clear()
 		for gi in range(gcount):
 			var buf: PackedFloat32Array = atom_sim.build_group_skin_mesh(gi, 48, 24)
 			var mi := MeshInstance3D.new()
@@ -543,9 +548,40 @@ func _update_group_skins() -> void:
 			mi.mesh = mesh
 			add_child(mi)
 			group_skins.append(mi)
+			# Carousel dispersal circles ride the carousel: child node
+			# rotated by the carousel phase each frame.
+			var overlay: MeshInstance3D = null
+			var obuf: PackedFloat32Array = atom_sim.build_group_carousel_overlay(gi)
+			if obuf.size() > 2:
+				overlay = MeshInstance3D.new()
+				overlay.mesh = _build_ring_lines_mesh(obuf)
+				mi.add_child(overlay)
+			group_skin_overlays.append(overlay)
 	for gi in range(group_skins.size()):
 		group_skins[gi].visible = show_clouds
 		group_skins[gi].transform = atom_sim.get_group_transform(gi)
+		var overlay = group_skin_overlays[gi]
+		if overlay:
+			overlay.rotation = Vector3(0.0, atom_sim.get_group_carousel_phase(gi), 0.0)
+
+## Build a line-strip mesh from a packed ring buffer
+## [ring_count, pts_per_ring, xyz…] with the ring material.
+func _build_ring_lines_mesh(rbuf: PackedFloat32Array) -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var nrings := int(rbuf[0])
+	var ppr := int(rbuf[1])
+	for r in range(nrings):
+		var verts := PackedVector3Array()
+		verts.resize(ppr)
+		for v in range(ppr):
+			var o := 2 + (r * ppr + v) * 3
+			verts[v] = Vector3(rbuf[o], rbuf[o + 1], rbuf[o + 2])
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)
+	return mesh
 
 ## Add the per-alpha max-emission ring circles (bright gold lines on the
 ## skin surface) as extra line-strip surfaces of the skin mesh.
