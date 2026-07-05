@@ -154,13 +154,16 @@ pub struct SimParticle {
     /// Index into AtomCore::groups when this particle is a rigid-composite
     /// constituent (nuclear preset); None for free particles.
     pub group: Option<usize>,
-    /// VISIBLE axial-spin phase (rad) about the pole, advanced in wall
-    /// clock by `advance_display` at a readable rate. The PHYSICAL axial
-    /// spin (TAU·3 rad/sim-s) lives in `angular_velocity`/`orientation`,
-    /// but rendering strips that twist and applies this instead —
-    /// otherwise visible rotation strobes and scales with the substep
-    /// count (session-29 "time scaling" report).
+    /// VISIBLE axial-spin phase (rad) about the pole for GROUP members,
+    /// advanced in wall clock by `advance_display` at a readable rate and
+    /// applied directly in the rigid composition (orientation ∘ rotY(φ)).
     pub display_spin_phase: f64,
+    /// Render frame for FREE particles: its Y axis smoothly tracks the
+    /// physics pole (incremental parallel transport — no swing–twist
+    /// extraction, which is singular near 180° configurations and made
+    /// bodies flip wildly, session-29), while spinning about the pole at
+    /// the readable display rate. Physics orientation is untouched.
+    pub display_orientation: DQuat,
 }
 
 impl SimParticle {
@@ -796,6 +799,7 @@ impl AtomCore {
             torque_accum: DVec3::ZERO,
             group: None,
             display_spin_phase: phase0,
+            display_orientation: (orientation * DQuat::from_rotation_y(phase0)).normalize(),
         });
         Some(id)
     }
@@ -998,10 +1002,17 @@ impl AtomCore {
     pub fn advance_display(&mut self, delta: f64) {
         for p in &mut self.particles {
             if p.group.is_none() {
+                // Parallel-transport the render frame: nudge its Y onto
+                // the current physics pole (consecutive poles are close,
+                // so from_rotation_arc is stable), then spin about the
+                // pole at the display rate.
                 let pole = p.pole_axis();
+                let cur_y = (p.display_orientation * DVec3::Y).normalize();
+                let align = DQuat::from_rotation_arc(cur_y, pole);
                 let sign = p.angular_velocity.dot(pole).signum();
-                p.display_spin_phase =
-                    (p.display_spin_phase + sign * DISPLAY_SPIN_RATE * delta) % TAU;
+                let spin =
+                    DQuat::from_axis_angle(pole, sign * DISPLAY_SPIN_RATE * delta);
+                p.display_orientation = (spin * align * p.display_orientation).normalize();
             }
         }
         for gi in 0..self.groups.len() {
@@ -2129,124 +2140,211 @@ impl AtomCore {
         self.march_reach(&srcs, DVec3::ZERO, rings)
     }
 
-    /// Nucleus skin: ONE connected height-profile lathe. At each height y
-    /// the radius is how far the nucleus's SUMMED charge push reaches
-    /// RADIALLY (azimuth-averaged, F = 1 threshold, silhouette-clamped).
-    /// This merges the fused pieces into a single readable envelope:
-    /// alpha stacks bulge into discs, sideways connectors waist thin
-    /// (they don't emit radially), the carousel level flares into the
-    /// wide disc, and the poles taper off past the stack tips — no
-    /// overlapping shells burying the interior (session-29). GROUP-LOCAL
-    /// units — render riding the group transform, unscaled. Gold. Same
-    /// packing as `build_profile_mesh`.
+    /// Per-piece skin BANDS: every fused piece draws a THICK DISC clipped
+    /// to its own axial extent — no funnels or outer latitudes where a
+    /// neighbor continues the structure (those buried the interior and a
+    /// total-field lathe blurs into a blob, since a neighboring disc's
+    /// 1/r⁴ tail fills every waist). Only the OUTERMOST pieces close with
+    /// their own domes; the carousel level flares into the wide
+    /// equatorial disc. Each band's radius is that piece's OWN radial
+    /// reach (az-averaged, F = 1), so each disc/alpha can be picked out
+    /// and its effect followed (session-29 rounds 6–8). GROUP-LOCAL
+    /// units, gold, same packing as `build_profile_mesh` (disjoint bands
+    /// in one surface).
     pub fn build_group_skin_mesh(
         &self,
         group_idx: usize,
         lon_segments: usize,
-        lat_segments: usize,
+        _lat_segments: usize,
     ) -> Vec<f32> {
-        if self.groups.get(group_idx).is_none() {
-            return Vec::new();
-        }
-        let srcs = self.segment_sources(group_idx, None);
-        if srcs.is_empty() {
-            return Vec::new();
-        }
-        let lon = lon_segments.max(8);
-        let rows = lat_segments.max(4) * 2 + 1;
-        let verts_per_ring = lon + 1;
-
-        // Stack extent + polar pads: the envelope closes where the axial
-        // push dies off past the tips.
-        let (mut y_top, mut y_bot) = (f64::MIN, f64::MAX);
-        for s in &srcs {
-            y_top = y_top.max(s.pos.y + s.radius);
-            y_bot = y_bot.min(s.pos.y - s.radius);
-        }
-        let cq = self.couplings.c_q;
-        let push = |x: DVec3| -> f64 {
-            let mut f = DVec3::ZERO;
-            for s in &srcs {
-                let d_vec = x - s.pos;
-                let r = d_vec.length().max(SOFTENING);
-                let d_hat = d_vec / r;
-                let e = self.profiles[s.profile].emission.sample(s.pole.dot(d_hat));
-                f += d_hat * (cq * s.mass * e / (r * r * r * r));
-            }
-            f.length()
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
         };
-        // Az-averaged radial reach at a given height.
-        let radial_reach = |y: f64, az_samples: usize| -> f64 {
+        let lon = lon_segments.max(8);
+        let verts_per_ring = lon + 1;
+        const N_IN: usize = 7; // interior rows per band
+        const DOME_STEP: f64 = 0.45;
+        const DOME_MAX: usize = 14;
+        const AZ: usize = 10;
+
+        let segs: Vec<(Vec<usize>, bool)> = if g.skin_segments.is_empty() {
+            vec![((0..g.members.len()).collect(), false)]
+        } else {
+            g.skin_segments
+                .iter()
+                .map(|s| (s.members.clone(), s.carousel))
+                .collect()
+        };
+
+        struct Piece {
+            srcs: Vec<FieldSrc>,
+            lo: f64,
+            hi: f64,
+            carousel: bool,
+            y_center: f64,
+        }
+        let mut pieces: Vec<Piece> = Vec::new();
+        for (members, carousel) in &segs {
+            let srcs = self.segment_sources(group_idx, Some(members));
+            if srcs.is_empty() {
+                continue;
+            }
+            let (mut lo, mut hi, mut yc) = (f64::MAX, f64::MIN, 0.0);
+            for s in &srcs {
+                lo = lo.min(s.pos.y - s.radius - 0.3);
+                hi = hi.max(s.pos.y + s.radius + 0.3);
+                yc += s.pos.y;
+            }
+            yc /= srcs.len() as f64;
+            pieces.push(Piece {
+                srcs,
+                lo,
+                hi,
+                carousel: *carousel,
+                y_center: yc,
+            });
+        }
+        if pieces.is_empty() {
+            return Vec::new();
+        }
+
+        let cq = self.couplings.c_q;
+        // Az-averaged radial reach of ONE piece's field at height y.
+        let radial_reach = |srcs: &[FieldSrc], y: f64| -> f64 {
             let origin = DVec3::new(0.0, y, 0.0);
             let mut sum = 0.0;
-            for az in 0..az_samples {
-                let phi = TAU * az as f64 / az_samples as f64;
+            for az in 0..AZ {
+                let phi = TAU * az as f64 / AZ as f64;
                 let dir = DVec3::new(phi.cos(), 0.0, phi.sin());
                 let hull = srcs
                     .iter()
                     .map(|s| (s.pos - origin).dot(dir) + s.radius)
                     .fold(0.25f64, f64::max);
                 let mut r = hull;
-                while r < 40.0 && push(origin + dir * r) >= 1.0 {
+                'march: while r < 40.0 {
+                    let x = origin + dir * r;
+                    let mut f = DVec3::ZERO;
+                    for s in srcs {
+                        let d_vec = x - s.pos;
+                        let rr = d_vec.length().max(SOFTENING);
+                        let d_hat = d_vec / rr;
+                        let e =
+                            self.profiles[s.profile].emission.sample(s.pole.dot(d_hat));
+                        f += d_hat * (cq * s.mass * e / (rr * rr * rr * rr));
+                    }
+                    if f.length() < 1.0 {
+                        break 'march;
+                    }
                     r += 0.08;
                 }
                 sum += r;
             }
-            sum / az_samples as f64
+            sum / AZ as f64
         };
 
-        // The envelope closes where the RADIAL reach itself collapses —
-        // NOT at the axial-push distance (the pole axis has E ≈ 0, so an
-        // axial probe dies immediately and would chop the dome mid-width).
-        let mut y_hi = y_top;
-        while y_hi < y_top + 14.0 && radial_reach(y_hi, 4) > 0.8 {
-            y_hi += 0.5;
-        }
-        let mut y_lo = y_bot;
-        while y_lo > y_bot - 14.0 && radial_reach(y_lo, 4) > 0.8 {
-            y_lo -= 0.5;
+        // Which axial pieces are outermost (get domes)?
+        let mut top_piece = None;
+        let mut bot_piece = None;
+        for (i, p) in pieces.iter().enumerate() {
+            if p.carousel {
+                continue;
+            }
+            if top_piece.map_or(true, |t: usize| p.y_center > pieces[t].y_center) {
+                top_piece = Some(i);
+            }
+            if bot_piece.map_or(true, |b: usize| p.y_center < pieces[b].y_center) {
+                bot_piece = Some(i);
+            }
         }
 
-        let mut radii = Vec::with_capacity(rows);
-        for row in 0..rows {
-            let y = y_hi + (y_lo - y_hi) * row as f64 / (rows - 1) as f64;
-            radii.push(radial_reach(y, 8));
+        // Collect (y, radius) rows per band, top-to-bottom per band.
+        let mut band_rows: Vec<Vec<(f64, f64)>> = Vec::new();
+        for (i, p) in pieces.iter().enumerate() {
+            let mut rows: Vec<(f64, f64)> = Vec::new();
+            if !p.carousel && top_piece == Some(i) {
+                // Dome above: rows ascend until the piece's own reach
+                // collapses, then a small apex row closes the shell.
+                let mut ext: Vec<(f64, f64)> = Vec::new();
+                let mut y = p.hi + DOME_STEP;
+                while ext.len() < DOME_MAX {
+                    let r = radial_reach(&p.srcs, y);
+                    if r <= 1.0 {
+                        break;
+                    }
+                    ext.push((y, r));
+                    y += DOME_STEP;
+                }
+                ext.push((y, 0.3)); // apex
+                ext.reverse();
+                rows.extend(ext);
+            }
+            for k in 0..N_IN {
+                let y = p.hi + (p.lo - p.hi) * k as f64 / (N_IN - 1) as f64;
+                rows.push((y, radial_reach(&p.srcs, y)));
+            }
+            if !p.carousel && bot_piece == Some(i) {
+                let mut y = p.lo - DOME_STEP;
+                let mut n = 0;
+                while n < DOME_MAX {
+                    let r = radial_reach(&p.srcs, y);
+                    if r <= 1.0 {
+                        break;
+                    }
+                    rows.push((y, r));
+                    y -= DOME_STEP;
+                    n += 1;
+                }
+                rows.push((y, 0.3)); // apex
+            }
+            band_rows.push(rows);
         }
-        let r_max = radii.iter().fold(1e-6f64, |m, &v| v.max(m));
+
+        let r_max = band_rows
+            .iter()
+            .flatten()
+            .fold(1e-6f64, |m, &(_, r)| r.max(m));
 
         const GOLD: (f32, f32, f32) = (0.95, 0.80, 0.50);
-        let total_verts = rows * verts_per_ring;
-        let total_indices = (rows - 1) * lon * 6;
-        let mut buf: Vec<f32> = Vec::with_capacity(2 + total_verts * 10 + total_indices);
-        buf.push(total_verts as f32);
-        buf.push(total_indices as f32);
-        for (row, &rho) in radii.iter().enumerate() {
-            let y = y_hi + (y_lo - y_hi) * row as f64 / (rows - 1) as f64;
-            // reach ∝ F^¼; square it for the opacity cue — waists stay
-            // faintly visible, discs glow.
-            let strength = ((rho / r_max).powi(2)).clamp(0.0, 1.0) as f32;
-            let alpha = 0.03 + 0.14 * strength;
-            for lon_idx in 0..=lon {
-                let phi = TAU * lon_idx as f64 / lon as f64;
-                let (nx, nz) = (phi.cos(), phi.sin());
-                buf.extend_from_slice(&[
-                    (rho * nx) as f32,
-                    y as f32,
-                    (rho * nz) as f32,
-                ]);
-                buf.extend_from_slice(&[nx as f32, 0.0, nz as f32]);
-                buf.extend_from_slice(&[GOLD.0, GOLD.1, GOLD.2, alpha]);
+        let mut verts: Vec<f32> = Vec::new();
+        let mut indices: Vec<f32> = Vec::new();
+        let mut vert_base = 0usize;
+        for rows in &band_rows {
+            if rows.len() < 2 {
+                continue;
             }
-        }
-        for row in 0..(rows - 1) {
-            for lon_idx in 0..lon {
-                let tl = (row * verts_per_ring + lon_idx) as f32;
-                let tr = tl + 1.0;
-                let bl = ((row + 1) * verts_per_ring + lon_idx) as f32;
-                let br = bl + 1.0;
-                buf.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            for &(y, rho) in rows {
+                let strength = ((rho / r_max).powi(2)).clamp(0.0, 1.0) as f32;
+                let alpha = 0.03 + 0.14 * strength;
+                for lon_idx in 0..=lon {
+                    let phi = TAU * lon_idx as f64 / lon as f64;
+                    let (nx, nz) = (phi.cos(), phi.sin());
+                    verts.extend_from_slice(&[
+                        (rho * nx) as f32,
+                        y as f32,
+                        (rho * nz) as f32,
+                    ]);
+                    verts.extend_from_slice(&[nx as f32, 0.0, nz as f32]);
+                    verts.extend_from_slice(&[GOLD.0, GOLD.1, GOLD.2, alpha]);
+                }
             }
+            for row in 0..(rows.len() - 1) {
+                for lon_idx in 0..lon {
+                    let tl = (vert_base + row * verts_per_ring + lon_idx) as f32;
+                    let tr = tl + 1.0;
+                    let bl = (vert_base + (row + 1) * verts_per_ring + lon_idx) as f32;
+                    let br = bl + 1.0;
+                    indices.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+                }
+            }
+            vert_base += rows.len() * verts_per_ring;
         }
+
+        let mut buf: Vec<f32> = Vec::with_capacity(2 + verts.len() + indices.len());
+        buf.push(vert_base as f32);
+        buf.push(indices.len() as f32);
+        buf.extend_from_slice(&verts);
+        buf.extend_from_slice(&indices);
         buf
     }
 
@@ -3186,20 +3284,19 @@ pub fn profile_color(name: &str) -> (f32, f32, f32) {
     }
 }
 
-/// Render orientation: physics orientation with its fast axial twist
-/// stripped (swing–twist decomposition about body Y) and the wall-clock
-/// display spin applied instead. Pole direction is untouched; only the
-/// rotation ABOUT the pole is replaced — the force model never reads that
-/// twist (E/A are symmetric about the pole), so this is purely visual.
+/// Render orientation. Group members: the rigid composition with the
+/// wall-clock spin applied directly about the body pole — continuous in
+/// the carousel phase (NO swing–twist extraction: that decomposition is
+/// singular near 180° configurations and made off-axis members flip
+/// wildly as the ride swept them through, session-29). Free particles:
+/// the parallel-transported display frame. The force model never reads
+/// rotation about the pole, so both are purely visual.
 fn render_orientation(p: &SimParticle) -> DQuat {
-    let q = p.orientation;
-    let twist = DQuat::from_xyzw(0.0, q.y, 0.0, q.w);
-    let swing = if twist.length_squared() > 1e-12 {
-        q * twist.normalize().inverse()
+    if p.group.is_some() {
+        (p.orientation * DQuat::from_rotation_y(p.display_spin_phase)).normalize()
     } else {
-        q
-    };
-    (swing * DQuat::from_rotation_y(p.display_spin_phase)).normalize()
+        p.display_orientation
+    }
 }
 
 fn push_transform_color(
@@ -3787,33 +3884,32 @@ mod tests {
         core.register_profile("neutron", 1.0, 1.0, &n_csv);
         core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("alpha preset");
-        let (lon, lat) = (16usize, 8usize);
-        let buf = core.build_group_skin_mesh(0, lon, lat);
-        // Height-profile lathe: lat·2+1 uniform rows from above the top
-        // tip to below the bottom tip.
-        let rows = lat * 2 + 1;
-        let vpr = lon + 1;
-        assert_eq!(buf[0] as usize, rows * vpr);
-        let row_radius = |row: usize| -> f64 {
-            let o = 2 + row * vpr * 10;
-            ((buf[o] as f64).powi(2) + (buf[o + 2] as f64).powi(2)).sqrt()
-        };
-        // Middle row = equator (rows symmetric about y=0 for the alpha):
-        // the group's radial reach must exceed a single free proton's.
-        let eq = row_radius(rows / 2);
+        let buf = core.build_group_skin_mesh(0, 16, 8);
+        let n_verts = buf[0] as usize;
+        assert!(n_verts > 0, "alpha skin should have geometry");
+        // Generic scan (format-independent): widest radial extent is the
+        // equatorial reach; the extreme-|y| vertex is the dome apex.
+        let (mut r_eq, mut y_extreme, mut r_at_extreme) = (0.0f64, 0.0f64, f64::MAX);
+        for v in 0..n_verts {
+            let o = 2 + v * 10;
+            let (x, y, z) = (buf[o] as f64, buf[o + 1] as f64, buf[o + 2] as f64);
+            let radial = (x * x + z * z).sqrt();
+            r_eq = r_eq.max(radial);
+            if y.abs() > y_extreme {
+                y_extreme = y.abs();
+                r_at_extreme = radial;
+            }
+        }
         let single =
             (core.couplings.c_q * core.profiles[p_id].emission.sample(0.0)).powf(0.25);
         assert!(
-            eq > single * 1.05,
-            "alpha equator reach {eq} should exceed a single proton's {single}"
+            r_eq > single * 1.05,
+            "alpha equator reach {r_eq} should exceed a single proton's {single}"
         );
-        assert!(eq < 12.0, "alpha equator reach implausibly large: {eq}");
-        // Poles taper off past the tips — no fat cylinder.
+        assert!(r_eq < 12.0, "alpha equator reach implausibly large: {r_eq}");
         assert!(
-            row_radius(0) < eq * 0.4 && row_radius(rows - 1) < eq * 0.4,
-            "skin must taper at the poles: top={} bottom={} eq={eq}",
-            row_radius(0),
-            row_radius(rows - 1)
+            r_at_extreme < 1.0,
+            "skin must close at the poles (apex radius {r_at_extreme} at |y|={y_extreme})"
         );
     }
 
