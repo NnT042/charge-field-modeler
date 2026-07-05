@@ -262,12 +262,12 @@ func spawn_scenario(scenario: String) -> void:
 			atom_sim.spawn_preset(scenario, Vector3.ZERO, Vector3.ZERO, Vector3.UP)
 		"helium":
 			atom_sim.spawn_preset("alpha", Vector3.ZERO, Vector3.ZERO, Vector3.UP)
-			# Electrons riding the two outer proton poles (protons at y=±0.9).
+			# Electrons riding the two outer proton poles (protons at y=±1.3).
 			atom_sim.spawn_particle(profile_ids["electron"],
-				Vector3(RIDE_LATERAL, 0.9 + RIDE_AXIAL, 0),
+				Vector3(RIDE_LATERAL, 1.3 + RIDE_AXIAL, 0),
 				Vector3(0, 0, -COROT_V), Vector3.UP)
 			atom_sim.spawn_particle(profile_ids["electron"],
-				Vector3(RIDE_LATERAL, -0.9 - RIDE_AXIAL, 0),
+				Vector3(RIDE_LATERAL, -1.3 - RIDE_AXIAL, 0),
 				Vector3(0, 0, -COROT_V), Vector3.DOWN)
 		_:
 			push_warning("atom_mode: unknown scenario " + scenario)

@@ -198,28 +198,28 @@ fn alpha_block(y: f64) -> Vec<Constituent> {
     vec![
         Constituent {
             profile_name: "proton",
-            local_pos: DVec3::new(0.0, y - 0.9, 0.0),
+            local_pos: DVec3::new(0.0, y - NUCLEON_PITCH / 2.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
             carousel: false,
         },
         Constituent {
             profile_name: "proton",
-            local_pos: DVec3::new(0.0, y + 0.9, 0.0),
+            local_pos: DVec3::new(0.0, y + NUCLEON_PITCH / 2.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
             carousel: false,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: DVec3::new(-0.5, y, 0.0),
+            local_pos: DVec3::new(-0.7, y, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: DVec3::new(0.5, y, 0.0),
+            local_pos: DVec3::new(0.7, y, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
             carousel: true,
@@ -270,15 +270,16 @@ fn plug_neutron(y: f64, z: f64) -> Constituent {
 
 /// Half-gap between the members of a proton+neutron pair sharing a polar
 /// hole ("two baryons in the hole fill the hole much better" — atmo2.pdf).
-/// Same nestling scale as the alpha's neutron posts (±0.5 off-axis).
-const PLUG_PAIR_GAP: f64 = 0.55;
+/// Same nestling scale as the alpha's neutron posts (±0.7 off-axis).
+const PLUG_PAIR_GAP: f64 = 0.8;
 
 /// Radius of the carousel level: distance from the stack axis to a
 /// carousel alpha's center. Sets the nearest carousel proton pole just
 /// outside the center disk's edge — plugged edge-to-hole (nuclear.pdf,
 /// four.pdf: "all disks fit together edge to hole, like male and female
-/// sockets").
-const CAROUSEL_R: f64 = 3.1;
+/// sockets"). Proportional rescale; exact funnel coupling of the carousel
+/// level is a future refinement.
+const CAROUSEL_R: f64 = 4.5;
 
 /// Connector alpha: mounted SIDEWAYS on the stack axis between the center
 /// and a cap — facing like the polar plugs (edge-on, its disc feeding the
@@ -289,28 +290,28 @@ fn sideways_alpha(y: f64) -> Vec<Constituent> {
     vec![
         Constituent {
             profile_name: "proton",
-            local_pos: DVec3::new(-0.9, y, 0.0),
+            local_pos: DVec3::new(-1.3, y, 0.0),
             local_pole: DVec3::X,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "proton",
-            local_pos: DVec3::new(0.9, y, 0.0),
+            local_pos: DVec3::new(1.3, y, 0.0),
             local_pole: DVec3::X,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: DVec3::new(0.0, y - 0.5, 0.0),
+            local_pos: DVec3::new(0.0, y - 0.7, 0.0),
             local_pole: DVec3::X,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: DVec3::new(0.0, y + 0.5, 0.0),
+            local_pos: DVec3::new(0.0, y + 0.7, 0.0),
             local_pole: DVec3::X,
             spin_sign: 1.0,
             carousel: true,
@@ -332,28 +333,28 @@ fn carousel_alpha(phi_deg: f64) -> Vec<Constituent> {
     vec![
         Constituent {
             profile_name: "proton",
-            local_pos: center - u * 0.9,
+            local_pos: center - u * 1.3,
             local_pole: u,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "proton",
-            local_pos: center + u * 0.9,
+            local_pos: center + u * 1.3,
             local_pole: u,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: center + DVec3::new(0.0, 0.5, 0.0),
+            local_pos: center + DVec3::new(0.0, 0.7, 0.0),
             local_pole: u,
             spin_sign: 1.0,
             carousel: true,
         },
         Constituent {
             profile_name: "neutron",
-            local_pos: center + DVec3::new(0.0, -0.5, 0.0),
+            local_pos: center + DVec3::new(0.0, -0.7, 0.0),
             local_pole: u,
             spin_sign: 1.0,
             carousel: true,
@@ -361,10 +362,18 @@ fn carousel_alpha(phi_deg: f64) -> Vec<Constituent> {
     ]
 }
 
-/// Alpha stack pitch: adjacent alpha centers along the axis. Tight enough
-/// that the disks read as plugged (nuclear.pdf), loose enough to see the
-/// blocks.
-const ALPHA_PITCH: f64 = 2.6;
+/// Stacked-nucleon pitch: a fused neighbor parks at the MOUTH of the
+/// source's intake funnel (2.6 r — see the funnel constants in the
+/// VFX), its polar skin edge (1.06 r) hanging down inside the funnel
+/// where the density still feeds momentum back (session-29 decision;
+/// nuclear.pdf: fusion forces baryons inside the free-field standoff,
+/// but not into contact).
+const NUCLEON_PITCH: f64 = 2.6;
+
+/// Alpha stack pitch: adjacent alpha centers along the axis. Keeps the
+/// inter-block proton gap proportional to the old layout under the new
+/// pitch.
+const ALPHA_PITCH: f64 = 3.75;
 
 pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
     match name {
@@ -385,8 +394,10 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // north (ammon.pdf), pole-down per graphene.pdf.
         "nitrogen" => {
             let mut c = preset_constituents("carbon")?;
-            c.push(plug_proton(-(ALPHA_PITCH + 1.8), 0.0));
-            c.push(plug_neutron(ALPHA_PITCH + 1.8, 0.0));
+            // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
+            // funnel mouth (2.6) beyond it.
+            c.push(plug_proton(-(ALPHA_PITCH + 3.9), 0.0));
+            c.push(plug_neutron(ALPHA_PITCH + 3.9, 0.0));
             Some(c)
         }
         // Oxygen: carbon stack + BOTH poles capped by a proton+neutron PAIR
@@ -396,7 +407,9 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // (disc feeds the hole), neutron pole-down (channels axially).
         "oxygen" => {
             let mut c = preset_constituents("carbon")?;
-            let y = ALPHA_PITCH + 1.8;
+            // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
+            // funnel mouth (2.6) beyond it.
+            let y = ALPHA_PITCH + 3.9;
             c.push(plug_proton(-y, -PLUG_PAIR_GAP));
             c.push(plug_neutron(-y, PLUG_PAIR_GAP));
             c.push(plug_proton(y, -PLUG_PAIR_GAP));
@@ -884,11 +897,12 @@ impl AtomCore {
 
     /// Split a group into skin segments: carousel members (lateral > 1.5)
     /// form one segment; the rest cluster along the axis with a gap
-    /// threshold that keeps a contiguous alpha stack together (intra-stack
-    /// member gaps ≤ 0.9) but splits center/connector/cap pieces (gaps
-    /// ≥ 1.2). Polar plugs merge into their end's cluster (gap 0.9).
+    /// threshold that keeps a contiguous alpha stack together. Intra-alpha
+    /// member gaps are now ≤ 1.3 (proton↔post), inter-piece gaps ≥ 1.75
+    /// (argon center↔connector), so 1.5 splits pieces and keeps a
+    /// contiguous carbon stack whole.
     pub fn compute_skin_segments(&self, group_idx: usize) -> Vec<SkinSegment> {
-        const SEG_GAP: f64 = 1.05;
+        const SEG_GAP: f64 = 1.5;
         let g = match self.groups.get(group_idx) {
             Some(g) => g,
             None => return Vec::new(),
@@ -3736,7 +3750,7 @@ mod tests {
                 let lat = (last.x * last.x + last.z * last.z).sqrt();
                 if lat > 2.0 {
                     disc += 1;
-                } else if last.y.abs() > 4.6 {
+                } else if last.y.abs() > 6.2 {
                     through += 1;
                 }
             }

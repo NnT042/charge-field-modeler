@@ -751,7 +751,7 @@ mod tests {
         let e = core
             .spawn_particle(
                 e_id,
-                DVec3::new(0.5, 2.9, 0.0), // 2.0 above the top proton at (0,0.9,0)
+                DVec3::new(0.5, 3.3, 0.0), // 2.0 above the top proton at (0,1.3,0)
                 DVec3::new(0.0, 0.0, 0.4),
                 DVec3::Y,
             )
@@ -789,7 +789,7 @@ mod tests {
         let e_top = core
             .spawn_particle(
                 e_id,
-                DVec3::new(lat, 0.9 + ax, 0.0),
+                DVec3::new(lat, 1.3 + ax, 0.0),
                 DVec3::new(0.0, 0.0, -crate::atom_core::COROT_V_MAX),
                 DVec3::Y,
             )
@@ -797,7 +797,7 @@ mod tests {
         let e_bot = core
             .spawn_particle(
                 e_id,
-                DVec3::new(lat, -0.9 - ax, 0.0),
+                DVec3::new(lat, -1.3 - ax, 0.0),
                 DVec3::new(0.0, 0.0, -crate::atom_core::COROT_V_MAX),
                 -DVec3::Y,
             )
