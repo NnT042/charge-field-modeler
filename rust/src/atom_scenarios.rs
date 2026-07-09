@@ -890,21 +890,48 @@ mod tests {
     /// **nuclear_ambient** shadow term (nuclear.pdf: "the charge field is
     /// both the initial pressure and the subsequent glue") — see
     /// `Couplings::channeling`/`Couplings::nuclear_ambient` docs and
-    /// `compute_forces`. This test sweeps both dimensions on the same
-    /// carbon nucleus (3 axially-stacked alphas, all `orbits_core == false`
-    /// — no carousel confound) in RigidAlpha. Pass = SOME combo keeps every
-    /// inter-alpha center-pair distance within ±30% of its initial value
-    /// over 20k steps (the full sweep runs in ~12s release — inside the
-    /// ~30s `cargo test` gate now that this is a hard, non-ignored test).
+    /// `compute_forces`.
+    ///
+    /// Session-31 round 4 (binding v2 hardening): the round-3 winner
+    /// (channeling=0.9, ambient=2.0) held a QUIET nucleus but the user
+    /// found two failure modes it missed — a spontaneous late "Jenga"
+    /// collapse, and trivial destruction by a stray particle spawned
+    /// nearby. Root cause: `channeling_factor`'s falloff hit a hard cliff
+    /// at `r = 2·NUCLEON_PITCH` with no recapture basin beyond it (see
+    /// `CHANNEL_TAIL`'s doc). `CHANNEL_TAIL` extends that taper, which
+    /// changes the force balance enough to warrant a fresh grid: channeling
+    /// {0.85, 0.9, 0.95} — 1.0 is EXCLUDED because with the longer tail it
+    /// collapses catastrophically once ambient ≥ ~5 (full repulsion
+    /// cancellation lets the never-attenuated disc-aware contact spring
+    /// fire, drift in the millions of percent) — × nuclear_ambient
+    /// {2, 5, 10, 20}, still 20k steps (~10s release). A SECOND pass
+    /// dimension is added: of the quiet-sweep passers, which also survive
+    /// `run_flyby_scenario` (an external close pass + a parked neighbor)?
+    /// This runs the SAME full 15k+15k duration `nucleus_survives_flyby`
+    /// uses, not a shorter proxy — a short 8k+8k window was tried first and
+    /// found to be a false-positive trap: several combos "looked" robust
+    /// at 8k+8k but the parked neutron's pull is a SUSTAINED perturbation,
+    /// and those combos only started destabilizing between step ~16k and
+    /// ~27k, well past an 8k+8k window (see this test's and `nucleus_
+    /// survives_flyby`'s doc for the concrete numbers). The chosen defaults
+    /// must clear BOTH bars — picked by the largest margin (lowest
+    /// worst-case max-drift across quiet AND flyby), ties broken toward
+    /// mid-range ambient, away from the collapse-adjacent high end the
+    /// quiet table's NONFIN/eject rows expose. A final 100k-step QUIET run
+    /// at the chosen defaults confirms
+    /// the "Jenga" horizon (the user watched for minutes before the late
+    /// collapse; the 20k-step sweep alone wouldn't necessarily have caught
+    /// a failure that only shows up that late).
     #[test]
     fn alpha_stays_bound() {
         const STEPS: usize = 20_000;
         const SAMPLE_EVERY: usize = 50;
-        let channelings = [0.7, 0.9, 1.0];
-        let ambients = [0.0, 2.0, 5.0, 10.0, 20.0];
+        let channelings = [0.85, 0.9, 0.95];
+        let ambients = [2.0, 5.0, 10.0, 20.0];
 
+        println!("\n-- quiet sweep (RigidAlpha carbon, {STEPS} steps) --");
         println!(
-            "\n{:>5} {:>6} {:>10} {:>9} {:>9} {:>10}",
+            "{:>5} {:>6} {:>10} {:>9} {:>9} {:>10}",
             "chan", "amb", "max_drift", "min_d", "max_d", "class"
         );
 
@@ -971,7 +998,7 @@ mod tests {
                 };
 
                 println!(
-                    "{channeling:>5.1} {ambient:>6.1} {:>9.1}% {:>9.3} {:>9.3} {:>10}",
+                    "{channeling:>5.2} {ambient:>6.1} {:>9.1}% {:>9.3} {:>9.3} {:>10}",
                     max_rel_drift * 100.0,
                     min_d.iter().cloned().fold(f64::MAX, f64::min),
                     max_d.iter().cloned().fold(0.0f64, f64::max),
@@ -1077,20 +1104,132 @@ mod tests {
             );
         }
 
-        // Session-31 round 3 RESULT: 9 of 15 combos bind. Winner
-        // channeling=0.9, nuclear_ambient=2.0 at 2.5% max drift — promoted
-        // to `Couplings::default` (see its doc for the full table's edge
-        // analysis: ambient=0 ejects on residual repulsion; channeling=1.0
-        // with ambient>=5 cancels repulsion completely, collapses into the
-        // disc-aware contact wall, and the never-attenuated contact spring
-        // ejects at 1e4-1e6% drift). Assert the shipped DEFAULTS are a
-        // passing combo, so any future default change must re-earn this.
         println!(
-            "\n{} combo(s) bind within +/-30%; best: channeling={bc} ambient={ba} drift={:.1}%",
+            "\n{} combo(s) bind quietly within +/-30%; best: channeling={bc} ambient={ba} drift={:.1}%",
             passing.len(),
             bd * 100.0
         );
+
+        // Second pass dimension (work item 3): of the quiet-sweep passers,
+        // which also survive `run_flyby_scenario` — an external close pass
+        // + a parked neighbor?
+        //
+        // DEVIATION from the spec's "short version: 8k+8k steps": measured
+        // empirically, the short window is NOT a reliable proxy. The
+        // parked "swat" neutron's pull is a SUSTAINED perturbation, not a
+        // transient one — several combos (e.g. channeling=0.85,
+        // ambient=2.0) looked perfectly robust at 8k+8k (1.8% drift) but
+        // then slowly destabilized and blew past the recapture basin
+        // between step ~16k and ~27k of the full run (see
+        // `nucleus_survives_flyby`'s FAILED run against that combo: 63.5%
+        // final drift). A short-window "robust" verdict that the full
+        // scenario immediately contradicts is worse than useless — it
+        // launders a bad default past this test only to have `nucleus_
+        // survives_flyby` fail it a moment later. So this uses the SAME
+        // full 15k+15k duration as `nucleus_survives_flyby` itself (it's
+        // still cheap: ~20s for the whole passing-combo set, well inside
+        // budget) — the two tests must agree on what "robust" means.
+        const FLYBY_STEPS: usize = 15_000;
+        const FLYBY_SAMPLE: usize = 1_000;
+        println!(
+            "\n-- flyby/swat robustness ({FLYBY_STEPS}+{FLYBY_STEPS} steps, quiet-sweep passers only) --"
+        );
+        println!(
+            "{:>5} {:>6} {:>10} {:>10} {:>8} {:>10}",
+            "chan", "amb", "quiet_dr", "flyby_dr", "finite", "class"
+        );
+        // (channeling, ambient, quiet_drift, flyby_drift)
+        let mut robust: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for &(channeling, ambient, quiet_drift) in &passing {
+            let (flyby_drift, finite) =
+                run_flyby_scenario(channeling, ambient, FLYBY_STEPS, FLYBY_STEPS, FLYBY_SAMPLE);
+            let class = if !finite {
+                "NONFIN"
+            } else if flyby_drift > FLYBY_DRIFT_LIMIT {
+                "eject"
+            } else {
+                "robust"
+            };
+            println!(
+                "{channeling:>5.2} {ambient:>6.1} {:>9.1}% {:>9.1}% {finite:>8} {:>10}",
+                quiet_drift * 100.0,
+                flyby_drift * 100.0,
+                class,
+            );
+            if finite && flyby_drift <= FLYBY_DRIFT_LIMIT {
+                robust.push((channeling, ambient, quiet_drift, flyby_drift));
+            }
+        }
+
+        // Choose defaults = the combo with the largest margin against BOTH
+        // failure modes (lowest worst-case max-drift across quiet AND
+        // flyby), ties broken toward mid-range ambient — away from the
+        // collapse-adjacent high end the quiet table's NONFIN/eject rows
+        // expose.
+        let mid_ambient = ambients.iter().sum::<f64>() / ambients.len() as f64;
+        let mut chosen: Option<(f64, f64, f64, f64)> = None; // (chan, amb, quiet_drift, flyby_drift)
+        for &(c, a, qd, fd) in &robust {
+            let margin = qd.max(fd);
+            let take = match chosen {
+                None => true,
+                Some((_, ca, cqd, cfd)) => {
+                    let cur_margin = cqd.max(cfd);
+                    if (margin - cur_margin).abs() < 1e-9 {
+                        (a - mid_ambient).abs() < (ca - mid_ambient).abs()
+                    } else {
+                        margin < cur_margin
+                    }
+                }
+            };
+            if take {
+                chosen = Some((c, a, qd, fd));
+            }
+        }
+
+        let (def_chan, def_amb) = match chosen {
+            Some((c, a, qd, fd)) => {
+                println!(
+                    "\nchosen defaults: channeling={c} nuclear_ambient={a} \
+                     (quiet drift {:.1}%, flyby drift {:.1}%) — {} of {} quiet-passers also robust",
+                    qd * 100.0,
+                    fd * 100.0,
+                    robust.len(),
+                    passing.len()
+                );
+                (c, a)
+            }
+            None => {
+                // HONESTY CLAUSE (work item 3 / CONSTRAINTS): quiet binding
+                // works but NOTHING survives the flyby/swat perturbation.
+                // Report it plainly and fall back to the best quiet combo
+                // for `Couplings::default` (it still stops the "Jenga"
+                // quiet collapse); `nucleus_survives_flyby` documents the
+                // unresolved flyby fragility and must be `#[ignore]`d with
+                // that analysis if it fails at these defaults — see its
+                // doc comment.
+                println!(
+                    "\nno quiet-passing combo survives the flyby/swat perturbation; \
+                     falling back to the best quiet combo channeling={bc} ambient={ba} \
+                     ({:.1}% quiet drift) for Couplings::default — see \
+                     nucleus_survives_flyby for the documented flyby-robustness gap",
+                    bd * 100.0
+                );
+                (bc, ba)
+            }
+        };
+
+        // Assert the shipped Couplings::default MATCHES this sweep's
+        // chosen winner — any future default change must re-earn this by
+        // re-running (and, if the winner moves, updating) the sweep.
         let def = crate::atom_core::Couplings::default();
+        assert!(
+            (def.channeling - def_chan).abs() < 1e-9 && (def.nuclear_ambient - def_amb).abs() < 1e-9,
+            "Couplings::default (channeling={}, nuclear_ambient={}) does not match this sweep's \
+             chosen winner (channeling={def_chan}, nuclear_ambient={def_amb}) — update \
+             Couplings::default to match, or re-derive the winner if the sweep changed",
+            def.channeling,
+            def.nuclear_ambient
+        );
         let def_result = all_results
             .iter()
             .find(|&&(c, a, _)| {
@@ -1105,11 +1244,344 @@ mod tests {
             });
         assert!(
             def_result.2 <= 0.30,
-            "Couplings::default (channeling={}, nuclear_ambient={}) no longer binds carbon: \
+            "Couplings::default (channeling={}, nuclear_ambient={}) no longer binds carbon quietly: \
              max drift {:.1}% > 30%",
             def.channeling,
             def.nuclear_ambient,
             def_result.2 * 100.0
+        );
+
+        // Final confirmation (work item 3): a 100k-step QUIET run at the
+        // chosen defaults — the "Jenga" horizon the user watched for
+        // minutes before the spontaneous late collapse. No external
+        // perturbation; this purely re-checks binding over a much longer
+        // horizon than the 20k-step sweep, since the user's report was a
+        // LATE failure a short sweep wouldn't necessarily catch.
+        const CONFIRM_STEPS: usize = 100_000;
+        const CONFIRM_SAMPLE: usize = 200;
+        let mut core = standard_core();
+        core.couplings.channeling = def.channeling;
+        core.couplings.nuclear_ambient = def.nuclear_ambient;
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        let n_alphas = core.groups[gid].alphas.len();
+        let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+        let pairs: Vec<(usize, usize)> = (0..n_alphas)
+            .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+            .collect();
+        let d0: Vec<f64> = pairs
+            .iter()
+            .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+            .collect();
+        let mut confirm_max_drift = 0.0f64;
+        let mut confirm_finite = true;
+        for _ in 0..(CONFIRM_STEPS / CONFIRM_SAMPLE) {
+            core.step_n(CONFIRM_SAMPLE);
+            for (k, &(a, b)) in pairs.iter().enumerate() {
+                let d = (com(&core, a) - com(&core, b)).length();
+                confirm_max_drift = confirm_max_drift.max(((d - d0[k]) / d0[k]).abs());
+            }
+            confirm_finite &= core.particles.iter().all(|p| p.position.is_finite());
+        }
+        println!(
+            "\n100k-step quiet confirmation at defaults (channeling={} ambient={}): \
+             max_drift={:.1}% finite={}",
+            def.channeling,
+            def.nuclear_ambient,
+            confirm_max_drift * 100.0,
+            confirm_finite
+        );
+        assert!(
+            confirm_finite,
+            "non-finite state over the 100k-step ('Jenga horizon') confirmation run"
+        );
+        assert!(
+            confirm_max_drift <= 0.30,
+            "carbon nucleus did not survive the 100k-step ('Jenga horizon') confirmation run \
+             at chosen defaults: max drift {:.1}% > 30%",
+            confirm_max_drift * 100.0
+        );
+    }
+
+    // ── Flyby / swat robustness (session-31 round 4, work item 2/3)
+    // ────────────────────────────────────────────────────────────────
+
+    /// Every inter-alpha center spacing must stay within this fraction of
+    /// its initial value for a RigidAlpha carbon nucleus to "survive" a
+    /// flyby + parked-neighbor scenario. Looser than the quiet-sweep 30%
+    /// (`alpha_stays_bound`) because an external close pass legitimately
+    /// perturbs the stack more than internal jitter alone.
+    const FLYBY_DRIFT_LIMIT: f64 = 0.35;
+
+    /// Spawn a RigidAlpha carbon nucleus at the given (channeling,
+    /// nuclear_ambient) couplings, then Phase A fly a free proton close
+    /// past the stack and Phase B park a free neutron AT REST right next to
+    /// it (the user's "swat" report — trivial destruction by a stray
+    /// spawned particle). Returns the worst (max abs) inter-alpha
+    /// center-spacing drift and whether the whole run stayed finite.
+    /// `standard_core()` seeds a fixed RNG, so this is fully deterministic
+    /// — a failing run can be re-driven with the same arguments to
+    /// reconstruct exact diagnostics (see `print_flyby_diagnostics`).
+    fn run_flyby_scenario(
+        channeling: f64,
+        ambient: f64,
+        phase_a_steps: usize,
+        phase_b_steps: usize,
+        sample_every: usize,
+    ) -> (f64, bool) {
+        let mut core = standard_core();
+        core.couplings.channeling = channeling;
+        core.couplings.nuclear_ambient = ambient;
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+
+        let n_alphas = core.groups[gid].alphas.len();
+        let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+        let pairs: Vec<(usize, usize)> = (0..n_alphas)
+            .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+            .collect();
+        let d0: Vec<f64> = pairs
+            .iter()
+            .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+            .collect();
+
+        let p_id = core.profile_id_by_name("proton").unwrap();
+        let n_id = core.profile_id_by_name("neutron").unwrap();
+
+        // Phase A: a free proton passes near the stack (spawned at (8,6,0),
+        // inbound velocity (-0.4,-0.3,0) — closes to a near miss then
+        // continues on, mirroring the user's "spawn a stray particle
+        // nearby" report). Simplest handling: let it fly through/off
+        // rather than removing it (removal isn't needed for the drift
+        // assertion and avoids remove_particle's swap_remove reindexing).
+        core.spawn_particle(
+            p_id,
+            DVec3::new(8.0, 6.0, 0.0),
+            DVec3::new(-0.4, -0.3, 0.0),
+            DVec3::Y,
+        )
+        .expect("spawn flyby proton");
+
+        let mut max_drift = 0.0f64;
+        let mut finite = true;
+
+        let n_samples_a = phase_a_steps / sample_every;
+        for _ in 0..n_samples_a {
+            core.step_n(sample_every);
+            for (idx, &(a, b)) in pairs.iter().enumerate() {
+                let d = (com(&core, a) - com(&core, b)).length();
+                let drift = ((d - d0[idx]) / d0[idx]).abs();
+                max_drift = max_drift.max(drift);
+            }
+            finite &= core
+                .particles
+                .iter()
+                .all(|p| p.position.is_finite() && p.velocity.is_finite());
+        }
+
+        // Phase B: a free neutron parks AT REST right next to the nucleus
+        // — the user's "swat" (trivial destruction by a nearby stray
+        // particle with no velocity at all, the minimal perturbation).
+        core.spawn_particle(n_id, DVec3::new(4.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y)
+            .expect("spawn parked neutron");
+
+        let n_samples_b = phase_b_steps / sample_every;
+        for _ in 0..n_samples_b {
+            core.step_n(sample_every);
+            for (idx, &(a, b)) in pairs.iter().enumerate() {
+                let d = (com(&core, a) - com(&core, b)).length();
+                let drift = ((d - d0[idx]) / d0[idx]).abs();
+                max_drift = max_drift.max(drift);
+            }
+            finite &= core
+                .particles
+                .iter()
+                .all(|p| p.position.is_finite() && p.velocity.is_finite());
+        }
+
+        (max_drift, finite)
+    }
+
+    /// Deterministic re-run of `run_flyby_scenario` that prints the full
+    /// per-sample drift table AND `pair_force_breakdown` for the worst
+    /// (closest) member pair between the two most-drifted alphas, breaking
+    /// as soon as the drift exceeds `FLYBY_DRIFT_LIMIT` (A13 honesty
+    /// clause style — see `alpha_stays_bound`'s failure path).
+    fn print_flyby_diagnostics(
+        channeling: f64,
+        ambient: f64,
+        phase_a_steps: usize,
+        phase_b_steps: usize,
+        sample_every: usize,
+    ) {
+        let mut core = standard_core();
+        core.couplings.channeling = channeling;
+        core.couplings.nuclear_ambient = ambient;
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+
+        let n_alphas = core.groups[gid].alphas.len();
+        let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+        let pairs: Vec<(usize, usize)> = (0..n_alphas)
+            .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+            .collect();
+        let d0: Vec<f64> = pairs
+            .iter()
+            .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+            .collect();
+        let members_of =
+            |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].members.clone();
+        let closest_pair = |core: &AtomCore, ai: usize, aj: usize| -> (usize, usize) {
+            let (mi, mj) = (members_of(core, ai), members_of(core, aj));
+            let mut best_pair = (
+                core.groups[gid].members[mi[0]],
+                core.groups[gid].members[mj[0]],
+            );
+            let mut best_r = f64::MAX;
+            for &ki in &mi {
+                for &kj in &mj {
+                    let pi = core.groups[gid].members[ki];
+                    let pj = core.groups[gid].members[kj];
+                    let r = core.pair_distance(pi, pj);
+                    if r < best_r {
+                        best_r = r;
+                        best_pair = (pi, pj);
+                    }
+                }
+            }
+            best_pair
+        };
+
+        let p_id = core.profile_id_by_name("proton").unwrap();
+        let n_id = core.profile_id_by_name("neutron").unwrap();
+        core.spawn_particle(
+            p_id,
+            DVec3::new(8.0, 6.0, 0.0),
+            DVec3::new(-0.4, -0.3, 0.0),
+            DVec3::Y,
+        )
+        .expect("spawn flyby proton");
+
+        println!(
+            "\n{:>6} {:>7} {:>9} {:>10} {:>10} {:>10} {:>10} {:>10}",
+            "step", "phase", "drift%", "r", "channel", "f_grav", "f_charge", "f_stream"
+        );
+
+        let mut step_total = 0usize;
+        let mut phase = "A(flyby)";
+        let mut phase_b_started = false;
+        let total_samples = (phase_a_steps + phase_b_steps) / sample_every;
+        let switch_at_sample = phase_a_steps / sample_every;
+
+        for s in 0..total_samples {
+            if s == switch_at_sample && !phase_b_started {
+                core.spawn_particle(n_id, DVec3::new(4.0, 0.0, 0.0), DVec3::ZERO, DVec3::Y)
+                    .expect("spawn parked neutron");
+                phase = "B(swat)";
+                phase_b_started = true;
+            }
+            core.step_n(sample_every);
+            step_total += sample_every;
+
+            let mut worst_idx = 0usize;
+            let mut worst_drift = 0.0f64;
+            for (idx, &(a, b)) in pairs.iter().enumerate() {
+                let d = (com(&core, a) - com(&core, b)).length();
+                let drift = ((d - d0[idx]) / d0[idx]).abs();
+                if drift > worst_drift {
+                    worst_drift = drift;
+                    worst_idx = idx;
+                }
+            }
+            let (wa, wb) = pairs[worst_idx];
+            let (pi, pj) = closest_pair(&core, wa, wb);
+            let fb = core.pair_force_breakdown(pi, pj);
+            println!(
+                "{:>6} {:>7} {:>8.1}% {:>10.4} {:>10.4} {:>10.3} {:>10.3} {:>10.3}",
+                step_total, phase, worst_drift * 100.0, fb[0], fb[1], fb[2], fb[3], fb[6],
+            );
+
+            let finite = core
+                .particles
+                .iter()
+                .all(|p| p.position.is_finite() && p.velocity.is_finite());
+            if !finite {
+                println!("  ^ non-finite state at step {step_total} (contact term f_contact={:.3})", fb[7]);
+                break;
+            }
+            if worst_drift > FLYBY_DRIFT_LIMIT {
+                println!(
+                    "  ^ drift exceeded +/-{:.0}% at step {step_total} (contact term f_contact={:.3})",
+                    FLYBY_DRIFT_LIMIT * 100.0,
+                    fb[7]
+                );
+                break;
+            }
+        }
+    }
+
+    /// HARD gate (session-31 round 4, work item 2): a RigidAlpha carbon
+    /// nucleus must survive an external close pass AND a parked neighbor,
+    /// not just internal jitter — the user's two failure reports were (a)
+    /// a spontaneous late "Jenga" collapse over a long quiet run
+    /// (`alpha_stays_bound` covers the quiet case) and (b) trivial
+    /// destruction by spawning a stray particle nearby. This drives (b)
+    /// directly: Phase A flies a free proton close past the stack, Phase B
+    /// parks a free neutron at rest right next to it. Root cause (session-
+    /// 31 round 4 diagnosis): the OLD channeling falloff hit a hard cliff
+    /// at `r = 2·NUCLEON_PITCH` — any excursion past it regained full
+    /// molecular repulsion with nothing pulling it back, so a flyby's
+    /// gravitational/charge nudge (or a parked neighbor's steady pull) that
+    /// displaced an alpha past the cliff was a one-way ejection. The
+    /// `CHANNEL_TAIL` extension (`channeling_factor`) gives displaced
+    /// alphas a restoring basin instead. Uses `Couplings::default()` so
+    /// this test automatically re-validates whichever combo `alpha_stays_
+    /// bound`'s sweep selects.
+    #[test]
+    fn nucleus_survives_flyby() {
+        const PHASE_A_STEPS: usize = 15_000;
+        const PHASE_B_STEPS: usize = 15_000;
+        const SAMPLE_EVERY: usize = 1_000;
+
+        let def = crate::atom_core::Couplings::default();
+        let (max_drift, finite) = run_flyby_scenario(
+            def.channeling,
+            def.nuclear_ambient,
+            PHASE_A_STEPS,
+            PHASE_B_STEPS,
+            SAMPLE_EVERY,
+        );
+
+        if !finite || max_drift > FLYBY_DRIFT_LIMIT {
+            println!(
+                "\nnucleus_survives_flyby FAILED (channeling={} ambient={}): \
+                 max_drift={:.1}% finite={}",
+                def.channeling,
+                def.nuclear_ambient,
+                max_drift * 100.0,
+                finite
+            );
+            print_flyby_diagnostics(
+                def.channeling,
+                def.nuclear_ambient,
+                PHASE_A_STEPS,
+                PHASE_B_STEPS,
+                SAMPLE_EVERY,
+            );
+        }
+        assert!(finite, "non-finite state during flyby+swat scenario");
+        assert!(
+            max_drift <= FLYBY_DRIFT_LIMIT,
+            "inter-alpha spacing drifted {:.1}% (> {:.0}%) during flyby+swat: \
+             a displaced alpha was not recaptured — see diagnostics above",
+            max_drift * 100.0,
+            FLYBY_DRIFT_LIMIT * 100.0
         );
     }
 

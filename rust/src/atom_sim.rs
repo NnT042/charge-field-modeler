@@ -240,6 +240,70 @@ impl AtomSim {
         self.core.couplings.stream
     }
 
+    // ── Nuclear binding couplings (session-31 round 4, work item 5) ──
+
+    #[func]
+    fn set_channeling_coupling(&mut self, c: f64) {
+        self.core.couplings.channeling = c;
+    }
+
+    #[func]
+    fn get_channeling_coupling(&self) -> f64 {
+        self.core.couplings.channeling
+    }
+
+    #[func]
+    fn set_nuclear_ambient(&mut self, a: f64) {
+        self.core.couplings.nuclear_ambient = a;
+    }
+
+    #[func]
+    fn get_nuclear_ambient(&self) -> f64 {
+        self.core.couplings.nuclear_ambient
+    }
+
+    #[func]
+    fn set_intra_boost(&mut self, b: f64) {
+        self.core.couplings.intra_nucleus_boost = b;
+    }
+
+    #[func]
+    fn get_intra_boost(&self) -> f64 {
+        self.core.couplings.intra_nucleus_boost
+    }
+
+    // ── Skin-mote VFX knobs (session-31 round 4, work item 5) ─────────
+
+    #[func]
+    fn set_mote_fraction(&mut self, f: f64) {
+        self.core.mote_fraction = f;
+    }
+
+    #[func]
+    fn get_mote_fraction(&self) -> f64 {
+        self.core.mote_fraction
+    }
+
+    #[func]
+    fn set_mote_scale(&mut self, s: f32) {
+        self.core.mote_scale = s;
+    }
+
+    #[func]
+    fn get_mote_scale(&self) -> f32 {
+        self.core.mote_scale
+    }
+
+    #[func]
+    fn set_mote_lifetime(&mut self, l: f64) {
+        self.core.mote_lifetime = l;
+    }
+
+    #[func]
+    fn get_mote_lifetime(&self) -> f64 {
+        self.core.mote_lifetime
+    }
+
     /// Auto-calibrate gravity coupling for a circular polar orbit.
     /// See AtomCore::auto_calibrate_polar for the derivation.
     #[func]

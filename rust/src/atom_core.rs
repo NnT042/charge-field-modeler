@@ -360,6 +360,22 @@ const CAROUSEL_R: f64 = 4.5;
 /// but not into contact).
 const NUCLEON_PITCH: f64 = 2.6;
 
+/// Channeling recapture tail multiplier (session-31 round 4 — binding v2
+/// hardening). `channeling_factor`'s distance falloff used to hit exactly
+/// zero at `2·NUCLEON_PITCH` (5.2) — a CLIFF, not a taper: an alpha
+/// displaced (or shoved) even slightly past that radius instantly regained
+/// full molecular `c_q`/`stream` repulsion with no attractive term to pull
+/// it back, so every excursion past the cliff was a one-way ejection. This
+/// is the root cause of both user-observed failures — the spontaneous late
+/// "Jenga" collapse (one alpha random-walks past 5.2 during ordinary
+/// thermal jitter and never returns) and the trivial destruction by a
+/// nearby stray particle (any nudge past the cliff is terminal). Extending
+/// the taper to `CHANNEL_TAIL · NUCLEON_PITCH` (7.8) gives a displaced
+/// alpha a restoring basin: channeling — and therefore some of the binding
+/// glue — is still partially in effect out past the old cutoff, so a
+/// perturbed alpha is pulled back rather than ejected outright.
+const CHANNEL_TAIL: f64 = 3.0;
+
 /// Disc-aware contact fraction (A13, session-31 round 3): the bodies in
 /// this model are DISCS, not spheres — the whole force model is planar
 /// emission (`EmissionTable`, equator-bright/pole-dark). Facing protons of
@@ -823,21 +839,44 @@ impl Default for Couplings {
     ///   for environment effects, but the H₂ bond emerges from
     ///   gravity+intake attraction vs the stream cushion without it.
     /// - `intra_nucleus_boost = 1.0`, `channeling = 0.9`,
-    ///   `nuclear_ambient = 2.0` — nuclear-binding-only terms (A13,
-    ///   session-31 round 3), gated to non-skipped same-group pairs only;
-    ///   they do not touch the molecular defaults above. `channeling = 0.9`
-    ///   / `nuclear_ambient = 2.0` is the WINNING combo from the
-    ///   `alpha_stays_bound` 3×5 sweep (max inter-alpha drift 2.5% over 20k
-    ///   steps on RigidAlpha carbon — best of 9 passing combos; that test
-    ///   asserts these defaults keep binding). The sweep edges pin both
-    ///   values: with `nuclear_ambient = 0` the residual c_q/stream
-    ///   repulsion ejects the stack (164% drift at channeling 0.9), and at
-    ///   `channeling = 1.0` with ambient ≥ 5 the repulsion cancels
-    ///   COMPLETELY for pole-aligned pairs, the stack collapses through
-    ///   the disc-aware contact wall and the (never-attenuated)
-    ///   CONTACT_STIFFNESS spring ejects it violently (drift 10⁴–10⁶%) —
-    ///   bb2.pdf's "loss of repulsion" must stay partial, and nuclear.pdf's
-    ///   ambient "glue" must stay gentle.
+    ///   `nuclear_ambient = 5.0` — nuclear-binding-only terms (A13, session-
+    ///   31 round 3; RETUNED round 4), gated to non-skipped same-group
+    ///   pairs only; they do not touch the molecular defaults above.
+    ///
+    ///   Round 3 shipped `channeling = 0.9`, `nuclear_ambient = 2.0` (2.5%
+    ///   quiet drift, best of 9 of 15 passing combos on the OLD
+    ///   channeling-falloff cliff at `r = 2·NUCLEON_PITCH`). Round 4
+    ///   (session-31, binding-v2 hardening) found that cliff was the root
+    ///   cause of two user-observed failures — a spontaneous late "Jenga"
+    ///   collapse, and trivial destruction by a stray particle spawned
+    ///   nearby — because any alpha displaced past the cliff regained full
+    ///   molecular repulsion with no restoring basin (see `CHANNEL_TAIL`'s
+    ///   doc). Extending the falloff to `CHANNEL_TAIL·NUCLEON_PITCH`
+    ///   changes the force balance enough to warrant a fresh 3×4 sweep —
+    ///   channeling {0.85, 0.9, 0.95} (1.0 EXCLUDED: with the longer tail
+    ///   it collapses catastrophically once ambient ≥ ~5, drift in the
+    ///   millions of percent, same disc-aware-contact-spring mechanism as
+    ///   round 3) × `nuclear_ambient` {2, 5, 10, 20} — plus a SECOND pass
+    ///   dimension: of the 12/12 quiet passers (all ≤30% drift over 20k
+    ///   steps), which also survive an external flyby + parked-neighbor
+    ///   perturbation (`nucleus_survives_flyby`'s scenario, full 15k+15k —
+    ///   an earlier attempt at a SHORT 8k+8k proxy was abandoned when it
+    ///   proved unreliable: the parked "swat" neutron is a SUSTAINED pull,
+    ///   and several combos that looked robust at 8k+8k only started
+    ///   destabilizing between step ~16k and ~27k, e.g. channeling=0.85/
+    ///   ambient=2.0 — the round-3-adjacent, most-tempting choice — reads
+    ///   1.8% drift at 8k+8k but 63.5% at the full duration; see
+    ///   `alpha_stays_bound`'s doc). Of the 5/12 combos clearing BOTH bars,
+    ///   `channeling=0.9, nuclear_ambient=5.0` has the best (lowest)
+    ///   worst-case margin — 14.9% quiet drift, 13.5% flyby drift — beating
+    ///   channeling=0.85/ambient=10.0 (16.6%/16.1%) and channeling=0.9/
+    ///   ambient=10.0 (18.5%/17.8%); channeling=0.95 at every ambient and
+    ///   ambient=20 at every channeling ejected on the flyby despite
+    ///   binding quietly, proof the two failure modes are genuinely
+    ///   different tests. `alpha_stays_bound` asserts these defaults are
+    ///   that sweep's chosen winner AND holds over a confirming 100k-step
+    ///   quiet run (the "Jenga" horizon); `nucleus_survives_flyby`
+    ///   re-validates the flyby/swat case directly.
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -851,7 +890,7 @@ impl Default for Couplings {
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
             channeling: 0.9,
-            nuclear_ambient: 2.0,
+            nuclear_ambient: 5.0,
         }
     }
 }
@@ -886,6 +925,26 @@ impl Default for NucleusDynamics {
     }
 }
 
+/// Default share of skin-boundary deaths that leave a mote behind — the
+/// density knob for the boundary point-cloud (session-31: replaces the
+/// lathe skin surface entirely). Promoted from a function-local const to a
+/// runtime `AtomCore::mote_fraction` field (session-31 round 4, work item
+/// 5) so the debug HUD can tune it live; this const stays as the seeded
+/// default.
+pub const DEFAULT_MOTE_FRACTION: f64 = 0.6;
+/// Default mote lifetime (s) — long enough to read as a lingering point on
+/// the boundary, short enough that the cloud stays "live". See
+/// `DEFAULT_MOTE_FRACTION` for why this is now a runtime field
+/// (`AtomCore::mote_lifetime`).
+pub const DEFAULT_MOTE_LIFETIME: f64 = 2.8;
+/// Default mote size multiplier. Motes are deliberately oversized
+/// stand-ins for the hundreds of real parcels they represent — user
+/// request, RX 550 budget (a few hundred big dots read better than
+/// thousands of true-scale ones on this hardware). See
+/// `DEFAULT_MOTE_FRACTION` for why this is now a runtime field
+/// (`AtomCore::mote_scale`).
+pub const DEFAULT_MOTE_SCALE: f32 = 3.0;
+
 // ── AtomCore: the whole simulation, engine-free ──────────────────────────
 
 pub struct AtomCore {
@@ -907,6 +966,12 @@ pub struct AtomCore {
     /// Wall-clock accumulator for cloud animation (independent of sim time
     /// so the visual rotation rate doesn't change with substeps).
     vfx_time: f64,
+    /// Runtime knobs for `advance_clouds`' skin-mote conversion (session-31
+    /// round 4, work item 5 — debug-UI sliders). Seeded from
+    /// `DEFAULT_MOTE_FRACTION`/`DEFAULT_MOTE_SCALE`/`DEFAULT_MOTE_LIFETIME`.
+    pub mote_fraction: f64,
+    pub mote_scale: f32,
+    pub mote_lifetime: f64,
 }
 
 impl Default for AtomCore {
@@ -924,11 +989,18 @@ impl Default for AtomCore {
 /// colliding), while two facing equators (cos ≈ 0 on both sides, the
 /// molecular repel configuration) drive it to 0 regardless of distance.
 /// `c_dist` is a smoothstep from 1 at `r ≤ NUCLEON_PITCH` (inside the
-/// funnel mouth) to 0 at `r ≥ 2·NUCLEON_PITCH` — channeling is a
-/// short-range, plugged-neighbor effect, not a whole-nucleus one.
+/// funnel mouth) to 0 at `r ≥ CHANNEL_TAIL·NUCLEON_PITCH` (7.8) — channeling
+/// is a short-range, plugged-neighbor effect, not a whole-nucleus one.
+///
+/// Session-31 round 4: the falloff used to hit 0 at exactly `2·NUCLEON_PITCH`
+/// (5.2), a hard cliff — a displaced alpha that crossed it regained full
+/// repulsion instantly with nothing pulling it back, producing one-way
+/// ejections (the user's "Jenga" collapse and flyby fragility; see
+/// `CHANNEL_TAIL`'s doc). Stretching the taper to `CHANNEL_TAIL` gives
+/// excursions past the old cutoff a restoring basin instead of a wall.
 fn channeling_factor(channeling: f64, cos_theta_i: f64, cos_theta_j: f64, r: f64) -> f64 {
     let lo = NUCLEON_PITCH;
-    let hi = 2.0 * NUCLEON_PITCH;
+    let hi = CHANNEL_TAIL * NUCLEON_PITCH;
     let t = ((r - lo) / (hi - lo)).clamp(0.0, 1.0);
     let c_dist = 1.0 - t * t * (3.0 - 2.0 * t); // smoothstep, 1 at r=lo, 0 at r=hi
     let pole_align = cos_theta_i.powi(2).max(cos_theta_j.powi(2));
@@ -952,6 +1024,9 @@ impl AtomCore {
             vfx_particles: Vec::new(),
             vfx_enabled: true,
             vfx_time: 0.0,
+            mote_fraction: DEFAULT_MOTE_FRACTION,
+            mote_scale: DEFAULT_MOTE_SCALE,
+            mote_lifetime: DEFAULT_MOTE_LIFETIME,
         }
     }
 
@@ -3389,18 +3464,13 @@ impl AtomCore {
         const THROUGH_COLOR: (f32, f32, f32) = (0.75, 0.90, 1.00);
         const ELECTRON_COLOR: (f32, f32, f32) = (0.20, 0.90, 0.35);
         const PROTON_COLOR: (f32, f32, f32) = (0.92, 0.30, 0.20);
-        /// Share of skin-boundary deaths that leave a mote behind — the
-        /// density knob for the boundary point-cloud (session-31: replaces
-        /// the lathe skin surface entirely).
-        const MOTE_FRACTION: f64 = 0.6;
-        /// Mote lifetime (s) — long enough to read as a lingering point on
-        /// the boundary, short enough that the cloud stays "live".
-        const MOTE_LIFETIME: f64 = 2.8;
-        /// Motes are deliberately oversized stand-ins for the hundreds of
-        /// real parcels they represent — user request, RX 550 budget (a
-        /// few hundred big dots read better than thousands of true-scale
-        /// ones on this hardware).
-        const MOTE_SCALE: f32 = 3.0;
+        // MOTE_FRACTION/MOTE_SCALE/MOTE_LIFETIME are runtime knobs now
+        // (session-31 round 4, work item 5) — `self.mote_fraction`,
+        // `self.mote_scale`, `self.mote_lifetime` fields, seeded from
+        // `DEFAULT_MOTE_FRACTION`/`DEFAULT_MOTE_SCALE`/`DEFAULT_MOTE_LIFETIME`
+        // in `AtomCore::new`, exposed to the HUD via `AtomSim`
+        // get/set_mote_fraction/scale/lifetime for a follow-up agent to wire
+        // up debug sliders.
         /// The skin gold — same tint the retired lathe surface used.
         const MOTE_COLOR: (f32, f32, f32) = (0.95, 0.80, 0.50);
 
@@ -3535,7 +3605,7 @@ impl AtomCore {
                 None
             };
             if let Some((anchor, last, swirl)) = mote {
-                if self.rng.next_f64() < MOTE_FRACTION {
+                if self.rng.next_f64() < self.mote_fraction {
                     // Swirl-rotated final point, evaluated at u=1.0 (i.e.
                     // at the parcel's nominal lifetime, not its possibly
                     // slightly-overshot age) — the mote's fixed anchor-local
@@ -3548,10 +3618,10 @@ impl AtomCore {
                         -last.x * se + last.z * ce,
                     );
                     vp.color = MOTE_COLOR;
-                    vp.base_scale *= MOTE_SCALE;
+                    vp.base_scale *= self.mote_scale;
                     vp.grow = 0.0;
                     vp.age = 0.0;
-                    vp.lifetime = MOTE_LIFETIME * (0.8 + 0.4 * self.rng.next_f64());
+                    vp.lifetime = self.mote_lifetime * (0.8 + 0.4 * self.rng.next_f64());
                     vp.kind = VfxKind::SkinMote {
                         anchor,
                         local: mote_local,
@@ -3674,6 +3744,20 @@ impl AtomCore {
         // max-emission ring (weight 1 per alpha) or pass all the way
         // through and out the far pole (THROUGH_WEIGHT) — more engines,
         // proportionally denser flow.
+        //
+        // Gated to RigidLock only (session-31 round 4): this whole engine
+        // (and the group-anchored motes it seeds) rides the group's FROZEN
+        // phase-driven frame (`group_frames` = `(g.com, g.orientation)`,
+        // which only `sync_group_members`/RigidLock kinematics update).
+        // In RigidAlpha/FreeNucleon the group is a container only — its
+        // `com`/`orientation` stop integrating (docs/ATOM_ROTATION_AND_SIM_DESIGN.md
+        // addendum A10) while the real force-driven bodies move — so this
+        // loop would visually disconnect the flow VFX from the alphas it's
+        // supposed to be riding (user report). Per-alpha anchoring is the
+        // future fix (anchor to `VfxAnchor::Particle`/an alpha frame
+        // instead of `VfxAnchor::Group`); free-particle flow (the loop
+        // above) is unaffected since it never anchors to the group.
+        if self.dynamics == NucleusDynamics::RigidLock {
         for gi in 0..self.groups.len() {
             let (com, g_rot) = group_frames[gi];
             let axis = g_rot * DVec3::Y;
@@ -3815,6 +3899,7 @@ impl AtomCore {
                 }
             }
         }
+        } // end `if self.dynamics == NucleusDynamics::RigidLock` (nuclei emitter)
 
         // Bond stream bridges — a molecular bond IS two facing polar
         // streams meeting head-on (fourier.pdf/jup3.pdf): show charge
@@ -5391,13 +5476,17 @@ mod tests {
         );
     }
 
-    /// `channeling_factor` (A13, session-31 round 3): a same-group pole-to-
-    /// hole pair (both sides presenting their pole/hole to the other, i.e.
-    /// cos²θ = 1 on at least one side) at the funnel-mouth distance
-    /// (r = NUCLEON_PITCH = 2.6) gets C ≈ channeling·1·1; two facing
-    /// equators (cos θ = 0 on both sides) get C ≈ 0 regardless of
-    /// distance; and r ≥ 2·NUCLEON_PITCH = 5.2 gets C = 0 regardless of
-    /// angle (channeling is short-range only).
+    /// `channeling_factor` (session-31 round 4, recapture tail): a
+    /// same-group pole-to-hole pair (both sides presenting their pole/hole
+    /// to the other, i.e. cos²θ = 1 on at least one side) at the
+    /// funnel-mouth distance (r = NUCLEON_PITCH = 2.6) gets
+    /// C ≈ channeling·1·1; two facing equators (cos θ = 0 on both sides)
+    /// get C ≈ 0 regardless of distance; the OLD cliff radius
+    /// (2·NUCLEON_PITCH = 5.2) now sits mid-taper with partial channeling
+    /// still active (the recapture basin — this is the whole point of the
+    /// tail extension); and r ≥ CHANNEL_TAIL·NUCLEON_PITCH = 7.8 gets C = 0
+    /// regardless of angle (channeling is still short-range, just less of a
+    /// cliff).
     #[test]
     fn channeling_factor_pole_vs_equator_vs_distance() {
         let channeling = 1.0;
@@ -5416,16 +5505,24 @@ mod tests {
             "facing-equator pair should give C≈0 regardless of distance: {c_equator}"
         );
 
-        // Far apart (r >= 2*NUCLEON_PITCH): C = 0 even pole-on.
-        let c_far = channeling_factor(channeling, 1.0, 1.0, 2.0 * NUCLEON_PITCH);
+        // The OLD cliff radius (2*NUCLEON_PITCH = 5.2) must now sit inside
+        // the recapture basin: partial channeling still active, not zero.
+        let c_old_cliff = channeling_factor(channeling, 1.0, 1.0, 2.0 * NUCLEON_PITCH);
+        assert!(
+            c_old_cliff > 0.05 && c_old_cliff < 1.0,
+            "old cliff radius should now sit mid-taper (recapture basin), not at C=0: {c_old_cliff}"
+        );
+
+        // Far apart (r >= CHANNEL_TAIL*NUCLEON_PITCH): C = 0 even pole-on.
+        let c_far = channeling_factor(channeling, 1.0, 1.0, CHANNEL_TAIL * NUCLEON_PITCH);
         assert!(
             c_far.abs() < 1e-9,
-            "pole-on pair at r=2*NUCLEON_PITCH should give C=0 (falloff floor): {c_far}"
+            "pole-on pair at r=CHANNEL_TAIL*NUCLEON_PITCH should give C=0 (falloff floor): {c_far}"
         );
-        let c_farther = channeling_factor(channeling, 1.0, 1.0, 3.0 * NUCLEON_PITCH);
+        let c_farther = channeling_factor(channeling, 1.0, 1.0, 4.0 * NUCLEON_PITCH);
         assert!(
             c_farther.abs() < 1e-9,
-            "pole-on pair beyond 2*NUCLEON_PITCH should give C=0: {c_farther}"
+            "pole-on pair beyond CHANNEL_TAIL*NUCLEON_PITCH should give C=0: {c_farther}"
         );
     }
 
