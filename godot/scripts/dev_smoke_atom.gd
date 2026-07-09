@@ -41,10 +41,25 @@ func _process(_delta: float) -> bool:
 			mode.spawn_scenario("argon")
 		35:
 			_check_groups(1, "argon")
-			mode.spawn_scenario("protons")
+			mode.spawn_scenario("alpha")
 		40:
+			# Nucleus-dynamics sandbox round trip: RigidAlpha ->
+			# FreeNucleon -> RigidLock must survive stepping and leave
+			# the sim finite (a lone alpha has no inter-alpha pairs, so
+			# nothing should fly apart either).
+			mode.set_nucleus_dynamics(1)
+		42:
+			_check_dynamics(1, "rigid_alpha")
+			mode.set_nucleus_dynamics(2)
+		44:
+			_check_dynamics(2, "free_nucleon")
+			mode.set_nucleus_dynamics(0)
+		46:
+			_check_dynamics(0, "rigid_lock")
+			mode.spawn_scenario("protons")
+		50:
 			_check_groups(0, "protons")
-	if frames >= 45:
+	if frames >= 55:
 		if failed:
 			print("[smoke] FAILED")
 			quit(1)
@@ -59,4 +74,14 @@ func _check_groups(expected: int, label: String) -> void:
 	var skins: int = mode.group_skins.size()
 	if gcount != expected or skins != expected:
 		push_error("[smoke] %s: groups=%d skins=%d expected=%d" % [label, gcount, skins, expected])
+		failed = true
+
+func _check_dynamics(expected: int, label: String) -> void:
+	var dyn: int = mode.atom_sim.get_nucleus_dynamics()
+	if dyn != expected:
+		push_error("[smoke] %s: dynamics=%d expected=%d" % [label, dyn, expected])
+		failed = true
+	var ke: float = mode.atom_sim.get_total_kinetic_energy()
+	if not is_finite(ke):
+		push_error("[smoke] %s: non-finite kinetic energy" % label)
 		failed = true

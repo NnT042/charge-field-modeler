@@ -52,6 +52,12 @@ func _ready() -> void:
 	%SubstepsSlider.value_changed.connect(_on_substeps_changed)
 	%SubstepsSpinBox.value_changed.connect(_on_substeps_changed)
 
+	# Nucleus dynamics sandbox toggle (index == Rust NucleusDynamics: 0/1/2).
+	%DynamicsBtn.add_item("RigidLock", 0)
+	%DynamicsBtn.add_item("RigidAlpha", 1)
+	%DynamicsBtn.add_item("FreeNucleon", 2)
+	%DynamicsBtn.item_selected.connect(func(idx: int): _mode.set_nucleus_dynamics(idx))
+
 func _on_substeps_changed(value: float) -> void:
 	_mode.substeps_per_frame = int(value)
 	%SubstepsSlider.set_value_no_signal(value)
@@ -97,6 +103,9 @@ func _process(_delta: float) -> void:
 
 	# Mirror toggles that can also change via hotkeys.
 	%CloudsBtn.set_pressed_no_signal(_mode.show_clouds)
+	var dyn: int = int(sim.get_nucleus_dynamics())
+	if %DynamicsBtn.selected != dyn:
+		%DynamicsBtn.select(dyn)  # select() does not re-emit item_selected
 	if int(%SubstepsSlider.value) != _mode.substeps_per_frame:
 		%SubstepsSlider.set_value_no_signal(_mode.substeps_per_frame)
 		%SubstepsSpinBox.set_value_no_signal(_mode.substeps_per_frame)

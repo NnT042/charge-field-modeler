@@ -410,6 +410,11 @@ func set_clouds(on: bool) -> void:
 	for type_name in skin_renderers:
 		skin_renderers[type_name].visible = on
 
+func set_nucleus_dynamics(mode: int) -> void:
+	# 0 = RigidLock, 1 = RigidAlpha, 2 = FreeNucleon. Pure passthrough —
+	# all mode-transition seeding lives in Rust (AtomCore).
+	atom_sim.set_nucleus_dynamics(mode)
+
 func _update_clouds(delta: float) -> void:
 	# Clouds keep swirling while paused — they're visualization, not physics.
 	if not atom_sim.is_vfx_enabled():

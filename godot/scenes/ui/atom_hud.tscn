@@ -240,6 +240,23 @@ min_value = 1.0
 max_value = 200.0
 value = 100.0
 
+[node name="Sep4" type="HSeparator" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="DynamicsTitle" type="Label" parent="ScenarioPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Nucleus dynamics"
+
+[node name="DynamicsBtn" type="OptionButton" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "RigidLock: phase-driven display (presentable default).
+RigidAlpha: alphas become rigid bodies, forces act between them.
+FreeNucleon: every nucleon integrates freely (research sandbox).
+Switching back to RigidLock snaps the nucleus to its rest pose.
+RigidAlpha/FreeNucleon are untuned: multi-alpha nuclei fly apart."
+
 [node name="ReadoutPanel" type="PanelContainer" parent="."]
 anchor_left = 1.0
 anchor_right = 1.0
