@@ -575,6 +575,65 @@ The harness must not pretend the physics passes before it's tuned:
   table, and hard-asserting emergence before tuning would just be a red
   suite. Promote to hard tests once the user signs off on constants.
 
+### A13. Binding v2 — channeling + ambient, NOT a boost (session 31 round 3)
+
+The A11 harness proved a uniform multiplier cannot bind alphas (it scales
+attraction and repulsion equally; alphas ejected at boost 1–12,
+monotonically worse). The Mathis-faithful redesign, agreed with the user:
+
+**Sources.** bb2.pdf: "attraction must always be explained as loss of
+repulsion" (spin cancellations lower the between-field's repulsive
+energy). strong.html: "charge is channeled through the nucleus by baryon
+spin, and so does not cause a repulsion between protons... There is no
+charge field within the nucleus." nuclear.pdf: "the charge field is both
+the initial pressure and the subsequent glue."
+
+**Three mechanisms, all same-group-gated (molecular force table frozen):**
+
+1. **Channeling attenuation.** For non-skipped same-group pairs
+   (RigidAlpha/FreeNucleon), plugged neighbors route charge through each
+   other instead of colliding:
+   `C = channeling · max(cos²θ_i, cos²θ_j) · c_dist(r)` where
+   `cosθ = pole·d̂` (a partner presenting its HOLE channels; two facing
+   equators — the molecular repel config — get C≈0), and `c_dist` is a
+   smoothstep from 1 at r ≤ NUCLEON_PITCH (2.6, inside the funnel mouth)
+   to 0 at r ≥ 2·NUCLEON_PITCH. Apply `c_q × (1−C)` and `stream × (1−C)`.
+   g_q, intake, torque, vortex, corot stay full — intake IS the
+   channeled flow (diamag.pdf: polar protons are "fans, pulling charge
+   in"), and it is what holds the edge-to-hole carousel plugs.
+2. **Nuclear ambient pressure.** Same-group pairs use a new coupling
+   `nuclear_ambient` in place of the (default-0) molecular
+   `ambient_pressure` in the EXISTING shadow term
+   `P·(1−E_i)(1−E_j)·(1−occ)/r²` — the ambient field pushing fused
+   bodies into each other's charge shadows: the "subsequent glue".
+3. **Disc-aware contact.** Facing protons of adjacent alphas rest at
+   1.15 while sphere-contact fires at r_i+r_j = 2.0 — an unquenchable
+   ~85-unit repulsion that no channeling can touch (contact is never
+   attenuated, correctly). But the bodies ARE discs (the entire model is
+   planar emission); a pole-on approach nests into the funnel and only
+   the thin disc waist can collide: effective contact radius per side
+   `r_eff = r · (POLE_HALF_THICKNESS + (1−POLE_HALF_THICKNESS)·sinθ)`
+   with `POLE_HALF_THICKNESS = 0.35`, θ = angle of d̂ from that body's
+   pole. Equator-on contact unchanged (1.0); pole-on stacks contact at
+   0.35·r. GLOBAL (not group-gated) — a disc is a disc — but if any
+   molecular scenario test moves, fall back to same-group-gated and
+   report which test forced it.
+
+**New Couplings fields:** `channeling: f64` (default 1.0 = full effect
+strength, sweep dimension) and `nuclear_ambient: f64` (sweep; expect
+O(1–20)). `intra_nucleus_boost` default DROPS to 1.0 — the uniform-boost
+experiment is concluded; field kept for sweeps.
+
+**Harness (rework A11's):** `alpha_stays_bound` sweeps
+channeling {0.7, 0.9, 1.0} × nuclear_ambient {0, 2, 5, 10, 20} on
+RigidAlpha carbon, ≥20k steps, pass = some combo holds every inter-alpha
+spacing within ±30%; print the full drift table. If a combo passes: set
+its values as the Couplings defaults, un-ignore the test, and run
+`carousel_self_organizes` with the winners (report net carousel ω).
+If nothing passes: report honestly — best combo, failure mode (eject vs
+collapse vs lateral shear), and which force is unbalanced at the failure.
+`neon_is_inert` and the whole molecular suite must stay green untouched.
+
 ### A12. Part 2 — HUD toggle
 
 `atom_hud.tscn` gains a 3-state control (OptionButton or 3 buttons):

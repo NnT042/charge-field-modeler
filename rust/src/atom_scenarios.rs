@@ -875,93 +875,241 @@ mod tests {
     // ── Part 2: sim-driven nuclei validation harness (session-31 addendum
     // A11) ──────────────────────────────────────────────────────────────
 
-    /// Was to be a HARD gate (design doc §2.1/addendum A11): a carbon
-    /// nucleus (3 axially-stacked alphas, all `orbits_core == false` — no
-    /// carousel confound) switched to RigidAlpha should stay bound under
-    /// the SAME boosted molecular force model that binds H₂, not fly
-    /// apart. It does NOT, at any swept boost — **`#[ignore]`d and
-    /// demoted to a REPORT per the task's honesty rule** ("if it can't
-    /// hold a nucleus together with the molecular terms scaled up, the
-    /// force model is wrong and we want to know").
-    ///
-    /// Observed (`cargo test --release -- --ignored alpha_stays_bound
-    /// --nocapture`): adjacent alphas' facing protons rest only 1.15 apart
+    /// A11's uniform-boost sweep (7 boosts, 1x-12x) FAILED monotonically:
+    /// adjacent alphas' facing protons rest only 1.15 apart
     /// (`ALPHA_PITCH − NUCLEON_PITCH = 3.75 − 2.6`) — deep inside the
     /// H₂-scale stream-cushion standoff (~3.5 for bare facing poles, see
-    /// `Couplings::default` doc). The net pairwise force there is
-    /// strongly repulsive, and because a UNIFORM `intra_nucleus_boost`
-    /// scales every attractive AND repulsive term by the same factor, it
-    /// cannot move that force-balance point — it only scales the size of
-    /// the initial repulsive kick. The swept table confirms this: relative
-    /// drift over 20k steps *worsens monotonically* with boost (1233% at
-    /// ×1 → 2056% at ×12), the opposite of convergence. Conclusion: this
-    /// nucleus's REST geometry sits inside the "molecular, scaled up"
-    /// force model's repulsive zone — genuine nuclear fusion in Mathis's
-    /// model needs stellar pressure (nuclear.pdf: "alphas need stars"),
-    /// which is categorically stronger than "H₂ ×12"; a uniform scalar
-    /// boost of the molecular terms cannot reach it. RigidLock's
-    /// kinematic pre-fusion remains the correct presentable model; making
-    /// RigidAlpha hold would need a genuinely different (non-uniformly-
-    /// scaled, likely much shorter-range attractive) force term, which is
-    /// out of scope here.
+    /// `Couplings::default` doc), and because a UNIFORM
+    /// `intra_nucleus_boost` scales every attractive AND repulsive term by
+    /// the same factor, it cannot move that force-balance point — drift
+    /// *worsened monotonically* with boost (1233% at ×1 → 2056% at ×12).
+    ///
+    /// A13 (session-31 round 3) redesign: replace the uniform boost with
+    /// **channeling attenuation** of `c_q`/`stream` (bb2.pdf: "attraction
+    /// must always be explained as loss of repulsion") plus a
+    /// **nuclear_ambient** shadow term (nuclear.pdf: "the charge field is
+    /// both the initial pressure and the subsequent glue") — see
+    /// `Couplings::channeling`/`Couplings::nuclear_ambient` docs and
+    /// `compute_forces`. This test sweeps both dimensions on the same
+    /// carbon nucleus (3 axially-stacked alphas, all `orbits_core == false`
+    /// — no carousel confound) in RigidAlpha. Pass = SOME combo keeps every
+    /// inter-alpha center-pair distance within ±30% of its initial value
+    /// over 20k steps (the full sweep runs in ~12s release — inside the
+    /// ~30s `cargo test` gate now that this is a hard, non-ignored test).
     #[test]
-    #[ignore]
     fn alpha_stays_bound() {
         const STEPS: usize = 20_000;
         const SAMPLE_EVERY: usize = 50;
-        let boosts = [1.0, 2.0, 3.0, 4.0, 6.0, 9.0, 12.0];
+        let channelings = [0.7, 0.9, 1.0];
+        let ambients = [0.0, 2.0, 5.0, 10.0, 20.0];
 
         println!(
-            "\n{:>6} {:>9} {:>9} {:>9} {:>10}",
-            "boost", "d0_avg", "min_d", "max_d", "rel_drift"
+            "\n{:>5} {:>6} {:>10} {:>9} {:>9} {:>10}",
+            "chan", "amb", "max_drift", "min_d", "max_d", "class"
         );
-        for &boost in &boosts {
+
+        // (channeling, ambient, max_rel_drift)
+        let mut passing: Vec<(f64, f64, f64)> = Vec::new();
+        let mut all_results: Vec<(f64, f64, f64)> = Vec::new();
+        let mut best: Option<(f64, f64, f64)> = None;
+
+        for &channeling in &channelings {
+            for &ambient in &ambients {
+                let mut core = standard_core();
+                core.couplings.channeling = channeling;
+                core.couplings.nuclear_ambient = ambient;
+                let gid = core
+                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("carbon preset");
+                core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+                let n_alphas = core.groups[gid].alphas.len();
+                assert_eq!(n_alphas, 3, "carbon should have 3 alphas");
+
+                let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                let mut min_d = d0.clone();
+                let mut max_d = d0.clone();
+
+                let n_samples = STEPS / SAMPLE_EVERY;
+                for _ in 0..n_samples {
+                    core.step_n(SAMPLE_EVERY);
+                    for (k, &(a, b)) in pairs.iter().enumerate() {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        min_d[k] = min_d[k].min(d);
+                        max_d[k] = max_d[k].max(d);
+                    }
+                }
+
+                let rel_drifts: Vec<f64> = (0..pairs.len())
+                    .map(|k| {
+                        let up = (max_d[k] - d0[k]) / d0[k];
+                        let down = (min_d[k] - d0[k]) / d0[k];
+                        if up.abs() >= down.abs() { up } else { down }
+                    })
+                    .collect();
+                let max_rel_drift = rel_drifts.iter().fold(0.0f64, |acc, &d| acc.max(d.abs()));
+                let any_eject = rel_drifts.iter().any(|&d| d > 0.30);
+                let any_collapse = rel_drifts.iter().any(|&d| d < -0.30);
+                let finite = core.particles.iter().all(|p| p.position.is_finite());
+
+                let class = if !finite {
+                    "NONFIN"
+                } else if any_eject && any_collapse {
+                    "shear"
+                } else if any_eject {
+                    "eject"
+                } else if any_collapse {
+                    "collapse"
+                } else {
+                    "stable"
+                };
+
+                println!(
+                    "{channeling:>5.1} {ambient:>6.1} {:>9.1}% {:>9.3} {:>9.3} {:>10}",
+                    max_rel_drift * 100.0,
+                    min_d.iter().cloned().fold(f64::MAX, f64::min),
+                    max_d.iter().cloned().fold(0.0f64, f64::max),
+                    class,
+                );
+
+                assert!(
+                    finite,
+                    "channeling={channeling} ambient={ambient}: non-finite state"
+                );
+
+                all_results.push((channeling, ambient, max_rel_drift));
+                if max_rel_drift <= 0.30 {
+                    passing.push((channeling, ambient, max_rel_drift));
+                }
+                if best.map_or(true, |(_, _, bd)| max_rel_drift < bd) {
+                    best = Some((channeling, ambient, max_rel_drift));
+                }
+            }
+        }
+
+        let (bc, ba, bd) = best.expect("sweep always has a best");
+
+        if passing.is_empty() {
+            // HONESTY CLAUSE (A13): nothing binds — print a failure-step
+            // force breakdown for the best combo (nearest member pair
+            // between the two adjacent alphas) showing WHICH force is
+            // unbalanced, then fail. Do NOT loosen the ±30% to pass.
+            println!(
+                "\nno combo binds within +/-30% (best: channeling={bc} ambient={ba} drift={:.1}%)",
+                bd * 100.0
+            );
             let mut core = standard_core();
-            core.couplings.intra_nucleus_boost = boost;
+            core.couplings.channeling = bc;
+            core.couplings.nuclear_ambient = ba;
             let gid = core
                 .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("carbon preset");
             core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
-            assert_eq!(core.groups[gid].alphas.len(), 3, "carbon should have 3 alphas");
-
             let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
-            let d0 = [
-                (com(&core, 0) - com(&core, 1)).length(),
-                (com(&core, 1) - com(&core, 2)).length(),
-            ];
-            let mut min_d = d0;
-            let mut max_d = d0;
-            let n_samples = STEPS / SAMPLE_EVERY;
-            for _ in 0..n_samples {
-                core.step_n(SAMPLE_EVERY);
-                let d = [
-                    (com(&core, 0) - com(&core, 1)).length(),
-                    (com(&core, 1) - com(&core, 2)).length(),
-                ];
-                for k in 0..2 {
-                    min_d[k] = min_d[k].min(d[k]);
-                    max_d[k] = max_d[k].max(d[k]);
+            let d0_01 = (com(&core, 0) - com(&core, 1)).length();
+
+            let members_of =
+                |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].members.clone();
+            let (m0, m1) = (members_of(&core, 0), members_of(&core, 1));
+            let closest_pair = |core: &AtomCore| -> (usize, usize) {
+                let mut best_pair = (
+                    core.groups[gid].members[m0[0]],
+                    core.groups[gid].members[m1[0]],
+                );
+                let mut best_r = f64::MAX;
+                for &ki in &m0 {
+                    for &kj in &m1 {
+                        let pi = core.groups[gid].members[ki];
+                        let pj = core.groups[gid].members[kj];
+                        let r = core.pair_distance(pi, pj);
+                        if r < best_r {
+                            best_r = r;
+                            best_pair = (pi, pj);
+                        }
+                    }
+                }
+                best_pair
+            };
+
+            println!(
+                "\n{:>6} {:>8} {:>8} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+                "step", "d01", "drift%", "r", "channel", "f_grav", "f_charge", "f_intake",
+                "f_stream"
+            );
+            const FSAMPLE: usize = 200;
+            for s in 0..(STEPS / FSAMPLE) {
+                core.step_n(FSAMPLE);
+                let d01 = (com(&core, 0) - com(&core, 1)).length();
+                let drift = (d01 - d0_01) / d0_01;
+                let (pi, pj) = closest_pair(&core);
+                let fb = core.pair_force_breakdown(pi, pj);
+                println!(
+                    "{:>6} {:>8.3} {:>7.1}% {:>10.4} {:>10.4} {:>10.3} {:>10.3} {:>10.3} {:>10.3}",
+                    s * FSAMPLE,
+                    d01,
+                    drift * 100.0,
+                    fb[0],
+                    fb[1],
+                    fb[2],
+                    fb[3],
+                    fb[5],
+                    fb[6],
+                );
+                if drift.abs() > 0.30 {
+                    println!(
+                        "  ^ drift exceeded +/-30% at step {} (contact term f_contact={:.3})",
+                        s * FSAMPLE,
+                        fb[7]
+                    );
+                    break;
                 }
             }
-            let rel_drift = (0..2)
-                .map(|k| {
-                    (max_d[k] - d0[k]).abs().max((min_d[k] - d0[k]).abs()) / d0[k]
-                })
-                .fold(0.0f64, f64::max);
-            let finite = core.particles.iter().all(|p| p.position.is_finite());
-            println!(
-                "{:>6.1} {:>9.3} {:>9.3} {:>9.3} {:>9.1}%{}",
-                boost,
-                (d0[0] + d0[1]) / 2.0,
-                min_d[0].min(min_d[1]),
-                max_d[0].max(max_d[1]),
-                rel_drift * 100.0,
-                if finite { "" } else { "  NON-FINITE" }
+            panic!(
+                "no (channeling, nuclear_ambient) combo binds carbon within +/-30%; \
+                 best combo channeling={bc} ambient={ba} drift={:.1}% — see tables above",
+                bd * 100.0
             );
-            assert!(finite, "boost={boost}: non-finite state");
         }
+
+        // Session-31 round 3 RESULT: 9 of 15 combos bind. Winner
+        // channeling=0.9, nuclear_ambient=2.0 at 2.5% max drift — promoted
+        // to `Couplings::default` (see its doc for the full table's edge
+        // analysis: ambient=0 ejects on residual repulsion; channeling=1.0
+        // with ambient>=5 cancels repulsion completely, collapses into the
+        // disc-aware contact wall, and the never-attenuated contact spring
+        // ejects at 1e4-1e6% drift). Assert the shipped DEFAULTS are a
+        // passing combo, so any future default change must re-earn this.
         println!(
-            "no boost in the sweep keeps drift within +/-30% (worsens monotonically with boost)\n"
+            "\n{} combo(s) bind within +/-30%; best: channeling={bc} ambient={ba} drift={:.1}%",
+            passing.len(),
+            bd * 100.0
+        );
+        let def = crate::atom_core::Couplings::default();
+        let def_result = all_results
+            .iter()
+            .find(|&&(c, a, _)| {
+                (c - def.channeling).abs() < 1e-12 && (a - def.nuclear_ambient).abs() < 1e-12
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "sweep grid must include the Couplings defaults \
+                     (channeling={}, nuclear_ambient={})",
+                    def.channeling, def.nuclear_ambient
+                )
+            });
+        assert!(
+            def_result.2 <= 0.30,
+            "Couplings::default (channeling={}, nuclear_ambient={}) no longer binds carbon: \
+             max drift {:.1}% > 30%",
+            def.channeling,
+            def.nuclear_ambient,
+            def_result.2 * 100.0
         );
     }
 
@@ -1018,6 +1166,22 @@ mod tests {
     /// total KE over the run — the deliverable is the settling behavior,
     /// not a pass/fail. Run with:
     /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored carousel_self_organizes --nocapture`
+    ///
+    /// OBSERVED with the A13 binding-v2 defaults (channeling=0.9,
+    /// nuclear_ambient=2.0, session-31 round 3): it does NOT self-organize.
+    /// Net carousel ω decays monotonically 0.335 → 0 by ~step 25k (the
+    /// initial kinematic roll is damped away, never force-sustained) and
+    /// carousel spacing drifts to +705% over 40k steps (the ring migrates
+    /// outward; KE decays smoothly 21.5 → 8.8, no explosion). Mechanism:
+    /// binding v2 is a funnel-mouth effect — the channeling smoothstep dies
+    /// at 2·NUCLEON_PITCH = 5.2, but adjacent carousel alphas sit
+    /// CAROUSEL_R·√2 ≈ 6.36 apart and the core sits 4.5 from each carousel
+    /// alpha center with near-perpendicular pole geometry (cos²θ ≈ 0), so
+    /// neither channeling nor the weak 1/r² nuclear_ambient reaches the
+    /// carousel level. Stays #[ignore]d report-style per A13 ("unless it
+    /// genuinely stabilizes AND spins"). Carousel-level binding would need
+    /// the edge-to-hole funnel coupling the CAROUSEL_R doc already flags as
+    /// a future refinement.
     #[test]
     #[ignore]
     fn carousel_self_organizes() {

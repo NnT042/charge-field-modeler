@@ -360,6 +360,31 @@ const CAROUSEL_R: f64 = 4.5;
 /// but not into contact).
 const NUCLEON_PITCH: f64 = 2.6;
 
+/// Disc-aware contact fraction (A13, session-31 round 3): the bodies in
+/// this model are DISCS, not spheres — the whole force model is planar
+/// emission (`EmissionTable`, equator-bright/pole-dark). Facing protons of
+/// adjacent alphas rest well inside the old sphere-contact wall
+/// (r_i+r_j = 2.0, an unquenchable ~85-unit repulsion no channeling term
+/// could touch), because a pole-on approach nests into the partner's
+/// funnel and only the thin disc waist can actually collide, while an
+/// equator-on approach presents the full radius. Effective per-side
+/// contact radius:
+/// `r_eff = r · (POLE_HALF_THICKNESS + (1 − POLE_HALF_THICKNESS)·sinθ)`,
+/// θ = angle between the separation direction and that body's pole
+/// (sinθ=0 pole-on ⇒ r_eff=POLE_HALF_THICKNESS·r; sinθ=1 equator-on ⇒
+/// r_eff=r, unchanged from the old sphere-sum contact). 0.35 is the
+/// waist-to-radius ratio the funnel-mouth geometry implies for a nested
+/// pole-on pair (nuclear.pdf — fusion packs baryons past the free-field
+/// standoff without true contact). SAME-GROUP-GATED in `compute_forces`
+/// (not global): applying it to every pair, including molecular
+/// proton–electron contact, broke the LOCKED M5 molecular suite
+/// (`hydrogen_capture`, `derived_constants_equilibrium`,
+/// `hydrogen_orbit_stable_long_run`, `alpha_captures_electron`) by
+/// thinning the contact wall a near-pole-on electron hits, so it is
+/// restricted to RigidAlpha/FreeNucleon intra-nucleus pairs where the
+/// disc-nesting argument was actually made.
+const POLE_HALF_THICKNESS: f64 = 0.35;
+
 /// Alpha stack pitch: adjacent alpha centers along the axis. Keeps the
 /// inter-block proton gap proportional to the old layout under the new
 /// pitch.
@@ -675,14 +700,20 @@ pub const CONTACT_STIFFNESS: f64 = 100.0;
 pub const COROT_V_MAX: f64 = 0.25;
 
 /// Default intra-nucleus coupling multiplier (Part 2, session-31 addendum
-/// A9): non-skipped same-group pairs (RigidAlpha inter-alpha pairs;
-/// FreeNucleon pairs of any kind) get every charge-field pairwise term
-/// multiplied by this — "push on each other like the H₂ free protons, only
-/// stronger" (design doc Part 2 intro). Lives as a `Couplings` field
-/// (`intra_nucleus_boost`) rather than a bare-const use site so the
-/// `alpha_stays_bound` harness can sweep it at runtime; this is just its
-/// starting value.
-pub const INTRA_NUCLEUS_BOOST: f64 = 3.0;
+/// A9). ORIGINALLY the sole nuclear-binding mechanism — every charge-field
+/// pairwise term on a non-skipped same-group pair multiplied uniformly by
+/// this ("push on each other like the H₂ free protons, only stronger").
+/// The `alpha_stays_bound` sweep (A11) proved a UNIFORM boost cannot bind a
+/// nucleus: it scales attraction and repulsion equally, so it only
+/// rescales the existing molecular repulsive standoff instead of moving
+/// it — drift got monotonically WORSE with boost (1233% at ×1 to 2056% at
+/// ×12; see the historical sweep table this const's old value came from).
+/// Concluded (A13, session-31 round 3): binding needs channeling
+/// attenuation of `c_q`/`stream`, not a uniform multiplier. This const
+/// drops to 1.0 (no-op); it stays as a `Couplings` field
+/// (`intra_nucleus_boost`) so the harness can still sweep it as an
+/// orthogonal knob on top of channeling.
+pub const INTRA_NUCLEUS_BOOST: f64 = 1.0;
 
 // ── Force couplings ──────────────────────────────────────────────────────
 
@@ -693,6 +724,8 @@ pub struct Couplings {
     /// Charge coupling (1/r⁴, emission × absorption, repulsive).
     pub c_q: f64,
     /// Ambient isotropic charge pressure (pushes into charge shadows).
+    /// Molecular-scale environment term; same-group pairs use
+    /// `nuclear_ambient` instead (A13).
     pub ambient_pressure: f64,
     /// Torque coupling (sin 2θ equator-alignment).
     pub torque: f64,
@@ -712,8 +745,39 @@ pub struct Couplings {
     /// in `NucleusDynamics::RigidAlpha` / `FreeNucleon` (Part 2, session-31
     /// addendum A9). See `INTRA_NUCLEUS_BOOST` for the default/rationale;
     /// a `Couplings` field (not a bare const use site) so the
-    /// `alpha_stays_bound` harness can sweep it at runtime.
+    /// `alpha_stays_bound` harness can sweep it at runtime. Session-31
+    /// round 3 (A13) concluded a UNIFORM boost cannot bind a nucleus — it
+    /// scales attraction and repulsion equally, so it only rescales the
+    /// existing molecular repulsive standoff instead of moving it. The
+    /// default drops to 1.0 (no-op); the field stays as a sweep hook for
+    /// `c_q`/`stream` alongside channeling attenuation (below).
     pub intra_nucleus_boost: f64,
+    /// Channeling attenuation strength for non-skipped same-group pairs
+    /// (A13, session-31 round 3). Plugged neighbors route charge through
+    /// each other's pole channel instead of colliding equator-to-equator:
+    /// bb2.pdf — "attraction must always be explained as loss of
+    /// repulsion" (spin cancellations lower the between-field's repulsive
+    /// energy); strong.html — "charge is channeled through the nucleus by
+    /// baryon spin, and so does not cause a repulsion between protons...
+    /// There is no charge field within the nucleus." At `channeling = 1.0`
+    /// a pole-on pair within the funnel mouth (r ≤ NUCLEON_PITCH) has its
+    /// `c_q`/`stream` terms fully cancelled; two facing equators (the
+    /// molecular repel configuration) are unaffected (C≈0). Default 0.9 —
+    /// the `alpha_stays_bound` sweep winner: full cancellation (1.0) plus
+    /// any real ambient glue collapses the stack into the contact wall
+    /// (see `Couplings::default` doc); the 10% residual repulsion is the
+    /// cushion that keeps the bound stack off contact.
+    pub channeling: f64,
+    /// Nuclear ambient charge pressure (A13, session-31 round 3): the
+    /// same-group replacement for `ambient_pressure` in the existing
+    /// shadow term `P·(1−E_i)(1−E_j)·(1−occ)/r²` — nuclear.pdf: "the
+    /// charge field is both the initial pressure and the subsequent
+    /// glue," i.e. the field ambient to the fused nucleus pushes bodies
+    /// into each other's charge shadows, the "glue" on top of channeling's
+    /// "loss of repulsion". Default 2.0 — the `alpha_stays_bound` sweep
+    /// winner (paired with `channeling = 0.9`); 0 ejects, ≥5 with full
+    /// channeling collapses (see `Couplings::default` doc).
+    pub nuclear_ambient: f64,
 }
 
 impl Default for Couplings {
@@ -758,6 +822,22 @@ impl Default for Couplings {
     /// - `ambient_pressure = 0.0` — the pairwise shadow term stays available
     ///   for environment effects, but the H₂ bond emerges from
     ///   gravity+intake attraction vs the stream cushion without it.
+    /// - `intra_nucleus_boost = 1.0`, `channeling = 0.9`,
+    ///   `nuclear_ambient = 2.0` — nuclear-binding-only terms (A13,
+    ///   session-31 round 3), gated to non-skipped same-group pairs only;
+    ///   they do not touch the molecular defaults above. `channeling = 0.9`
+    ///   / `nuclear_ambient = 2.0` is the WINNING combo from the
+    ///   `alpha_stays_bound` 3×5 sweep (max inter-alpha drift 2.5% over 20k
+    ///   steps on RigidAlpha carbon — best of 9 passing combos; that test
+    ///   asserts these defaults keep binding). The sweep edges pin both
+    ///   values: with `nuclear_ambient = 0` the residual c_q/stream
+    ///   repulsion ejects the stack (164% drift at channeling 0.9), and at
+    ///   `channeling = 1.0` with ambient ≥ 5 the repulsion cancels
+    ///   COMPLETELY for pole-aligned pairs, the stack collapses through
+    ///   the disc-aware contact wall and the (never-attenuated)
+    ///   CONTACT_STIFFNESS spring ejects it violently (drift 10⁴–10⁶%) —
+    ///   bb2.pdf's "loss of repulsion" must stay partial, and nuclear.pdf's
+    ///   ambient "glue" must stay gentle.
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -770,6 +850,8 @@ impl Default for Couplings {
             corot: 0.5,
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
+            channeling: 0.9,
+            nuclear_ambient: 2.0,
         }
     }
 }
@@ -831,6 +913,26 @@ impl Default for AtomCore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Channeling attenuation factor `C` for a non-skipped same-group pair
+/// (A13, session-31 round 3): `C = channeling · max(cos²θ_i, cos²θ_j) ·
+/// c_dist(r)`. `cos_theta_i`/`cos_theta_j` are each `pole·d̂` toward the
+/// OTHER particle (the same convention `compute_forces` already uses for
+/// `cos_theta_i`/`cos_theta_j`) — a pole-on presentation (either side)
+/// drives the `cos²` term to 1 (routes charge through the hole instead of
+/// colliding), while two facing equators (cos ≈ 0 on both sides, the
+/// molecular repel configuration) drive it to 0 regardless of distance.
+/// `c_dist` is a smoothstep from 1 at `r ≤ NUCLEON_PITCH` (inside the
+/// funnel mouth) to 0 at `r ≥ 2·NUCLEON_PITCH` — channeling is a
+/// short-range, plugged-neighbor effect, not a whole-nucleus one.
+fn channeling_factor(channeling: f64, cos_theta_i: f64, cos_theta_j: f64, r: f64) -> f64 {
+    let lo = NUCLEON_PITCH;
+    let hi = 2.0 * NUCLEON_PITCH;
+    let t = ((r - lo) / (hi - lo)).clamp(0.0, 1.0);
+    let c_dist = 1.0 - t * t * (3.0 - 2.0 * t); // smoothstep, 1 at r=lo, 0 at r=hi
+    let pole_align = cos_theta_i.powi(2).max(cos_theta_j.powi(2));
+    channeling * pole_align * c_dist
 }
 
 impl AtomCore {
@@ -1599,6 +1701,128 @@ impl AtomCore {
         }
     }
 
+    /// Diagnostic: pairwise force-term breakdown between particles `i` and
+    /// `j`, computed with the EXACT same skip/attenuation/boost logic
+    /// `compute_forces` uses (current `self.dynamics`/`self.couplings`) —
+    /// for harness failure analysis (A13 honesty clause: "print
+    /// force_breakdown-style numbers at the failure step for the best
+    /// combo"). Read-only; not used by the sim step itself.
+    /// Returns `[r, channel, f_grav, f_charge_on_j, f_ambient,
+    /// f_intake_on_j, f_stream, f_contact]`, all UNSIGNED magnitudes of the
+    /// term as it appears in `net_on_j` (gravity/ambient/intake pull j
+    /// toward i; charge/stream/contact push j away from i).
+    pub fn pair_force_breakdown(&self, i: usize, j: usize) -> [f64; 8] {
+        let gi = self.particles[i].group;
+        let gj = self.particles[j].group;
+        let same_group = gi.is_some() && gi == gj;
+        let base_cq = self.couplings;
+
+        let d_vec = self.particles[j].position - self.particles[i].position;
+        let r2 = d_vec.length_squared();
+        let r = r2.sqrt().max(SOFTENING);
+        let r2s = r * r;
+        let r4s = r2s * r2s;
+        let d_hat = d_vec / r;
+
+        let pi_prof = &self.profiles[self.particles[i].profile_id];
+        let pj_prof = &self.profiles[self.particles[j].profile_id];
+        let pole_i = self.particles[i].pole_axis();
+        let pole_j = self.particles[j].pole_axis();
+        let cos_theta_i = pole_i.dot(d_hat);
+        let cos_theta_j = pole_j.dot(-d_hat);
+
+        let channel = if same_group {
+            channeling_factor(base_cq.channeling, cos_theta_i, cos_theta_j, r)
+        } else {
+            0.0
+        };
+        let atten = (1.0 - channel) * base_cq.intra_nucleus_boost;
+        let cq = if same_group {
+            Couplings {
+                g_q: base_cq.g_q,
+                c_q: base_cq.c_q * atten,
+                ambient_pressure: base_cq.nuclear_ambient,
+                torque: base_cq.torque,
+                vortex: base_cq.vortex,
+                drag: base_cq.drag,
+                intake: base_cq.intake,
+                corot: base_cq.corot,
+                stream: base_cq.stream * atten,
+                intra_nucleus_boost: base_cq.intra_nucleus_boost,
+                channeling: base_cq.channeling,
+                nuclear_ambient: base_cq.nuclear_ambient,
+            }
+        } else {
+            base_cq
+        };
+
+        let emission_i = pi_prof.emission.sample(cos_theta_i);
+        let emission_j = pj_prof.emission.sample(cos_theta_j);
+        let absorption_j = pj_prof.absorption.sample(cos_theta_j);
+        let absorption_i = pi_prof.absorption.sample(cos_theta_i);
+
+        let v_rel = self.particles[j].velocity - self.particles[i].velocity;
+        let v_radial = v_rel.dot(d_hat);
+        let doppler = (1.0 - cq.drag * v_radial).clamp(0.2, 5.0);
+
+        let f_grav = cq.g_q * pi_prof.mass * pj_prof.mass / r2s;
+        let mass_prod = pi_prof.mass * pj_prof.mass;
+        let f_charge_on_j = cq.c_q * mass_prod * emission_i * absorption_j / r4s * doppler;
+
+        let n = self.particles.len();
+        let occlusion = self.compute_occlusion();
+        let occ = occlusion[i * n + j];
+        let shadow = (1.0 - emission_i) * (1.0 - emission_j);
+        let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / r2s;
+
+        let ai2 = absorption_i * absorption_i;
+        let f_intake_on_j = cq.intake * pi_prof.mass * pj_prof.mass * ai2 * (1.0 - occ) / r2s;
+
+        let aj2 = absorption_j * absorption_j;
+        let ei2 = emission_i * emission_i;
+        let ej2 = emission_j * emission_j;
+        let f_stream = cq.stream
+            * (mass_prod * mass_prod)
+            * (ai2 * aj2 + ei2 * ej2)
+            * (1.0 + 2.0 * occ)
+            / r4s;
+
+        let ri = pi_prof.radius.max(MIN_RENDER_RADIUS as f64);
+        let rj = pj_prof.radius.max(MIN_RENDER_RADIUS as f64);
+        let r_contact = if same_group {
+            let sin_theta_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
+            let sin_theta_j = (1.0 - cos_theta_j * cos_theta_j).max(0.0).sqrt();
+            let ri_eff = ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i);
+            let rj_eff = rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j);
+            ri_eff + rj_eff
+        } else {
+            ri + rj
+        };
+        let f_contact = if r < r_contact {
+            let overlap = r_contact - r;
+            let mut fc = CONTACT_STIFFNESS * overlap;
+            if v_radial < 0.0 {
+                let m_red = mass_prod / (pi_prof.mass + pj_prof.mass);
+                let c_n = 2.0 * (CONTACT_STIFFNESS * m_red).sqrt();
+                fc -= c_n * v_radial;
+            }
+            fc
+        } else {
+            0.0
+        };
+
+        [
+            r,
+            channel,
+            f_grav,
+            f_charge_on_j,
+            f_ambient,
+            f_intake_on_j,
+            f_stream,
+            f_contact,
+        ]
+    }
+
     /// Contact distance (sum of render-clamped radii) for a particle pair.
     pub fn contact_distance(&self, a: usize, b: usize) -> f64 {
         let ra = self
@@ -2016,35 +2240,6 @@ impl AtomCore {
                     continue;
                 }
 
-                // Intra-nucleus coupling boost: a non-skipped same-group
-                // pair (RigidAlpha inter-alpha pairs; any FreeNucleon pair)
-                // gets every charge-field term below multiplied by
-                // `intra_nucleus_boost` — the SAME pairwise physics used
-                // for free-proton molecular bonding, just stronger (no new
-                // force law). `drag` is a dimensionless doppler correction
-                // factor, not a force magnitude, so it's left unboosted;
-                // the hard contact-repulsion term further below reads
-                // CONTACT_STIFFNESS directly (never `cq`), so it is
-                // automatically excluded too — fusion must not become a
-                // spring-launcher.
-                let cq = if same_group {
-                    Couplings {
-                        g_q: base_cq.g_q * base_cq.intra_nucleus_boost,
-                        c_q: base_cq.c_q * base_cq.intra_nucleus_boost,
-                        ambient_pressure: base_cq.ambient_pressure
-                            * base_cq.intra_nucleus_boost,
-                        torque: base_cq.torque * base_cq.intra_nucleus_boost,
-                        vortex: base_cq.vortex * base_cq.intra_nucleus_boost,
-                        drag: base_cq.drag,
-                        intake: base_cq.intake * base_cq.intra_nucleus_boost,
-                        corot: base_cq.corot * base_cq.intra_nucleus_boost,
-                        stream: base_cq.stream * base_cq.intra_nucleus_boost,
-                        intra_nucleus_boost: base_cq.intra_nucleus_boost,
-                    }
-                } else {
-                    base_cq
-                };
-
                 let d_vec = self.particles[j].position - self.particles[i].position;
                 let r2 = d_vec.length_squared();
                 let r = r2.sqrt().max(SOFTENING);
@@ -2062,6 +2257,54 @@ impl AtomCore {
                 let cos_theta_i = pole_i.dot(d_hat);
                 // θ_B: angle from B's pole to direction toward A
                 let cos_theta_j = pole_j.dot(-d_hat);
+
+                // Binding v2 (A13, session-31 round 3): a non-skipped
+                // same-group pair (RigidAlpha inter-alpha pairs; any
+                // FreeNucleon pair) gets `c_q`/`stream` ATTENUATED by the
+                // channeling factor C (bb2.pdf: "attraction must always be
+                // explained as loss of repulsion"; strong.html: "charge is
+                // channeled through the nucleus by baryon spin... There is
+                // no charge field within the nucleus") and `ambient_pressure`
+                // replaced by `nuclear_ambient` (nuclear.pdf: "the charge
+                // field is both the initial pressure and the subsequent
+                // glue"). `intra_nucleus_boost` (default 1.0, a sweep hook
+                // left over from the concluded uniform-boost experiment —
+                // see its doc) still multiplies `c_q`/`stream` on top.
+                // Everything else (g_q, torque, vortex, intake, corot,
+                // drag) is left UNMULTIPLIED — intake IS the channeled flow
+                // (diamag.pdf: polar protons are "fans, pulling charge in")
+                // and is what holds the edge-to-hole carousel plugs; it
+                // must not also be attenuated by channeling or it would
+                // undermine the very mechanism it represents. The hard
+                // contact-repulsion term further below reads
+                // CONTACT_STIFFNESS directly (never `cq`), so it is
+                // unaffected by any of this — fusion must not become a
+                // spring-launcher.
+                let cq = if same_group {
+                    let channel = channeling_factor(
+                        base_cq.channeling,
+                        cos_theta_i,
+                        cos_theta_j,
+                        r,
+                    );
+                    let atten = (1.0 - channel) * base_cq.intra_nucleus_boost;
+                    Couplings {
+                        g_q: base_cq.g_q,
+                        c_q: base_cq.c_q * atten,
+                        ambient_pressure: base_cq.nuclear_ambient,
+                        torque: base_cq.torque,
+                        vortex: base_cq.vortex,
+                        drag: base_cq.drag,
+                        intake: base_cq.intake,
+                        corot: base_cq.corot,
+                        stream: base_cq.stream * atten,
+                        intra_nucleus_boost: base_cq.intra_nucleus_boost,
+                        channeling: base_cq.channeling,
+                        nuclear_ambient: base_cq.nuclear_ambient,
+                    }
+                } else {
+                    base_cq
+                };
 
                 let emission_i = pi_prof.emission.sample(cos_theta_i);
                 let emission_j = pj_prof.emission.sample(cos_theta_j);
@@ -2279,9 +2522,40 @@ impl AtomCore {
                 // with near-critical normal damping while approaching —
                 // an undamped spring against the 1/1836-mass electron
                 // (dt·ω ≈ 0.2) scatters it chaotically ("bunny hopping").
+                //
+                // Disc-aware effective radii (A13, session-31 round 3): the
+                // bodies are planar emitters, not spheres, so a pole-on
+                // approach nests into the partner's funnel and only the
+                // thin disc waist can collide, while an equator-on approach
+                // presents the full radius (see `POLE_HALF_THICKNESS` doc
+                // for the r_eff formula). The design doc calls for this
+                // GLOBALLY (every pair, "a disc is a disc regardless of
+                // fusion state") but that measurably broke the molecular
+                // suite: `hydrogen_capture`, `derived_constants_equilibrium`,
+                // `hydrogen_orbit_stable_long_run`, and
+                // `alpha_captures_electron` all failed with disc-aware
+                // contact applied to proton–electron pairs (thinning the
+                // contact wall for a near-pole-on electron let it punch
+                // through to unstable orbits/escape) — this could not be
+                // honestly attributed to improved physics, it's a
+                // regression of the LOCKED M5 molecular force table. Per
+                // the doc's own fallback clause, disc-aware contact is
+                // SAME-GROUP-GATED only (RigidAlpha/FreeNucleon intra-
+                // nucleus pairs); every other pair keeps the plain
+                // sphere-sum contact that the M5 lockdown tests pin.
                 let ri = pi_prof.radius.max(MIN_RENDER_RADIUS as f64);
                 let rj = pj_prof.radius.max(MIN_RENDER_RADIUS as f64);
-                let r_contact = ri + rj;
+                let r_contact = if same_group {
+                    let sin_theta_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
+                    let sin_theta_j = (1.0 - cos_theta_j * cos_theta_j).max(0.0).sqrt();
+                    let ri_eff =
+                        ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i);
+                    let rj_eff =
+                        rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j);
+                    ri_eff + rj_eff
+                } else {
+                    ri + rj
+                };
                 if r < r_contact {
                     let overlap = r_contact - r;
                     let mut f_contact = CONTACT_STIFFNESS * overlap;
@@ -5114,6 +5388,44 @@ mod tests {
         assert!(
             lone.particles.iter().any(|p| p.force_accum.length() > 1e-9),
             "FreeNucleon must never skip"
+        );
+    }
+
+    /// `channeling_factor` (A13, session-31 round 3): a same-group pole-to-
+    /// hole pair (both sides presenting their pole/hole to the other, i.e.
+    /// cos²θ = 1 on at least one side) at the funnel-mouth distance
+    /// (r = NUCLEON_PITCH = 2.6) gets C ≈ channeling·1·1; two facing
+    /// equators (cos θ = 0 on both sides) get C ≈ 0 regardless of
+    /// distance; and r ≥ 2·NUCLEON_PITCH = 5.2 gets C = 0 regardless of
+    /// angle (channeling is short-range only).
+    #[test]
+    fn channeling_factor_pole_vs_equator_vs_distance() {
+        let channeling = 1.0;
+
+        // Pole-to-hole: both sides present their pole (cos θ = ±1).
+        let c_pole = channeling_factor(channeling, 1.0, 1.0, NUCLEON_PITCH);
+        assert!(
+            (c_pole - channeling).abs() < 1e-9,
+            "pole-to-hole pair at r=NUCLEON_PITCH should give C≈channeling: {c_pole}"
+        );
+
+        // Facing equators: both sides present their equator (cos θ = 0).
+        let c_equator = channeling_factor(channeling, 0.0, 0.0, NUCLEON_PITCH);
+        assert!(
+            c_equator.abs() < 1e-9,
+            "facing-equator pair should give C≈0 regardless of distance: {c_equator}"
+        );
+
+        // Far apart (r >= 2*NUCLEON_PITCH): C = 0 even pole-on.
+        let c_far = channeling_factor(channeling, 1.0, 1.0, 2.0 * NUCLEON_PITCH);
+        assert!(
+            c_far.abs() < 1e-9,
+            "pole-on pair at r=2*NUCLEON_PITCH should give C=0 (falloff floor): {c_far}"
+        );
+        let c_farther = channeling_factor(channeling, 1.0, 1.0, 3.0 * NUCLEON_PITCH);
+        assert!(
+            c_farther.abs() < 1e-9,
+            "pole-on pair beyond 2*NUCLEON_PITCH should give C=0: {c_farther}"
         );
     }
 
