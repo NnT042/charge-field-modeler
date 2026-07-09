@@ -532,11 +532,21 @@ func _update_pole_mesh(buf: PackedFloat32Array, count: int):
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
 	pole_lines.mesh = mesh
 
-## Composite nucleus skins: one reach-envelope mesh per rigid group. The
-## mesh is built once per scenario spawn (the group geometry is rigid) and
-## rides the group's transform every frame. Fused constituents draw no
-## individual skins; this gold envelope is the field the nucleus projects
-## as a unit.
+## Composite nucleus skins: quantitative line overlays per rigid group
+## (per-alpha max-emission rings + the carousel dispersal-circle overlay),
+## riding the group's transform every frame. The closed translucent
+## reach-envelope surface that used to fill this mesh is RETIRED
+## (session-31 user decision): any closed surface wrapped around a
+## multi-piece nucleus reads as a blob ("gold sausage"), no matter how
+## thin or well-shaded. The emission rings are now the primary readout of
+## the reach surface, and the boundary itself is sketched by VFX —
+## charge-flow parcels already die exactly at the field-reach boundary
+## (see Rust `VfxKind::SkinMote` in atom_core.rs), so their deaths leave a
+## living point-cloud tracing the same surface this mesh used to draw
+## solid. `build_group_skin_mesh` itself stays in Rust — tests use it, and
+## a future click-to-inspect mode will too — this function just stops
+## consuming it for rendering. Fused constituents draw no individual
+## per-particle skins either; the group's line overlays are the readout.
 func _update_group_skins() -> void:
 	var gcount: int = atom_sim.get_group_count()
 	if _group_skins_dirty or gcount != group_skins.size():
@@ -546,9 +556,8 @@ func _update_group_skins() -> void:
 		group_skins.clear()
 		group_skin_overlays.clear()
 		for gi in range(gcount):
-			var buf: PackedFloat32Array = atom_sim.build_group_skin_mesh(gi, 48, 24)
 			var mi := MeshInstance3D.new()
-			var mesh := _build_array_mesh(buf, _skin_mat)
+			var mesh := ArrayMesh.new()
 			_add_emission_ring_surfaces(mesh, gi)
 			mi.mesh = mesh
 			add_child(mi)

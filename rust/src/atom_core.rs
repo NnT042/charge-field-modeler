@@ -593,10 +593,32 @@ enum VfxKind {
         swirl: f64,
         color_end: (f32, f32, f32),
         pts: Vec<DVec3>,
+        /// True for paths that END at the field-reach boundary (free
+        /// loops, group through-paths, group disc exits) — these are
+        /// eligible to leave a `SkinMote` behind when they die. False for
+        /// electron-capture paths, which end at the rider, not the skin.
+        dies_at_skin: bool,
+    },
+    /// A boundary mote: session-31 replacement for the translucent lathe
+    /// "skin" surface around a composite nucleus. Flow parcels already
+    /// die exactly at the field-reach boundary, so instead of a closed
+    /// surface (which the user flagged as reading like a "gold sausage"
+    /// blob), a fraction of those deaths leave a brief bright dot pinned
+    /// AT the death point — hundreds of these per second sketch the
+    /// reach surface as a living point-cloud, without ever drawing a
+    /// continuous membrane. `local` is fixed in the anchor's frame (the
+    /// mote rides the nucleus/particle); `swirl` is a slow residual spin
+    /// about the anchor's Y axis, same formula as `Flow`'s whole-path
+    /// swirl but at the mote's own (much slower) rate.
+    SkinMote {
+        anchor: VfxAnchor,
+        local: DVec3,
+        swirl: f64,
     },
 }
 
 /// What a flow parcel's path is expressed relative to.
+#[derive(Clone, Copy)]
 enum VfxAnchor {
     /// A free particle: position + pole frame (build_frame — the visual
     /// swirl is applied separately at a readable rate, not the physical
@@ -3093,6 +3115,20 @@ impl AtomCore {
         const THROUGH_COLOR: (f32, f32, f32) = (0.75, 0.90, 1.00);
         const ELECTRON_COLOR: (f32, f32, f32) = (0.20, 0.90, 0.35);
         const PROTON_COLOR: (f32, f32, f32) = (0.92, 0.30, 0.20);
+        /// Share of skin-boundary deaths that leave a mote behind — the
+        /// density knob for the boundary point-cloud (session-31: replaces
+        /// the lathe skin surface entirely).
+        const MOTE_FRACTION: f64 = 0.6;
+        /// Mote lifetime (s) — long enough to read as a lingering point on
+        /// the boundary, short enough that the cloud stays "live".
+        const MOTE_LIFETIME: f64 = 2.8;
+        /// Motes are deliberately oversized stand-ins for the hundreds of
+        /// real parcels they represent — user request, RX 550 budget (a
+        /// few hundred big dots read better than thousands of true-scale
+        /// ones on this hardware).
+        const MOTE_SCALE: f32 = 3.0;
+        /// The skin gold — same tint the retired lathe surface used.
+        const MOTE_COLOR: (f32, f32, f32) = (0.95, 0.80, 0.50);
 
         if !self.vfx_enabled || self.particles.is_empty() {
             self.vfx_particles.clear();
@@ -3137,7 +3173,16 @@ impl AtomCore {
             .map(|g| (g.com, g.orientation))
             .collect();
 
-        // Age + kinematic path evaluation.
+        // Age + kinematic path evaluation. A skin-dying Flow parcel that
+        // crosses death this frame has a chance to convert IN PLACE into a
+        // SkinMote instead of being culled — flow parcels already die
+        // exactly at the field-reach boundary, so letting a fraction of
+        // those deaths leave a bright dot sketches the boundary as a
+        // living point-cloud (session-31: replaces the lathe skin, which
+        // read as a "gold sausage" blob around multi-piece nuclei). Flow
+        // parcels keep priority over the pool budget, so conversion is
+        // skipped once the pool is nearly full.
+        let skip_motes = self.vfx_particles.len() as f64 >= MAX_POOL as f64 * 0.9;
         for vp in &mut self.vfx_particles {
             vp.age += delta;
             match vp.kind {
@@ -3170,6 +3215,74 @@ impl AtomCore {
                         -local.x * s + local.z * c,
                     );
                     vp.position = origin + rot * sw;
+                }
+                VfxKind::SkinMote {
+                    ref anchor,
+                    local,
+                    swirl,
+                } => {
+                    let frame = match *anchor {
+                        VfxAnchor::Particle(i) => emitters.get(i).map(|e| (e.pos, e.rot)),
+                        VfxAnchor::Group(gi) => group_frames.get(gi).copied(),
+                    };
+                    let Some((origin, rot)) = frame else {
+                        vp.age = vp.lifetime + 1.0; // anchor gone — cull
+                        continue;
+                    };
+                    let a = swirl * vp.age;
+                    let (s, c) = a.sin_cos();
+                    let sw = DVec3::new(
+                        local.x * c + local.z * s,
+                        local.y,
+                        -local.x * s + local.z * c,
+                    );
+                    vp.position = origin + rot * sw;
+                }
+            }
+
+            // Read-only probe for a skin-death conversion — kept as its
+            // own statement so the borrow from the match above (through
+            // `pts`/`anchor`) is fully released before we write vp.kind
+            // back below.
+            let mote: Option<(VfxAnchor, DVec3, f64)> = if let VfxKind::Flow {
+                anchor,
+                swirl,
+                dies_at_skin,
+                pts,
+                ..
+            } = &vp.kind
+            {
+                if *dies_at_skin && vp.age >= vp.lifetime && !skip_motes {
+                    Some((*anchor, *pts.last().unwrap(), *swirl))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((anchor, last, swirl)) = mote {
+                if self.rng.next_f64() < MOTE_FRACTION {
+                    // Swirl-rotated final point, evaluated at u=1.0 (i.e.
+                    // at the parcel's nominal lifetime, not its possibly
+                    // slightly-overshot age) — the mote's fixed anchor-local
+                    // position.
+                    let a_end = swirl * vp.lifetime;
+                    let (se, ce) = a_end.sin_cos();
+                    let mote_local = DVec3::new(
+                        last.x * ce + last.z * se,
+                        last.y,
+                        -last.x * se + last.z * ce,
+                    );
+                    vp.color = MOTE_COLOR;
+                    vp.base_scale *= MOTE_SCALE;
+                    vp.grow = 0.0;
+                    vp.age = 0.0;
+                    vp.lifetime = MOTE_LIFETIME * (0.8 + 0.4 * self.rng.next_f64());
+                    vp.kind = VfxKind::SkinMote {
+                        anchor,
+                        local: mote_local,
+                        swirl: swirl * 0.25,
+                    };
                 }
             }
         }
@@ -3243,6 +3356,7 @@ impl AtomCore {
                             swirl: em.spin_sign * FLOW_SWIRL,
                             color_end: em.color,
                             pts,
+                            dies_at_skin: true, // free recycling loop — ends at the reach boundary
                         },
                     });
                 }
@@ -3273,6 +3387,7 @@ impl AtomCore {
                                 swirl: em.spin_sign * FLOW_SWIRL,
                                 color_end: ELECTRON_COLOR,
                                 pts,
+                                dies_at_skin: false, // captured at the rider, not the skin
                             },
                         });
                     }
@@ -3392,6 +3507,7 @@ impl AtomCore {
                             swirl: FLOW_SWIRL,
                             color_end,
                             pts,
+                            dies_at_skin: true, // through-path or disc exit — both end at the reach boundary
                         },
                     });
                 }
@@ -3418,6 +3534,7 @@ impl AtomCore {
                                 swirl: FLOW_SWIRL,
                                 color_end: ELECTRON_COLOR,
                                 pts,
+                                dies_at_skin: false, // captured at the rider, not the skin
                             },
                         });
                     }
@@ -3478,11 +3595,16 @@ impl AtomCore {
             let t = (vp.age / vp.lifetime) as f32;
             // Quick fade-in; stays bright most of the trip and drops off
             // near the end — the parcel visibly REACHES its exit before
-            // dying there.
-            let fade = (t / 0.12).min(1.0) * (1.0 - t * t * t).max(0.0);
+            // dying there. SkinMotes get their own smooth in-out instead
+            // (they don't "travel", they just bloom and fade in place).
+            let fade = match vp.kind {
+                VfxKind::SkinMote { .. } => (std::f32::consts::PI * t).sin().max(0.0),
+                _ => (t / 0.12).min(1.0) * (1.0 - t * t * t).max(0.0),
+            };
             let scale = (vp.base_scale * (1.0 + vp.grow * vp.age as f32)).max(0.004);
             // Flow parcels recolor as they recycle: intake tint on the way
-            // in, exit tint on the way out.
+            // in, exit tint on the way out. SkinMotes hold the skin-gold
+            // tint steady — they mark a boundary point, not a transition.
             let (cr, cg, cb, brightness) = match vp.kind {
                 VfxKind::Flow { color_end, .. } => (
                     vp.color.0 + (color_end.0 - vp.color.0) * t,
@@ -3491,6 +3613,7 @@ impl AtomCore {
                     0.9f32, // tiny dots need the extra alpha
                 ),
                 VfxKind::Smoke => (vp.color.0, vp.color.1, vp.color.2, 0.6),
+                VfxKind::SkinMote { .. } => (vp.color.0, vp.color.1, vp.color.2, 0.9f32),
             };
             buf.extend_from_slice(&[
                 scale, 0.0, 0.0, vp.position.x as f32,
@@ -4255,6 +4378,53 @@ mod tests {
         }
         assert!(disc > 0, "expected disc-ring exits, got none");
         assert!(through > 0, "expected through-channel exits, got none");
+    }
+
+    /// Session-31: the lathe "skin" surface is retired in favor of
+    /// boundary motes — skin-dying flow parcels (free loops, group
+    /// through-paths, group disc exits) leave a bright skin-gold dot
+    /// behind at their death point instead of always being culled. Over a
+    /// few seconds of a neon nucleus's flow, the buffer should contain at
+    /// least one MOTE_COLOR instance, and the pool must stay bounded.
+    #[test]
+    fn flow_deaths_leave_skin_motes() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        core.set_vfx_enabled(true);
+
+        const MOTE_COLOR: (f32, f32, f32) = (0.95, 0.80, 0.50);
+        const MAX_POOL: usize = 40_000; // mirrors advance_clouds' local const
+
+        let mut found_mote = false;
+        for _ in 0..120 {
+            // 120 × 0.05s = 6.0 simulated seconds.
+            let buf = core.advance_clouds(0.05);
+            assert!(
+                core.vfx_count() < MAX_POOL,
+                "vfx pool exceeded its budget: {}",
+                core.vfx_count()
+            );
+            for chunk in buf.chunks_exact(16) {
+                let (r, g, b, a) = (chunk[12], chunk[13], chunk[14], chunk[15]);
+                if a > 0.0
+                    && (r - MOTE_COLOR.0).abs() < 1e-3
+                    && (g - MOTE_COLOR.1).abs() < 1e-3
+                    && (b - MOTE_COLOR.2).abs() < 1e-3
+                {
+                    found_mote = true;
+                }
+            }
+        }
+        assert!(
+            found_mote,
+            "expected at least one visible skin-mote instance in the buffer"
+        );
     }
 
     /// The charge-field lock: a spun-up nucleus relaxes back to rest
