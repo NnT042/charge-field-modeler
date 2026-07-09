@@ -3814,10 +3814,20 @@ fn push_transform_color(
     let y = rq * DVec3::Y;
     let z = rq * DVec3::Z;
 
+    // Godot's MultiMesh buffer wants the MATRIX ROWS (basis.rows[i] =
+    // (x_axis.i, y_axis.i, z_axis.i)) with the origin interleaved — NOT
+    // the axis vectors written out as rows. Writing axes-as-rows is the
+    // TRANSPOSE, i.e. every body renders with the INVERSE rotation. That
+    // bug hid for months because all visible rotations were about each
+    // body's own pole (a body of revolution spinning backwards looks
+    // identical, and ±pole flips are invisible on symmetric traces); the
+    // carousel ride was the first big rotation about a non-pole axis and
+    // rendered as a synchronized counter-spin "twirl" (session-31,
+    // verified against godot mesh_storage.cpp multimesh_instance_set_transform).
     buf.extend_from_slice(&[
-        x.x as f32 * scale, x.y as f32 * scale, x.z as f32 * scale, pos.x as f32,
-        y.x as f32 * scale, y.y as f32 * scale, y.z as f32 * scale, pos.y as f32,
-        z.x as f32 * scale, z.y as f32 * scale, z.z as f32 * scale, pos.z as f32,
+        x.x as f32 * scale, y.x as f32 * scale, z.x as f32 * scale, pos.x as f32,
+        x.y as f32 * scale, y.y as f32 * scale, z.y as f32 * scale, pos.y as f32,
+        x.z as f32 * scale, y.z as f32 * scale, z.z as f32 * scale, pos.z as f32,
     ]);
     buf.extend_from_slice(&[color.0, color.1, color.2, alpha]);
 }
@@ -4488,6 +4498,107 @@ mod tests {
             rho_eq > 3.0 * rho_pole,
             "skin must read as a wide equatorial ledge: eq={rho_eq} pole={rho_pole}"
         );
+    }
+
+    /// TEMP session-31 diagnostic probe (run with `-- --ignored
+    /// probe_carousel_twirl --nocapture`): reproduce the app frame loop
+    /// on neon and measure each body's ACTUAL angular velocity,
+    /// decomposed about the core axis (world Y) and about its own
+    /// alpha's current axis. Expected: carousel members show
+    /// ω·Y = CAROUSEL_VIS_RATE (the ride) and ω·u = DISPLAY_SPIN_RATE
+    /// (the roll); anything else is the reported twirl.
+    #[test]
+    #[ignore]
+    fn probe_carousel_twirl() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon");
+        let gid = 0;
+        let proton_id = core.profile_id_by_name("proton").unwrap();
+
+        // One core proton + one proton and one post from each carousel alpha.
+        let mut tracked: Vec<(String, usize, usize)> = Vec::new(); // (label, particle, alpha)
+        for (ai, a) in core.groups[gid].alphas.iter().enumerate() {
+            let mut got_proton = false;
+            for &k in &a.members {
+                let pid = core.groups[gid].members[k];
+                let is_p = core.particles[pid].profile_id == proton_id;
+                if is_p && !got_proton {
+                    tracked.push((
+                        format!("{}[{ai}].proton", if a.orbits_core { "car" } else { "core" }),
+                        pid,
+                        ai,
+                    ));
+                    got_proton = true;
+                } else if !is_p && a.orbits_core && a.members.len() == 4 {
+                    tracked.push((format!("car[{ai}].post"), pid, ai));
+                    break;
+                }
+            }
+        }
+
+        // Mirror the app loop: 100 physics substeps + one wall-clock
+        // display advance per 60 fps frame.
+        const FRAMES: usize = 120;
+        const DT: f64 = 1.0 / 60.0;
+        let mut prev_q: Vec<DQuat> =
+            tracked.iter().map(|t| core.particles[t.1].orientation).collect();
+        let mut prev_pos: Vec<DVec3> =
+            tracked.iter().map(|t| core.particles[t.1].position).collect();
+        let mut acc_w: Vec<DVec3> = vec![DVec3::ZERO; tracked.len()];
+        let mut acc_orbit: Vec<f64> = vec![0.0; tracked.len()];
+        for _ in 0..FRAMES {
+            core.step_n(100);
+            core.advance_display(DT);
+            for (ti, t) in tracked.iter().enumerate() {
+                let q = core.particles[t.1].orientation;
+                let dq = (q * prev_q[ti].conjugate()).normalize();
+                let (axis, angle) = dq.to_axis_angle();
+                // Wrap to the short way around.
+                let angle = if angle > std::f64::consts::PI {
+                    angle - TAU
+                } else {
+                    angle
+                };
+                acc_w[ti] += axis * (angle / DT);
+                let p0 = prev_pos[ti];
+                let p1 = core.particles[t.1].position;
+                acc_orbit[ti] +=
+                    (p1.z.atan2(p1.x) - p0.z.atan2(p0.x) + std::f64::consts::PI)
+                        .rem_euclid(TAU) - std::f64::consts::PI;
+                prev_q[ti] = q;
+                prev_pos[ti] = p1;
+            }
+        }
+        let total_t = FRAMES as f64 * DT;
+        println!(
+            "\nexpected: ride(Y) = {CAROUSEL_VIS_RATE}, roll(u) = {DISPLAY_SPIN_RATE}\n\
+             {:<16} {:>8} {:>8} {:>8} {:>10}",
+            "body", "w_Y", "w_u", "|w|", "orbit_rate"
+        );
+        for (ti, t) in tracked.iter().enumerate() {
+            let w = acc_w[ti] / FRAMES as f64;
+            let a = &core.groups[gid].alphas[t.2];
+            let car = if a.orbits_core {
+                DQuat::from_rotation_y(core.groups[gid].carousel_phase)
+            } else {
+                DQuat::IDENTITY
+            };
+            let u = (core.groups[gid].orientation * (car * a.rest_axis)).normalize();
+            println!(
+                "{:<16} {:>8.3} {:>8.3} {:>8.3} {:>10.3}",
+                t.0,
+                w.dot(DVec3::Y),
+                w.dot(u),
+                w.length(),
+                acc_orbit[ti] / total_t
+            );
+        }
     }
 
     /// Overlay-clamp (session-31 addendum A6/A8, replaces the old
