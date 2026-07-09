@@ -612,4 +612,32 @@ impl AtomSim {
     fn is_vfx_enabled(&self) -> bool {
         self.core.vfx_enabled
     }
+
+    // ── Nucleus dynamics mode (Part 2 sandbox toggle) ─────────────────
+
+    /// Switch nucleus dynamics: 0 = RigidLock (presentable default,
+    /// phase-driven), 1 = RigidAlpha (alphas are rigid bodies, forces act
+    /// BETWEEN alphas), 2 = FreeNucleon (every nucleon is a free force
+    /// participant). Out-of-range values fall back to RigidLock. See
+    /// AtomCore::set_nucleus_dynamics for the mode-transition seeding.
+    #[func]
+    fn set_nucleus_dynamics(&mut self, mode: i32) {
+        use crate::atom_core::NucleusDynamics;
+        let mode = match mode {
+            1 => NucleusDynamics::RigidAlpha,
+            2 => NucleusDynamics::FreeNucleon,
+            _ => NucleusDynamics::RigidLock,
+        };
+        self.core.set_nucleus_dynamics(mode);
+    }
+
+    #[func]
+    fn get_nucleus_dynamics(&self) -> i32 {
+        use crate::atom_core::NucleusDynamics;
+        match self.core.get_nucleus_dynamics() {
+            NucleusDynamics::RigidLock => 0,
+            NucleusDynamics::RigidAlpha => 1,
+            NucleusDynamics::FreeNucleon => 2,
+        }
+    }
 }

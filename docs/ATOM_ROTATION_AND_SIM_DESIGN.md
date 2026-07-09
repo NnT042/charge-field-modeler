@@ -512,3 +512,73 @@ the paired neutron.
 - `heavier_presets_smoke` per A7. Everything else must pass UNCHANGED —
   buffer formats, GDScript API (`get_group_carousel_phase`,
   `advance_display`, overlay packing) are frozen for Part 1.
+
+### A9. Part 2 — where the mode lives (refines §2.1)
+
+`NucleusDynamics` is a GLOBAL setting on `AtomCore`
+(`pub dynamics: NucleusDynamics`, default `RigidLock`), exposed through
+`AtomSim` as `set_nucleus_dynamics(mode: i32)` / `get_nucleus_dynamics()
+-> i32` (0/1/2). Per-group mixing is not needed for the sandbox.
+`SimParticle` gains `pub alpha: Option<usize>` (index into its group's
+`alphas`), set at spawn — the skip predicate needs it:
+
+```
+RigidLock:   skip iff same group
+RigidAlpha:  skip iff same group AND same alpha index
+FreeNucleon: never skip
+```
+
+Non-skipped same-group pairs get every pairwise force term multiplied by
+`INTRA_NUCLEUS_BOOST` (new pub const, start 3.0, sweep in the harness).
+
+### A10. Part 2 — mode transitions (refines §2.2)
+
+`set_nucleus_dynamics` seeds state on entry:
+- **→ RigidAlpha / FreeNucleon:** capture each alpha's CURRENT kinematic
+  pose as its body state: `orientation = g.orientation·Car·R_a·Roll`,
+  `com = g.com + g.orientation·(Car·rest_center)`, `velocity` = the
+  rigid+carousel field at the alpha center, `angular_velocity` = group ω
+  (+ carousel ω if orbits_core) + own-axis roll rate. FreeNucleon
+  additionally leaves each member particle with its current
+  position/velocity/ω (already correct from the last sync) and simply
+  stops rigid syncing.
+- **→ RigidLock:** snap back to the kinematic pose (resume phase-driven
+  sync from the stored `roll_phase`/`carousel_phase`). Positions jump;
+  that's fine for a sandbox toggle — document it in the HUD tooltip.
+- In RigidAlpha, `kick`/`drift` integrate ALPHAS (aggregate member force →
+  alpha COM force + torque about the alpha com; scalar inertia
+  `Σ m(|local|² + 0.4 r²)` about the alpha center) and members are placed
+  rigidly from the alpha body frame each drift. The nucleus-level
+  `RigidGroup` com/orientation stop integrating (container only). Keep a
+  weak per-alpha damping `ALPHA_SPIN_RELAX = 0.5` (1/s) — well below the
+  nucleus lock's 20.0, the carousel must stay able to turn (§2.2).
+- In FreeNucleon, members integrate as free particles (normal kick/drift
+  paths); `sync_group_members` and the group branch of `advance_display`
+  are gated OFF for non-RigidLock modes. Composite skins/flow keep
+  anchoring to the (now frozen) group frame — acceptable for the sandbox,
+  noted as a known visual limitation.
+
+### A11. Part 2 — harness honesty (refines §2.3)
+
+The harness must not pretend the physics passes before it's tuned:
+- `alpha_stays_bound` (RigidAlpha, one nucleus's alphas): HARD test — but
+  it sweeps `INTRA_NUCLEUS_BOOST` over {1, 2, 3, 4, 6} internally and
+  asserts SOME value keeps max inter-alpha drift within ±30% over the run;
+  it prints the per-boost table so the winner is visible in test output.
+- `neon_is_inert` (RigidAlpha): HARD test — a probe proton approaching
+  neon's pole from 12 r does not come within capture range (< 2.0) in N
+  steps.
+- `carousel_self_organizes`, `nucleon_balance`: `#[ignore]`d report
+  scenarios (run with `cargo test --release -- --ignored <name>
+  --nocapture`); they print settling metrics (net carousel ω, spacing
+  drift, KE) instead of asserting — the deliverable is the tuned-constant
+  table, and hard-asserting emergence before tuning would just be a red
+  suite. Promote to hard tests once the user signs off on constants.
+
+### A12. Part 2 — HUD toggle
+
+`atom_hud.tscn` gains a 3-state control (OptionButton or 3 buttons):
+RigidLock / RigidAlpha / FreeNucleon → `atom_sim.set_nucleus_dynamics(i)`.
+GDScript only calls the setter — no physics logic in GDScript. Remember
+the Variant gotcha: use explicit types for values returned from
+GDExtension calls, not `:=`.

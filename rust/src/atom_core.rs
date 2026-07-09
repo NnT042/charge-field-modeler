@@ -154,6 +154,12 @@ pub struct SimParticle {
     /// Index into AtomCore::groups when this particle is a rigid-composite
     /// constituent (nuclear preset); None for free particles.
     pub group: Option<usize>,
+    /// Index into `group`'s `RigidGroup::alphas` when this particle is a
+    /// group constituent; None for free particles. Set at spawn
+    /// (`spawn_preset`) — the Part 2 mode-aware force skip predicate needs
+    /// it (session-31 addendum A9: RigidAlpha skips same-ALPHA pairs, not
+    /// same-group pairs).
+    pub alpha: Option<usize>,
     /// Render frame for FREE particles: its Y axis smoothly tracks the
     /// physics pole (incremental parallel transport — no swing–twist
     /// extraction, which is singular near 180° configurations and made
@@ -611,6 +617,14 @@ pub const ANGULAR_DAMPING: f64 = 0.998;
 /// Torques still act, so slow molecular alignment remains possible; the
 /// steady state is ω ≈ τ/(I·RELAX).
 pub const GROUP_SPIN_RELAX: f64 = 20.0;
+/// Charge-field lock on a single ALPHA in `NucleusDynamics::RigidAlpha`
+/// (1/s) — the Part 2 analog of `GROUP_SPIN_RELAX`, but deliberately much
+/// weaker: in this mode the nucleus `RigidGroup` is just a container, and
+/// the carousel motion is supposed to emerge from real inter-alpha forces
+/// (docs/ATOM_ROTATION_AND_SIM_DESIGN.md §2.2 — "you *want* the carousel
+/// to be able to turn here"). This only bleeds off numerical spin-up, not
+/// the emergent ω.
+pub const ALPHA_SPIN_RELAX: f64 = 0.5;
 /// VISIBLE axial-spin rate of bodies (rad/s WALL clock — substep
 /// independent), far below the physical TAU·3 rad/sim-s so the eye can
 /// track it. For free particles this drives `display_orientation`; for
@@ -638,6 +652,16 @@ pub const CONTACT_STIFFNESS: f64 = 100.0;
 /// docs/PHYSICS_REFERENCE.md; observed orbital speeds ~0.05c).
 pub const COROT_V_MAX: f64 = 0.25;
 
+/// Default intra-nucleus coupling multiplier (Part 2, session-31 addendum
+/// A9): non-skipped same-group pairs (RigidAlpha inter-alpha pairs;
+/// FreeNucleon pairs of any kind) get every charge-field pairwise term
+/// multiplied by this — "push on each other like the H₂ free protons, only
+/// stronger" (design doc Part 2 intro). Lives as a `Couplings` field
+/// (`intra_nucleus_boost`) rather than a bare-const use site so the
+/// `alpha_stays_bound` harness can sweep it at runtime; this is just its
+/// starting value.
+pub const INTRA_NUCLEUS_BOOST: f64 = 3.0;
+
 // ── Force couplings ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug)]
@@ -662,6 +686,12 @@ pub struct Couplings {
     /// Polar stream-collision cushion: repulsion between two facing intake
     /// streams (∝ A_i²·A_j²·(m_i·m_j)²/r⁴). Sets the molecular standoff.
     pub stream: f64,
+    /// Intra-nucleus coupling multiplier for non-skipped same-group pairs
+    /// in `NucleusDynamics::RigidAlpha` / `FreeNucleon` (Part 2, session-31
+    /// addendum A9). See `INTRA_NUCLEUS_BOOST` for the default/rationale;
+    /// a `Couplings` field (not a bare const use site) so the
+    /// `alpha_stays_bound` harness can sweep it at runtime.
+    pub intra_nucleus_boost: f64,
 }
 
 impl Default for Couplings {
@@ -717,7 +747,38 @@ impl Default for Couplings {
             intake: 0.5,
             corot: 0.5,
             stream: 24.5,
+            intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
         }
+    }
+}
+
+/// Nucleus dynamics mode (Part 2, session-31 addendum A9): a GLOBAL setting
+/// on `AtomCore` (not per-group — per-group mixing is not needed for the
+/// sandbox), exposed to Godot as `AtomSim::set_nucleus_dynamics(i32)` /
+/// `get_nucleus_dynamics() -> i32` (0/1/2). Controls both the intra-nucleus
+/// force skip predicate (`AtomCore::compute_forces`) and which level
+/// integrates rigidly in `kick`/`drift` (docs/ATOM_ROTATION_AND_SIM_DESIGN.md
+/// Part 2, §2.1–§2.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NucleusDynamics {
+    /// Current + Part 1 kinematics: the whole nucleus is pre-fused and
+    /// phase-driven (uf4.pdf: "the alphas can't be broken and rearranged").
+    /// Presentable default.
+    RigidLock,
+    /// Alphas are rigid bodies; forces act BETWEEN alphas within a nucleus
+    /// (boosted by `Couplings::intra_nucleus_boost`). The nucleus
+    /// `RigidGroup` becomes a container only — no longer integrated.
+    RigidAlpha,
+    /// Every nucleon is a free force participant (boosted, same as above);
+    /// intra-alpha cohesion — if any — comes from the SAME force model, not
+    /// a kinematic constraint. The research mode for confirming the alpha
+    /// itself is a force equilibrium (§2.4).
+    FreeNucleon,
+}
+
+impl Default for NucleusDynamics {
+    fn default() -> Self {
+        NucleusDynamics::RigidLock
     }
 }
 
@@ -728,6 +789,9 @@ pub struct AtomCore {
     pub particles: Vec<SimParticle>,
     pub groups: Vec<RigidGroup>,
     pub couplings: Couplings,
+    /// Global nucleus dynamics mode (Part 2 sandbox toggle). See
+    /// `NucleusDynamics`; default `RigidLock`.
+    pub dynamics: NucleusDynamics,
     pub ambient_gravity: DVec3,
     pub ambient_charge: DVec3,
     pub running: bool,
@@ -754,6 +818,7 @@ impl AtomCore {
             particles: Vec::new(),
             groups: Vec::new(),
             couplings: Couplings::default(),
+            dynamics: NucleusDynamics::RigidLock,
             ambient_gravity: DVec3::ZERO,
             ambient_charge: DVec3::ZERO,
             running: false,
@@ -835,6 +900,7 @@ impl AtomCore {
             force_accum: DVec3::ZERO,
             torque_accum: DVec3::ZERO,
             group: None,
+            alpha: None,
             display_orientation: (orientation * DQuat::from_rotation_y(phase0)).normalize(),
         });
         Some(id)
@@ -861,7 +927,7 @@ impl AtomCore {
         let mut inertia = 0.0;
         let mut alphas: Vec<AlphaUnit> = Vec::new();
 
-        for spec in &alpha_specs {
+        for (alpha_idx, spec) in alpha_specs.iter().enumerate() {
             // Rest pose (roll = 0, carousel = 0): the alpha's own frame
             // mapped straight into the nucleus frame by its rest_axis.
             let r_a = orientation_from_pole(spec.rest_axis);
@@ -882,6 +948,7 @@ impl AtomCore {
                 let id =
                     self.spawn_particle_ex(profile_id, world_pos, vel, world_pole, spin)?;
                 self.particles[id].group = Some(gid);
+                self.particles[id].alpha = Some(alpha_idx);
                 let k = members.len();
                 members.push(id);
                 local_offsets.push(nucleus_local_pos);
@@ -1118,6 +1185,165 @@ impl AtomCore {
         }
     }
 
+    // ── Part 2: nucleus dynamics modes (docs/ATOM_ROTATION_AND_SIM_DESIGN.md
+    // §2, session-31 addendum A9/A10) ───────────────────────────────────
+
+    pub fn get_nucleus_dynamics(&self) -> NucleusDynamics {
+        self.dynamics
+    }
+
+    /// Switch nucleus dynamics mode, seeding/derived state so the next
+    /// `step()` is physically continuous in the chosen mode (addendum A10):
+    /// - **→ RigidAlpha / FreeNucleon:** every alpha's rigid-body state
+    ///   (`com`, `orientation`, `velocity`, `angular_velocity`) is captured
+    ///   from its group's CURRENT phase-driven kinematic pose
+    ///   (`roll_phase`/`carousel_phase`). Those phases are frozen while
+    ///   away from RigidLock (`advance_display` gates the group branch off
+    ///   below), so this is well-defined and idempotent regardless of the
+    ///   PREVIOUS mode. Member particles already sit at that exact pose
+    ///   (from the last `sync_group_members` call), so nothing else needs
+    ///   seeding for FreeNucleon; RigidAlpha additionally re-places members
+    ///   from the freshly seeded alpha frame (algebraically a no-op here,
+    ///   kept for robustness — see `place_alpha_members`). FreeNucleon also
+    ///   resets group members' `display_orientation` to their current
+    ///   physics orientation: `advance_display` applies the free-particle
+    ///   display treatment to them too in this mode (so they keep visibly
+    ///   spinning), and a STALE display frame (last touched at spawn) could
+    ///   sit near-antiparallel to the current physics pole —
+    ///   `from_rotation_arc` is only stable for nearby vectors.
+    /// - **→ RigidLock:** resumes phase-driven sync (`sync_group_members`)
+    ///   — positions SNAP to the kinematic pose. Documented sandbox
+    ///   behavior (a HUD toggle would warn the user — A12, not this
+    ///   commit).
+    ///
+    /// A no-op if `mode` is already the current mode.
+    pub fn set_nucleus_dynamics(&mut self, mode: NucleusDynamics) {
+        if mode == self.dynamics {
+            return;
+        }
+        match mode {
+            NucleusDynamics::RigidAlpha | NucleusDynamics::FreeNucleon => {
+                for gid in 0..self.groups.len() {
+                    let n_alphas = self.groups[gid].alphas.len();
+                    for ai in 0..n_alphas {
+                        let (com, orientation, velocity, angular_velocity) =
+                            self.alpha_kinematic_state(gid, ai);
+                        let a = &mut self.groups[gid].alphas[ai];
+                        a.com = com;
+                        a.orientation = orientation;
+                        a.velocity = velocity;
+                        a.angular_velocity = angular_velocity;
+                    }
+                    if mode == NucleusDynamics::RigidAlpha {
+                        for ai in 0..n_alphas {
+                            self.place_alpha_members(gid, ai);
+                        }
+                    }
+                }
+                if mode == NucleusDynamics::FreeNucleon {
+                    for i in 0..self.particles.len() {
+                        if self.particles[i].group.is_some() {
+                            let phase0 = self.rng.next_f64() * TAU;
+                            let p = &mut self.particles[i];
+                            p.display_orientation =
+                                (p.orientation * DQuat::from_rotation_y(phase0)).normalize();
+                        }
+                    }
+                }
+            }
+            NucleusDynamics::RigidLock => {
+                for gid in 0..self.groups.len() {
+                    self.sync_group_members(gid);
+                }
+            }
+        }
+        self.dynamics = mode;
+    }
+
+    /// An alpha's rigid-body state (com, orientation, velocity,
+    /// angular_velocity) reconstructed from its group's CURRENT
+    /// phase-driven kinematic pose — the same composition
+    /// `sync_group_members` uses (§1.3 + addendum A3), evaluated at the
+    /// alpha's own center instead of per-member. Used by
+    /// `set_nucleus_dynamics` to seed RigidAlpha/FreeNucleon.
+    ///
+    /// Derivation: `sync_group_members` shows
+    /// `world_pos = center_w + alpha_orientation·member_local_pos` where
+    /// `center_w = com + nucleus_orientation·(Car·rest_center)` and
+    /// `alpha_orientation = nucleus_orientation·Car·R_a·Roll` — i.e. the
+    /// alpha's own body frame factors cleanly out of the per-member
+    /// formula. Velocity/angular-velocity follow the same rigid-field
+    /// composition, evaluated at `center_w` (roll contributes zero
+    /// translational velocity there: `roll_w × (center_w − center_w) = 0`).
+    fn alpha_kinematic_state(&self, gid: usize, ai: usize) -> (DVec3, DQuat, DVec3, DVec3) {
+        let g = &self.groups[gid];
+        let a = &g.alphas[ai];
+        let r_a = orientation_from_pole(a.rest_axis);
+        let roll = DQuat::from_rotation_y(a.roll_phase);
+        let car = if a.orbits_core {
+            DQuat::from_rotation_y(g.carousel_phase)
+        } else {
+            DQuat::IDENTITY
+        };
+        let nucleus_orientation = g.orientation;
+        let center_w = g.com + nucleus_orientation * (car * a.rest_center);
+        let center_off = center_w - g.com;
+        let car_w = if a.orbits_core {
+            (nucleus_orientation * DVec3::Y) * g.carousel_rate
+        } else {
+            DVec3::ZERO
+        };
+        let axis_w = nucleus_orientation * (car * a.rest_axis);
+        let roll_w = axis_w * a.roll_rate;
+
+        let mut v = g.velocity + g.angular_velocity.cross(center_off);
+        if a.orbits_core {
+            v += car_w.cross(center_off);
+        }
+
+        let mut ang = g.angular_velocity;
+        if a.orbits_core {
+            ang += car_w;
+        }
+        ang += roll_w;
+
+        let orientation = (nucleus_orientation * car * r_a * roll).normalize();
+        (center_w, orientation, v, ang)
+    }
+
+    /// Place one alpha's members rigidly from its OWN integrated body frame
+    /// (`com`/`orientation`/`velocity`/`angular_velocity`) — the
+    /// `NucleusDynamics::RigidAlpha` analog of `sync_group_members`, driven
+    /// by physics integration instead of phase variables (addendum A10).
+    fn place_alpha_members(&mut self, gid: usize, ai: usize) {
+        let (member_ids, local_pos, local_pole, spins, com, orientation, velocity, angular_velocity) = {
+            let g = &self.groups[gid];
+            let a = &g.alphas[ai];
+            (
+                a.members.iter().map(|&k| g.members[k]).collect::<Vec<usize>>(),
+                a.member_local_pos.clone(),
+                a.member_local_pole.clone(),
+                a.members.iter().map(|&k| g.member_spin[k]).collect::<Vec<f64>>(),
+                a.com,
+                a.orientation,
+                a.velocity,
+                a.angular_velocity,
+            )
+        };
+        for i in 0..member_ids.len() {
+            let world_off = orientation * local_pos[i];
+            let p = &mut self.particles[member_ids[i]];
+            p.position = com + world_off;
+            p.orientation = (orientation * orientation_from_pole(local_pole[i])).normalize();
+            let v = velocity + angular_velocity.cross(world_off);
+            // Rigid alpha ω + the member's own intrinsic axial spin, same
+            // pattern as sync_group_members.
+            let ang = angular_velocity + p.pole_axis() * spins[i];
+            p.velocity = v;
+            p.angular_velocity = ang;
+        }
+    }
+
     /// Advance the VISIBLE kinematic rotations by wall-clock `delta`:
     /// each alpha's roll phase, the shared carousel orbit, and free
     /// particles' display twist. These run at readable DISPLAY rates,
@@ -1125,8 +1351,13 @@ impl AtomCore {
     /// INDEPENDENT of the substep count — substeps scale physics time, not
     /// how fast the bodies visibly turn.
     pub fn advance_display(&mut self, delta: f64) {
+        // Free particles always get the parallel-transported display
+        // frame; in FreeNucleon, group members ALSO get it (addendum A10)
+        // — rigid kinematic sync is suspended in that mode, so without
+        // this they'd read as visibly frozen despite spinning physically.
+        let free_nucleon = self.dynamics == NucleusDynamics::FreeNucleon;
         for p in &mut self.particles {
-            if p.group.is_none() {
+            if p.group.is_none() || free_nucleon {
                 // Parallel-transport the render frame: nudge its Y onto
                 // the current physics pole (consecutive poles are close,
                 // so from_rotation_arc is stable), then spin about the
@@ -1140,15 +1371,22 @@ impl AtomCore {
                 p.display_orientation = (spin * align * p.display_orientation).normalize();
             }
         }
-        for gi in 0..self.groups.len() {
-            {
-                let g = &mut self.groups[gi];
-                g.carousel_phase = (g.carousel_phase + g.carousel_rate * delta) % TAU;
-                for a in &mut g.alphas {
-                    a.roll_phase = (a.roll_phase + a.roll_rate * delta) % TAU;
+        // Group phase-driven kinematics (carousel orbit + per-alpha roll)
+        // only apply in RigidLock — in RigidAlpha/FreeNucleon the group is
+        // either a frozen container or a rigid body integrated in
+        // `drift()`, and re-syncing from phases here would fight that
+        // physics integration (addendum A10).
+        if self.dynamics == NucleusDynamics::RigidLock {
+            for gi in 0..self.groups.len() {
+                {
+                    let g = &mut self.groups[gi];
+                    g.carousel_phase = (g.carousel_phase + g.carousel_rate * delta) % TAU;
+                    for a in &mut g.alphas {
+                        a.roll_phase = (a.roll_phase + a.roll_rate * delta) % TAU;
+                    }
                 }
+                self.sync_group_members(gi);
             }
-            self.sync_group_members(gi);
         }
     }
 
@@ -1378,8 +1616,14 @@ impl AtomCore {
         // A flat 0.9999/step multiplier was what killed tangential orbit
         // velocity through session 27.
         self.kick(dt * 0.5);
+        // Tumble/precession damping: free particles always; in FreeNucleon,
+        // group members too — they integrate exactly like free particles in
+        // that mode (kick/drift below), so they need the same damping or
+        // their tumble would grow unbounded (nothing else damps it once the
+        // group-level GROUP_SPIN_RELAX/ALPHA_SPIN_RELAX stop applying).
+        let free_nucleon = self.dynamics == NucleusDynamics::FreeNucleon;
         for i in 0..self.particles.len() {
-            if self.particles[i].group.is_some() {
+            if self.particles[i].group.is_some() && !free_nucleon {
                 continue;
             }
             let p = &mut self.particles[i];
@@ -1393,7 +1637,10 @@ impl AtomCore {
         self.time += dt;
     }
 
-    /// Velocity (and angular velocity) update for free particles and groups.
+    /// Velocity (and angular velocity) update for free particles and
+    /// groups/alphas per `NucleusDynamics` (Part 2, §2.2). Free (ungrouped)
+    /// particles integrate the same way in every mode; only how the GROUPED
+    /// levels integrate changes.
     fn kick(&mut self, dt: f64) {
         for i in 0..self.particles.len() {
             if self.particles[i].group.is_some() {
@@ -1404,28 +1651,78 @@ impl AtomCore {
             p.velocity += p.force_accum * inv_m * dt;
             p.angular_velocity += p.torque_accum * dt;
         }
-        // Groups: aggregate member forces into a COM force + torque.
-        for gi in 0..self.groups.len() {
-            let (f, tau) = {
-                let g = &self.groups[gi];
-                let mut f = DVec3::ZERO;
-                let mut tau = DVec3::ZERO;
-                for &m in &g.members {
-                    let p = &self.particles[m];
-                    f += p.force_accum;
-                    tau += (p.position - g.com).cross(p.force_accum) + p.torque_accum;
+        match self.dynamics {
+            NucleusDynamics::RigidLock => {
+                // Groups: aggregate member forces into a COM force + torque.
+                for gi in 0..self.groups.len() {
+                    let (f, tau) = {
+                        let g = &self.groups[gi];
+                        let mut f = DVec3::ZERO;
+                        let mut tau = DVec3::ZERO;
+                        for &m in &g.members {
+                            let p = &self.particles[m];
+                            f += p.force_accum;
+                            tau += (p.position - g.com).cross(p.force_accum) + p.torque_accum;
+                        }
+                        (f, tau)
+                    };
+                    let g = &mut self.groups[gi];
+                    g.velocity += f / g.mass * dt;
+                    g.angular_velocity += tau / g.inertia * dt;
+                    // Charge-field lock — see GROUP_SPIN_RELAX.
+                    g.angular_velocity *= (-GROUP_SPIN_RELAX * dt).exp();
                 }
-                (f, tau)
-            };
-            let g = &mut self.groups[gi];
-            g.velocity += f / g.mass * dt;
-            g.angular_velocity += tau / g.inertia * dt;
-            // Charge-field lock — see GROUP_SPIN_RELAX.
-            g.angular_velocity *= (-GROUP_SPIN_RELAX * dt).exp();
+            }
+            NucleusDynamics::RigidAlpha => {
+                // The nucleus RigidGroup is a frozen CONTAINER in this
+                // mode; each ALPHA integrates as its own rigid body —
+                // aggregate its members' forces into an alpha COM force +
+                // torque about the alpha's own com (§2.2).
+                for gi in 0..self.groups.len() {
+                    let n_alphas = self.groups[gi].alphas.len();
+                    for ai in 0..n_alphas {
+                        let (f, tau, mass, inertia) = {
+                            let g = &self.groups[gi];
+                            let a = &g.alphas[ai];
+                            let mut f = DVec3::ZERO;
+                            let mut tau = DVec3::ZERO;
+                            for &k in &a.members {
+                                let p = &self.particles[g.members[k]];
+                                f += p.force_accum;
+                                tau += (p.position - a.com).cross(p.force_accum)
+                                    + p.torque_accum;
+                            }
+                            (f, tau, a.mass, a.inertia)
+                        };
+                        let a = &mut self.groups[gi].alphas[ai];
+                        a.velocity += f / mass * dt;
+                        a.angular_velocity += tau / inertia * dt;
+                        // Weak per-alpha damping — well below the nucleus
+                        // lock's GROUP_SPIN_RELAX (20.0): the carousel must
+                        // stay free to turn here (§2.2); this only bleeds
+                        // off numerical spin-up, not the emergent ω.
+                        a.angular_velocity *= (-ALPHA_SPIN_RELAX * dt).exp();
+                    }
+                }
+            }
+            NucleusDynamics::FreeNucleon => {
+                // Every nucleon (grouped or not) integrates as a free
+                // particle; the group is bookkeeping only (§2.2).
+                for i in 0..self.particles.len() {
+                    if self.particles[i].group.is_none() {
+                        continue; // already integrated above
+                    }
+                    let p = &mut self.particles[i];
+                    let inv_m = 1.0 / self.profiles[p.profile_id].mass;
+                    p.velocity += p.force_accum * inv_m * dt;
+                    p.angular_velocity += p.torque_accum * dt;
+                }
+            }
         }
     }
 
-    /// Position (and orientation) update for free particles and groups.
+    /// Position (and orientation) update for free particles and
+    /// groups/alphas per `NucleusDynamics` (Part 2, §2.2).
     fn drift(&mut self, dt: f64) {
         for i in 0..self.particles.len() {
             if self.particles[i].group.is_some() {
@@ -1440,21 +1737,66 @@ impl AtomCore {
                 p.orientation = (rot * p.orientation).normalize();
             }
         }
-        for gi in 0..self.groups.len() {
-            {
-                let g = &mut self.groups[gi];
-                g.com += g.velocity * dt;
-                let w = g.angular_velocity;
-                let w_len = w.length();
-                if w_len > 1e-12 {
-                    let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
-                    g.orientation = (rot * g.orientation).normalize();
+        match self.dynamics {
+            NucleusDynamics::RigidLock => {
+                for gi in 0..self.groups.len() {
+                    {
+                        let g = &mut self.groups[gi];
+                        g.com += g.velocity * dt;
+                        let w = g.angular_velocity;
+                        let w_len = w.length();
+                        if w_len > 1e-12 {
+                            let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
+                            g.orientation = (rot * g.orientation).normalize();
+                        }
+                        // Kinematic display phases (carousel ride, member
+                        // axial spins) advance in WALL CLOCK via
+                        // advance_display(), not here — visible rotation
+                        // must not scale with substeps.
+                    }
+                    self.sync_group_members(gi);
                 }
-                // Kinematic display phases (carousel ride, member axial
-                // spins) advance in WALL CLOCK via advance_display(), not
-                // here — visible rotation must not scale with substeps.
             }
-            self.sync_group_members(gi);
+            NucleusDynamics::RigidAlpha => {
+                // The nucleus RigidGroup itself freezes (container only,
+                // §2.2); each alpha integrates its own com/orientation and
+                // places its members rigidly from that frame.
+                for gi in 0..self.groups.len() {
+                    let n_alphas = self.groups[gi].alphas.len();
+                    for ai in 0..n_alphas {
+                        let a = &mut self.groups[gi].alphas[ai];
+                        a.com += a.velocity * dt;
+                        let w = a.angular_velocity;
+                        let w_len = w.length();
+                        if w_len > 1e-12 {
+                            let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
+                            a.orientation = (rot * a.orientation).normalize();
+                        }
+                    }
+                    for ai in 0..n_alphas {
+                        self.place_alpha_members(gi, ai);
+                    }
+                }
+            }
+            NucleusDynamics::FreeNucleon => {
+                // Every nucleon integrates freely; the group (com/
+                // orientation) stays frozen and sync_group_members is NOT
+                // called — rigid re-syncing would fight the free
+                // integration (addendum A10).
+                for i in 0..self.particles.len() {
+                    if self.particles[i].group.is_none() {
+                        continue;
+                    }
+                    let p = &mut self.particles[i];
+                    p.position += p.velocity * dt;
+                    let w = p.angular_velocity;
+                    let w_len = w.length();
+                    if w_len > 1e-12 {
+                        let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
+                        p.orientation = (rot * p.orientation).normalize();
+                    }
+                }
+            }
         }
     }
 
@@ -1616,20 +1958,71 @@ impl AtomCore {
             p.torque_accum = DVec3::ZERO;
         }
 
-        let cq = self.couplings;
+        let base_cq = self.couplings;
+        let dynamics = self.dynamics;
         let occlusion = self.compute_occlusion();
 
         // Pairwise forces
         for i in 0..n {
             for j in (i + 1)..n {
-                // Rigid-composite constituents don't interact internally:
-                // the nucleus is pre-fused (uf4.pdf — alphas can't be broken
-                // and rearranged); its internal balance isn't simulated.
-                if self.particles[i].group.is_some()
-                    && self.particles[i].group == self.particles[j].group
-                {
+                let gi = self.particles[i].group;
+                let gj = self.particles[j].group;
+                let same_group = gi.is_some() && gi == gj;
+                // Mode-aware intra-nucleus skip (Part 2, session-31
+                // addendum A9):
+                //   RigidLock   — skip any same-group pair. The nucleus is
+                //                 pre-fused (uf4.pdf — "alphas can't be
+                //                 broken and rearranged"); internal balance
+                //                 isn't simulated (current/Part-1 behavior,
+                //                 unchanged).
+                //   RigidAlpha  — skip only same-ALPHA pairs: an alpha
+                //                 stays pre-fused, but inter-alpha pairs
+                //                 within the nucleus now interact (boosted
+                //                 below) — "push on each other like H₂,
+                //                 only stronger" (nuclear.pdf carousel).
+                //   FreeNucleon — never skip; every nucleon is a free force
+                //                 participant.
+                let skip = same_group
+                    && match dynamics {
+                        NucleusDynamics::RigidLock => true,
+                        NucleusDynamics::RigidAlpha => {
+                            self.particles[i].alpha == self.particles[j].alpha
+                        }
+                        NucleusDynamics::FreeNucleon => false,
+                    };
+                if skip {
                     continue;
                 }
+
+                // Intra-nucleus coupling boost: a non-skipped same-group
+                // pair (RigidAlpha inter-alpha pairs; any FreeNucleon pair)
+                // gets every charge-field term below multiplied by
+                // `intra_nucleus_boost` — the SAME pairwise physics used
+                // for free-proton molecular bonding, just stronger (no new
+                // force law). `drag` is a dimensionless doppler correction
+                // factor, not a force magnitude, so it's left unboosted;
+                // the hard contact-repulsion term further below reads
+                // CONTACT_STIFFNESS directly (never `cq`), so it is
+                // automatically excluded too — fusion must not become a
+                // spring-launcher.
+                let cq = if same_group {
+                    Couplings {
+                        g_q: base_cq.g_q * base_cq.intra_nucleus_boost,
+                        c_q: base_cq.c_q * base_cq.intra_nucleus_boost,
+                        ambient_pressure: base_cq.ambient_pressure
+                            * base_cq.intra_nucleus_boost,
+                        torque: base_cq.torque * base_cq.intra_nucleus_boost,
+                        vortex: base_cq.vortex * base_cq.intra_nucleus_boost,
+                        drag: base_cq.drag,
+                        intake: base_cq.intake * base_cq.intra_nucleus_boost,
+                        corot: base_cq.corot * base_cq.intra_nucleus_boost,
+                        stream: base_cq.stream * base_cq.intra_nucleus_boost,
+                        intra_nucleus_boost: base_cq.intra_nucleus_boost,
+                    }
+                } else {
+                    base_cq
+                };
+
                 let d_vec = self.particles[j].position - self.particles[i].position;
                 let r2 = d_vec.length_squared();
                 let r = r2.sqrt().max(SOFTENING);
@@ -4378,5 +4771,181 @@ mod tests {
         let phases: Vec<f64> = g.alphas.iter().map(|a| a.roll_phase).collect();
         let all_equal = phases.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-9);
         assert!(!all_equal, "alphas should not share one roll phase: {phases:?}");
+    }
+
+    // ── Part 2: nucleus dynamics modes (session-31 addendum A9–A11) ──────
+
+    /// Mode-aware intra-nucleus skip predicate, probed via `force_accum`
+    /// after `compute_forces` (addendum A9):
+    /// - RigidLock: no same-group pair interacts at all (current/Part-1
+    ///   behavior).
+    /// - RigidAlpha: inter-alpha pairs interact (carbon's three alphas feel
+    ///   each other), but intra-alpha pairs still don't — isolated with a
+    ///   LONE alpha (no neighbors, so any nonzero force would have to come
+    ///   from its own members).
+    /// - FreeNucleon: never skips — even a lone alpha's own members now
+    ///   interact.
+    #[test]
+    fn dynamics_mode_skip_predicate() {
+        let dir = config_dir();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+
+        let mut core = AtomCore::new();
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+
+        // RigidLock (default): no intra-nucleus force at all.
+        core.compute_forces();
+        assert!(
+            core.particles.iter().all(|p| p.force_accum.length() < 1e-9),
+            "RigidLock must skip ALL same-group pairs"
+        );
+
+        // RigidAlpha: carbon's three alphas are stacked along the axis —
+        // adjacent alphas must now feel each other.
+        core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        core.compute_forces();
+        assert!(
+            core.particles.iter().any(|p| p.force_accum.length() > 1e-9),
+            "RigidAlpha must let inter-alpha pairs interact"
+        );
+
+        // Isolate intra-alpha: a LONE alpha (no neighbors) in RigidAlpha
+        // must still see zero force — its own 4 members are one alpha.
+        let mut lone = AtomCore::new();
+        lone.register_profile("proton", 1.0, 1.0, &p_csv);
+        lone.register_profile("neutron", 1.0, 1.0, &n_csv);
+        lone.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        lone.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        lone.compute_forces();
+        assert!(
+            lone.particles.iter().all(|p| p.force_accum.length() < 1e-9),
+            "RigidAlpha must skip intra-alpha pairs (lone alpha has no neighbors)"
+        );
+
+        // FreeNucleon: even the lone alpha's own members now interact.
+        lone.set_nucleus_dynamics(NucleusDynamics::FreeNucleon);
+        lone.compute_forces();
+        assert!(
+            lone.particles.iter().any(|p| p.force_accum.length() > 1e-9),
+            "FreeNucleon must never skip"
+        );
+    }
+
+    /// Entering RigidAlpha/FreeNucleon seeds each alpha's rigid-body state
+    /// (com/orientation/velocity/angular_velocity) as finite, sane values,
+    /// and members are already placed at that seeded frame (addendum A10).
+    #[test]
+    fn mode_transition_seeds_finite_alpha_bodies() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset(
+            "neon",
+            DVec3::new(1.0, 2.0, -3.0),
+            DVec3::new(0.1, 0.0, 0.0),
+            DVec3::Y,
+        )
+        .expect("neon preset");
+
+        core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        assert_eq!(core.get_nucleus_dynamics(), NucleusDynamics::RigidAlpha);
+
+        for a in &core.groups[0].alphas {
+            assert!(a.com.is_finite(), "alpha com not finite: {:?}", a.com);
+            assert!(
+                a.velocity.is_finite(),
+                "alpha velocity not finite: {:?}",
+                a.velocity
+            );
+            assert!(
+                a.angular_velocity.is_finite(),
+                "alpha angular_velocity not finite: {:?}",
+                a.angular_velocity
+            );
+            assert!(
+                (a.orientation.length() - 1.0).abs() < 1e-6,
+                "alpha orientation should be a unit quaternion: {:?}",
+                a.orientation
+            );
+            assert!(a.mass > 0.0, "alpha mass should be positive");
+            assert!(a.inertia > 0.0, "alpha inertia should be positive");
+        }
+
+        // Members already sit at the seeded alpha frame (place_alpha_members
+        // ran as part of the transition) — spot check alpha 0's first member.
+        let g = &core.groups[0];
+        let a0 = &g.alphas[0];
+        let expected_pos = a0.com + a0.orientation * a0.member_local_pos[0];
+        let actual_pos = core.particles[g.members[a0.members[0]]].position;
+        assert!(
+            (expected_pos - actual_pos).length() < 1e-6,
+            "member position should match the seeded alpha frame: {expected_pos:?} vs {actual_pos:?}"
+        );
+    }
+
+    /// Round-trip RigidLock → RigidAlpha → RigidLock: the excursion lets
+    /// real forces/torques move the alpha (its roll_rate becomes a genuine
+    /// physical angular_velocity in RigidAlpha, so even a lone,
+    /// force-free alpha visibly precesses); returning to RigidLock SNAPS
+    /// back to the kinematic pose (positions jump, documented, addendum
+    /// A10) and resumes the phase-driven contract — immobile under
+    /// `step()`, moves only via `advance_display` (same invariant as
+    /// `display_phases_are_wall_clock`).
+    #[test]
+    fn rigid_lock_round_trip_resumes_kinematics() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        core.running = true;
+
+        // The kinematic pose BEFORE the trip. It stays valid as the
+        // "resume point" because carousel_phase/roll_phase are frozen
+        // while away from RigidLock (advance_display's group branch is
+        // gated to RigidLock only), and RigidAlpha never touches the
+        // GROUP-level com/orientation/velocity either (container only).
+        let kinematic_pose: Vec<DVec3> = core.particles.iter().map(|p| p.position).collect();
+
+        core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        core.step_n(500);
+        core.advance_display(0.3);
+
+        let drifted: Vec<DVec3> = core.particles.iter().map(|p| p.position).collect();
+        assert!(
+            kinematic_pose
+                .iter()
+                .zip(&drifted)
+                .any(|(a, b)| (*a - *b).length() > 1e-6),
+            "RigidAlpha should let the alpha actually move under its own roll ω"
+        );
+
+        core.set_nucleus_dynamics(NucleusDynamics::RigidLock);
+        for (expected, p) in kinematic_pose.iter().zip(&core.particles) {
+            assert!(
+                (*expected - p.position).length() < 1e-6,
+                "RigidLock re-entry should snap back to the frozen kinematic pose"
+            );
+        }
+
+        let before: Vec<DVec3> = core.particles.iter().map(|p| p.position).collect();
+        core.step_n(2000);
+        for (b, p) in before.iter().zip(&core.particles) {
+            assert!(
+                (*b - p.position).length() < 1e-9,
+                "RigidLock must be immobile under step() (phases only move via advance_display)"
+            );
+        }
     }
 }

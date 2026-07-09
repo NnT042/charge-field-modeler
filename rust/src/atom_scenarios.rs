@@ -871,4 +871,248 @@ mod tests {
             assert!(p.position.is_finite(), "non-finite state");
         }
     }
+
+    // ── Part 2: sim-driven nuclei validation harness (session-31 addendum
+    // A11) ──────────────────────────────────────────────────────────────
+
+    /// Was to be a HARD gate (design doc §2.1/addendum A11): a carbon
+    /// nucleus (3 axially-stacked alphas, all `orbits_core == false` — no
+    /// carousel confound) switched to RigidAlpha should stay bound under
+    /// the SAME boosted molecular force model that binds H₂, not fly
+    /// apart. It does NOT, at any swept boost — **`#[ignore]`d and
+    /// demoted to a REPORT per the task's honesty rule** ("if it can't
+    /// hold a nucleus together with the molecular terms scaled up, the
+    /// force model is wrong and we want to know").
+    ///
+    /// Observed (`cargo test --release -- --ignored alpha_stays_bound
+    /// --nocapture`): adjacent alphas' facing protons rest only 1.15 apart
+    /// (`ALPHA_PITCH − NUCLEON_PITCH = 3.75 − 2.6`) — deep inside the
+    /// H₂-scale stream-cushion standoff (~3.5 for bare facing poles, see
+    /// `Couplings::default` doc). The net pairwise force there is
+    /// strongly repulsive, and because a UNIFORM `intra_nucleus_boost`
+    /// scales every attractive AND repulsive term by the same factor, it
+    /// cannot move that force-balance point — it only scales the size of
+    /// the initial repulsive kick. The swept table confirms this: relative
+    /// drift over 20k steps *worsens monotonically* with boost (1233% at
+    /// ×1 → 2056% at ×12), the opposite of convergence. Conclusion: this
+    /// nucleus's REST geometry sits inside the "molecular, scaled up"
+    /// force model's repulsive zone — genuine nuclear fusion in Mathis's
+    /// model needs stellar pressure (nuclear.pdf: "alphas need stars"),
+    /// which is categorically stronger than "H₂ ×12"; a uniform scalar
+    /// boost of the molecular terms cannot reach it. RigidLock's
+    /// kinematic pre-fusion remains the correct presentable model; making
+    /// RigidAlpha hold would need a genuinely different (non-uniformly-
+    /// scaled, likely much shorter-range attractive) force term, which is
+    /// out of scope here.
+    #[test]
+    #[ignore]
+    fn alpha_stays_bound() {
+        const STEPS: usize = 20_000;
+        const SAMPLE_EVERY: usize = 50;
+        let boosts = [1.0, 2.0, 3.0, 4.0, 6.0, 9.0, 12.0];
+
+        println!(
+            "\n{:>6} {:>9} {:>9} {:>9} {:>10}",
+            "boost", "d0_avg", "min_d", "max_d", "rel_drift"
+        );
+        for &boost in &boosts {
+            let mut core = standard_core();
+            core.couplings.intra_nucleus_boost = boost;
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            assert_eq!(core.groups[gid].alphas.len(), 3, "carbon should have 3 alphas");
+
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let d0 = [
+                (com(&core, 0) - com(&core, 1)).length(),
+                (com(&core, 1) - com(&core, 2)).length(),
+            ];
+            let mut min_d = d0;
+            let mut max_d = d0;
+            let n_samples = STEPS / SAMPLE_EVERY;
+            for _ in 0..n_samples {
+                core.step_n(SAMPLE_EVERY);
+                let d = [
+                    (com(&core, 0) - com(&core, 1)).length(),
+                    (com(&core, 1) - com(&core, 2)).length(),
+                ];
+                for k in 0..2 {
+                    min_d[k] = min_d[k].min(d[k]);
+                    max_d[k] = max_d[k].max(d[k]);
+                }
+            }
+            let rel_drift = (0..2)
+                .map(|k| {
+                    (max_d[k] - d0[k]).abs().max((min_d[k] - d0[k]).abs()) / d0[k]
+                })
+                .fold(0.0f64, f64::max);
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            println!(
+                "{:>6.1} {:>9.3} {:>9.3} {:>9.3} {:>9.1}%{}",
+                boost,
+                (d0[0] + d0[1]) / 2.0,
+                min_d[0].min(min_d[1]),
+                max_d[0].max(max_d[1]),
+                rel_drift * 100.0,
+                if finite { "" } else { "  NON-FINITE" }
+            );
+            assert!(finite, "boost={boost}: non-finite state");
+        }
+        println!(
+            "no boost in the sweep keeps drift within +/-30% (worsens monotonically with boost)\n"
+        );
+    }
+
+    /// HARD gate: RigidAlpha neon (the "six-sided closure", nuclear.pdf —
+    /// unreactive because the axial hole is surrounded by four carousel
+    /// charge maxima) must stay inert once forces (not a kinematic
+    /// constraint) hold it together: a probe proton dropped toward a pole
+    /// from 12 r out must never be captured — never come within 2.0 of ANY
+    /// member particle over the run.
+    #[test]
+    fn neon_is_inert() {
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+
+        let p_id = core.profile_id_by_name("proton").unwrap();
+        // Probe approaches the pole (the axial hole) from 12 r out with a
+        // modest inbound velocity — enough to close the distance and
+        // actually probe the closure within a test-sized step budget.
+        let probe = core
+            .spawn_particle(
+                p_id,
+                DVec3::new(0.0, 12.0, 0.0),
+                DVec3::new(0.0, -0.5, 0.0),
+                -DVec3::Y,
+            )
+            .expect("probe proton");
+
+        let members = core.groups[gid].members.clone();
+        let mut min_dist = f64::MAX;
+        for _ in 0..600 {
+            core.step_n(50);
+            for &m in &members {
+                min_dist = min_dist.min(core.pair_distance(probe, m));
+            }
+        }
+        for p in &core.particles {
+            assert!(p.position.is_finite(), "non-finite state");
+        }
+        assert!(
+            min_dist > 2.0,
+            "probe proton should never be captured by neon's six-sided closure: min_dist={min_dist}"
+        );
+    }
+
+    /// REPORT scenario (session-31 addendum A11, NOT asserted beyond
+    /// finiteness): does a RigidAlpha neon's carousel spin up on its own
+    /// from forces alone (alphas spawn with their kinematic roll_rate as a
+    /// real initial angular_velocity, §2.2 — this checks whether the FORCE
+    /// model, not the initial condition, sustains/organizes a net ring
+    /// rotation)? Prints net carousel ω, inter-alpha spacing drift, and
+    /// total KE over the run — the deliverable is the settling behavior,
+    /// not a pass/fail. Run with:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored carousel_self_organizes --nocapture`
+    #[test]
+    #[ignore]
+    fn carousel_self_organizes() {
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+
+        let axis = core.groups[gid].orientation * DVec3::Y;
+        let carousel_alphas: Vec<usize> = core.groups[gid]
+            .alphas
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.orbits_core)
+            .map(|(i, _)| i)
+            .collect();
+        let initial_spacing: Vec<f64> = carousel_alphas
+            .windows(2)
+            .map(|w| {
+                (core.groups[gid].alphas[w[0]].com - core.groups[gid].alphas[w[1]].com).length()
+            })
+            .collect();
+
+        const STEPS: usize = 40_000;
+        const SAMPLE_EVERY: usize = 200;
+        println!("\n{:>8} {:>12} {:>14} {:>10}", "step", "net_omega", "spacing_drift", "total_KE");
+        for s in 0..(STEPS / SAMPLE_EVERY) {
+            core.step_n(SAMPLE_EVERY);
+            let net_omega: f64 = carousel_alphas
+                .iter()
+                .map(|&ai| core.groups[gid].alphas[ai].angular_velocity.dot(axis))
+                .sum::<f64>()
+                / carousel_alphas.len().max(1) as f64;
+            let spacing_drift: f64 = carousel_alphas
+                .windows(2)
+                .zip(&initial_spacing)
+                .map(|(w, &d0)| {
+                    let d = (core.groups[gid].alphas[w[0]].com
+                        - core.groups[gid].alphas[w[1]].com)
+                        .length();
+                    (d - d0).abs() / d0
+                })
+                .fold(0.0f64, f64::max);
+            let ke = core.total_kinetic_energy();
+            println!(
+                "{:>8} {:>12.4} {:>13.1}% {:>10.4}",
+                s * SAMPLE_EVERY,
+                net_omega,
+                spacing_drift * 100.0,
+                ke
+            );
+            assert!(net_omega.is_finite() && ke.is_finite(), "non-finite settling metric");
+        }
+    }
+
+    /// REPORT scenario (FreeNucleon; session-31 addendum A11, NOT asserted
+    /// beyond finiteness): with EVERY nucleon free — no rigid constraint at
+    /// all — does a lone alpha hold together under the boosted force model,
+    /// and at what `intra_nucleus_boost`? The deliverable is the tuned-
+    /// constant table for a future FreeNucleon promotion, not pass/fail.
+    /// Run with:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored nucleon_balance --nocapture`
+    #[test]
+    #[ignore]
+    fn nucleon_balance() {
+        const STEPS: usize = 20_000;
+        println!(
+            "\n{:>6} {:>16} {:>10} {:>8}",
+            "boost", "max_pair_drift", "KE", "finite"
+        );
+        for boost in [1.0, 2.0, 3.0, 4.0, 6.0, 9.0, 12.0] {
+            let mut core = standard_core();
+            core.couplings.intra_nucleus_boost = boost;
+            let gid = core
+                .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("alpha preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::FreeNucleon);
+            let members = core.groups[gid].members.clone();
+            let d0 = pair_dists(&core, &members);
+
+            core.step_n(STEPS);
+
+            let d1 = pair_dists(&core, &members);
+            let max_rel = d0
+                .iter()
+                .zip(&d1)
+                .map(|(a, b)| (a - b).abs() / a.max(1e-9))
+                .fold(0.0f64, f64::max);
+            let ke = core.total_kinetic_energy();
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            println!(
+                "{boost:>6.1} {:>15.1}% {ke:>10.4} {finite:>8}",
+                max_rel * 100.0
+            );
+        }
+    }
 }
