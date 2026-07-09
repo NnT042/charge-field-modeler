@@ -600,7 +600,15 @@ mod tests {
         assert!(m.min_r > 2.2, "protons must not fuse at ambient: {m:?}");
     }
 
-    /// Stretch presets (C/N/O) smoke test: spawn, run, stay rigid and finite.
+    /// Stretch presets (C/N/O/Ne/Ar) smoke test: spawn, run, stay rigid
+    /// and finite. Rigidity invariant SPLIT (session-31 addendum A7):
+    /// with independent per-alpha roll, cross-alpha member distances
+    /// legitimately change under `advance_display` (post azimuths
+    /// decorrelate as each alpha rolls at its own random phase) — so
+    /// PHYSICS rigidity (`step_n`, no phases advance in `step`) is
+    /// checked all-pairs over a probe, and DISPLAY rigidity
+    /// (`advance_display`) is checked only WITHIN one alpha (which stays
+    /// one rigid piece).
     #[test]
     fn heavier_presets_smoke() {
         for name in ["carbon", "nitrogen", "oxygen", "neon", "argon"] {
@@ -619,69 +627,112 @@ mod tests {
             };
             assert_eq!(members.len(), expected, "{name} constituent count");
 
-            // Polar plug geometry (session-29): plug PROTONS edge-on to the
-            // stack (disc feeds the hole), plug NEUTRONS pole-down on the
-            // axis direction (graphene.pdf: neutrons channel pole-to-pole);
-            // oxygen's plugs come as side-by-side proton+neutron pairs.
-            let cons = crate::atom_core::preset_constituents(name).unwrap();
-            let assert_plug = |c: &crate::atom_core::Constituent| match c.profile_name {
-                "proton" => assert!(
-                    c.local_pole.dot(DVec3::Y).abs() < 1e-9,
-                    "plug proton must be edge-on to the stack"
-                ),
-                "neutron" => assert!(
-                    c.local_pole.dot(DVec3::Y).abs() > 1.0 - 1e-9,
-                    "plug neutron must keep its pole on the stack axis"
-                ),
-                other => panic!("unexpected plug profile {other}"),
+            // Polar plug geometry (session-29), rewritten in AlphaUnit
+            // terms (session-31 addendum A7): plug alphas are single-
+            // member, orbits_core == true; plug PROTONS sit edge-on to
+            // the stack (rest_axis·Y ≈ 0, disc feeds the hole), plug
+            // NEUTRONS keep their pole on the stack axis (rest_axis ≈
+            // +Y, graphene.pdf: neutrons channel pole-to-pole); oxygen's
+            // plugs come as side-by-side proton+neutron pairs.
+            let profile_name_of = |core: &AtomCore, gid: usize, ai: usize| -> String {
+                let g = &core.groups[gid];
+                let k = g.alphas[ai].members[0];
+                core.profiles[core.particles[g.members[k]].profile_id]
+                    .name
+                    .clone()
             };
-            match name {
-                "nitrogen" => {
-                    cons[12..14].iter().for_each(assert_plug);
-                    for c in &cons[12..14] {
-                        assert!(c.carousel, "nitrogen plugs should ride the carousel");
-                    }
+            let plug_alphas: Vec<usize> = core.groups[gid]
+                .alphas
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.members.len() == 1)
+                .map(|(i, _)| i)
+                .collect();
+            for &ai in &plug_alphas {
+                let a = &core.groups[gid].alphas[ai];
+                assert!(a.orbits_core, "plug alpha should ride the carousel");
+                match profile_name_of(&core, gid, ai).as_str() {
+                    "proton" => assert!(
+                        a.rest_axis.dot(DVec3::Y).abs() < 1e-9,
+                        "plug proton must be edge-on to the stack"
+                    ),
+                    "neutron" => assert!(
+                        a.rest_axis.dot(DVec3::Y).abs() > 1.0 - 1e-9,
+                        "plug neutron must keep its pole on the stack axis"
+                    ),
+                    other => panic!("unexpected plug profile {other}"),
                 }
+            }
+            match name {
+                "nitrogen" => assert_eq!(plug_alphas.len(), 2, "nitrogen has 2 plug alphas"),
                 "oxygen" => {
-                    cons[12..16].iter().for_each(assert_plug);
-                    for c in &cons[12..16] {
-                        assert!(c.carousel, "oxygen plugs should ride the carousel");
-                    }
-                    for pair in [[12usize, 13], [14, 15]] {
-                        let (a, b) = (&cons[pair[0]], &cons[pair[1]]);
-                        assert_eq!(a.profile_name, "proton", "pair leads with proton");
-                        assert_eq!(b.profile_name, "neutron", "pair pairs a neutron");
+                    assert_eq!(plug_alphas.len(), 4, "oxygen has 4 plug alphas");
+                    let mut by_y: Vec<(f64, usize)> = plug_alphas
+                        .iter()
+                        .map(|&ai| (core.groups[gid].alphas[ai].rest_center.y, ai))
+                        .collect();
+                    by_y.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                    for pair in by_y.chunks(2) {
+                        let (ya, ai_a) = pair[0];
+                        let (yb, ai_b) = pair[1];
                         assert!(
-                            (a.local_pos.y - b.local_pos.y).abs() < 1e-9,
+                            (ya - yb).abs() < 1e-9,
                             "pair must sit at the same height (side by side)"
                         );
+                        let (proton_ai, neutron_ai) =
+                            if profile_name_of(&core, gid, ai_a) == "proton" {
+                                (ai_a, ai_b)
+                            } else {
+                                (ai_b, ai_a)
+                            };
+                        let g = &core.groups[gid];
+                        let ca = g.alphas[proton_ai].rest_center;
+                        let cb = g.alphas[neutron_ai].rest_center;
                         assert!(
-                            (a.local_pos - b.local_pos).length() > 0.5,
+                            (ca - cb).length() > 0.5,
                             "pair members must sit beside each other, not overlap"
                         );
-                        let to_partner = (b.local_pos - a.local_pos).normalize();
+                        let to_partner = (cb - ca).normalize();
                         assert!(
-                            a.local_pole.dot(to_partner) > 0.99,
-                            "plug proton pole should point at its paired neutron"
+                            g.alphas[proton_ai].rest_axis.dot(to_partner) > 0.99,
+                            "plug proton rest_axis should point at its paired neutron"
                         );
                     }
                 }
                 _ => {}
             }
 
+            // Physics rigidity: all-pairs distances over a probe of the
+            // first 8 members unchanged under step_n (phases don't
+            // advance in step).
             let probe = &members[..8.min(members.len())];
-            let initial = pair_dists(&core, probe);
+            let before_step = pair_dists(&core, probe);
             // Big carousel presets (Ne/Ar) pay O(n²) per step — a shorter
             // run keeps the ~10 s test gate while still proving rigidity.
             let steps = if expected > 16 { 10_000 } else { 50_000 };
             core.step_n(steps);
-            // Ride the carousel too: rigidity must hold under the display
-            // rotation (all off-axis members share one phase).
-            core.advance_display(0.8);
-            let after = pair_dists(&core, probe);
-            for (a, b) in initial.iter().zip(&after) {
-                assert!((a - b).abs() < 1e-9, "{name} rigidity violated");
+            let after_step = pair_dists(&core, probe);
+            for (a, b) in before_step.iter().zip(&after_step) {
+                assert!((a - b).abs() < 1e-9, "{name} physics rigidity violated");
             }
+
+            // Display rigidity: WITHIN one alpha, all pair distances
+            // unchanged under advance_display (an alpha is rigid).
+            let alpha0_ids: Vec<usize> = core.groups[gid].alphas[0]
+                .members
+                .iter()
+                .map(|&k| core.groups[gid].members[k])
+                .collect();
+            let before_disp = pair_dists(&core, &alpha0_ids);
+            core.advance_display(0.8);
+            let after_disp = pair_dists(&core, &alpha0_ids);
+            for (a, b) in before_disp.iter().zip(&after_disp) {
+                assert!(
+                    (a - b).abs() < 1e-9,
+                    "{name} display rigidity violated within alpha 0"
+                );
+            }
+
             for p in &core.particles {
                 assert!(p.position.is_finite(), "{name}: non-finite state");
             }

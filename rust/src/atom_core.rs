@@ -154,10 +154,6 @@ pub struct SimParticle {
     /// Index into AtomCore::groups when this particle is a rigid-composite
     /// constituent (nuclear preset); None for free particles.
     pub group: Option<usize>,
-    /// VISIBLE axial-spin phase (rad) about the pole for GROUP members,
-    /// advanced in wall clock by `advance_display` at a readable rate and
-    /// applied directly in the rigid composition (orientation ∘ rotY(φ)).
-    pub display_spin_phase: f64,
     /// Render frame for FREE particles: its Y axis smoothly tracks the
     /// physics pole (incremental parallel transport — no swing–twist
     /// extraction, which is singular near 180° configurations and made
@@ -174,57 +170,117 @@ impl SimParticle {
 
 // ── Nuclear presets (rigid composites) ───────────────────────────────────
 
+/// One member of an [`AlphaSpec`], in the ALPHA's own rest frame
+/// (+Y = the alpha's stack axis — same convention as a free particle's
+/// pole). `spin_sign` is the intrinsic physical axial-spin sign.
 #[derive(Clone)]
-pub struct Constituent {
-    pub profile_name: &'static str,
-    pub local_pos: DVec3,
-    pub local_pole: DVec3,
-    pub spin_sign: f64,
-    /// Carousel member: rides around the group's stack axis (the alpha's
-    /// neutron posts are not immovable — they roll around the midsection,
-    /// riding the disc outputs between the two protons, staying 180° apart).
-    pub carousel: bool,
+struct AlphaMemberSpec {
+    profile_name: &'static str,
+    local_pos: DVec3,
+    local_pole: DVec3,
+    spin_sign: f64,
 }
 
-/// One alpha block centered at `y` on the stack axis: two protons in a
-/// short stack (CDs stacked hole-to-hole, spinning the SAME direction so
-/// charge channels through pole-to-pole as a dipole —
-/// milesmathis.com/oxygen.pdf), with the two neutrons as posts between the
-/// disks keeping the protons from turning (oxygen.pdf). Posts sit off-axis
-/// so the axial charge channel stays open (nuclear.pdf: the hole in the CD
-/// is the recycling channel). Exact post positions are a modeling choice
-/// within those constraints.
-fn alpha_block(y: f64) -> Vec<Constituent> {
+/// Builder-time description of one alpha unit: its rest frame in the
+/// NUCLEUS (group) frame, whether it rides the carousel, and its members
+/// in the alpha's OWN frame. `preset_alphas` assembles nuclei from these;
+/// `spawn_preset` turns them into runtime [`AlphaUnit`]s.
+#[derive(Clone)]
+struct AlphaSpec {
+    rest_axis: DVec3,
+    rest_center: DVec3,
+    orbits_core: bool,
+    members: Vec<AlphaMemberSpec>,
+}
+
+/// Radius off-axis for an alpha's neutron posts (or a sideways alpha's
+/// posts) — how far the posts sit from the alpha's own stack axis, in the
+/// alpha's own rest frame. Replaces the four `0.7` literals that used to
+/// appear separately in every builder.
+const POST_R: f64 = 0.7;
+
+/// The standard 4-nucleon alpha shape, in the ALPHA's OWN frame: two
+/// protons stacked hole-to-hole on the axis (CDs spinning the SAME
+/// direction so charge channels through pole-to-pole as a dipole —
+/// milesmathis.com/oxygen.pdf), with the two neutrons as posts straddling
+/// the midsection, off-axis, keeping the protons from turning (oxygen.pdf).
+/// Posts sit off-axis so the axial charge channel stays open (nuclear.pdf:
+/// the hole in the CD is the recycling channel) — their exact starting
+/// azimuth doesn't matter (each alpha's `roll_phase` is a free, randomized
+/// DOF, session-31): what matters is they're off-axis and roll with the
+/// alpha. Shared by every alpha builder below (core, cap, connector,
+/// carousel) — only the alpha's `rest_axis`/`rest_center`/`orbits_core`
+/// differ.
+fn alpha_members() -> Vec<AlphaMemberSpec> {
     vec![
-        Constituent {
+        AlphaMemberSpec {
             profile_name: "proton",
-            local_pos: DVec3::new(0.0, y - NUCLEON_PITCH / 2.0, 0.0),
+            local_pos: DVec3::new(0.0, -NUCLEON_PITCH / 2.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
-            carousel: false,
         },
-        Constituent {
+        AlphaMemberSpec {
             profile_name: "proton",
-            local_pos: DVec3::new(0.0, y + NUCLEON_PITCH / 2.0, 0.0),
+            local_pos: DVec3::new(0.0, NUCLEON_PITCH / 2.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
-            carousel: false,
         },
-        Constituent {
+        AlphaMemberSpec {
             profile_name: "neutron",
-            local_pos: DVec3::new(-0.7, y, 0.0),
+            local_pos: DVec3::new(-POST_R, 0.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
-            carousel: true,
         },
-        Constituent {
+        AlphaMemberSpec {
             profile_name: "neutron",
-            local_pos: DVec3::new(0.7, y, 0.0),
+            local_pos: DVec3::new(POST_R, 0.0, 0.0),
             local_pole: DVec3::Y,
             spin_sign: 1.0,
-            carousel: true,
         },
     ]
+}
+
+/// One alpha block centered at `y` on the stack axis: parallel to the
+/// core (used for the core alpha itself and, in argon, the top/bottom
+/// caps — nuclear.pdf: "Level one is the center disk... Level 3b is the
+/// caps top and bottom"). Does not ride the carousel.
+fn core_alpha(y: f64) -> AlphaSpec {
+    AlphaSpec {
+        rest_axis: DVec3::Y,
+        rest_center: DVec3::new(0.0, y, 0.0),
+        orbits_core: false,
+        members: alpha_members(),
+    }
+}
+
+/// One alpha mounted ON THE CAROUSEL at azimuth `phi_deg`: its stack axis
+/// points RADIALLY (the center disk's equatorial output feeds this alpha's
+/// axial hole — nuclear.pdf's first carousel configuration, Neon), and the
+/// whole block rides the carousel around the core. Charge is flung out
+/// equatorially through these (dielec.pdf/diamag.pdf).
+fn carousel_alpha(phi_deg: f64) -> AlphaSpec {
+    let phi = phi_deg.to_radians();
+    let u = DVec3::new(phi.cos(), 0.0, phi.sin()); // radial stack axis
+    AlphaSpec {
+        rest_axis: u,
+        rest_center: u * CAROUSEL_R,
+        orbits_core: true,
+        members: alpha_members(),
+    }
+}
+
+/// Connector alpha: mounted SIDEWAYS on the stack axis between the center
+/// and a cap — facing like the polar plugs (edge-on, its disc feeding the
+/// axial channel), riding the carousel rotation and spinning on its own
+/// pole (nuclear.pdf Argon: "Level 3a is the posts up and down" — the
+/// session-29 diagram reading has them turned 90° to the core).
+fn sideways_alpha(y: f64) -> AlphaSpec {
+    AlphaSpec {
+        rest_axis: DVec3::X,
+        rest_center: DVec3::new(0.0, y, 0.0),
+        orbits_core: true,
+        members: alpha_members(),
+    }
 }
 
 /// Polar plug proton: plugged into a stack pole with its pole PERPENDICULAR
@@ -233,21 +289,26 @@ fn alpha_block(y: f64) -> Vec<Constituent> {
 /// in the south pole, neutron in the north; O = protons in both poles).
 /// `z` offsets the plug off-axis so a proton+neutron pair can share the
 /// polar hole side by side (0 for a lone plug); a paired proton points its
-/// pole AT its partner across the hole. Plugs ride the carousel like the
-/// alpha posts — they roll around the polar socket rather than sitting
-/// welded (session-29 user note).
-fn plug_proton(y: f64, z: f64) -> Constituent {
-    let local_pole = if z.abs() > 1e-9 {
+/// pole AT its partner across the hole. Single-member alpha: its own rest
+/// axis IS the old world-frame pole, so `Roll` spins the plug disc about
+/// its own pole and the carousel `Car` rides it around the socket exactly
+/// as the old `carousel: true` flag did (session-29 user note).
+fn plug_proton(y: f64, z: f64) -> AlphaSpec {
+    let rest_axis = if z.abs() > 1e-9 {
         DVec3::new(0.0, 0.0, -z.signum()) // toward the paired plug
     } else {
         DVec3::X
     };
-    Constituent {
-        profile_name: "proton",
-        local_pos: DVec3::new(0.0, y, z),
-        local_pole,
-        spin_sign: 1.0,
-        carousel: true,
+    AlphaSpec {
+        rest_axis,
+        rest_center: DVec3::new(0.0, y, z),
+        orbits_core: true,
+        members: vec![AlphaMemberSpec {
+            profile_name: "proton",
+            local_pos: DVec3::ZERO,
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        }],
     }
 }
 
@@ -256,21 +317,25 @@ fn plug_proton(y: f64, z: f64) -> Constituent {
 /// while neutrons channel pole to pole" (graphene.pdf), so its axial pole
 /// pulls charge into the stack's hole (atmo2.pdf: paired neutrons are
 /// "pulling charge into the axial holes"). `z` offsets it off-axis to sit
-/// side by side with a paired plug proton (0 for a lone plug). Rides the
-/// carousel like the alpha posts.
-fn plug_neutron(y: f64, z: f64) -> Constituent {
-    Constituent {
-        profile_name: "neutron",
-        local_pos: DVec3::new(0.0, y, z),
-        local_pole: DVec3::Y,
-        spin_sign: 1.0,
-        carousel: true,
+/// side by side with a paired plug proton (0 for a lone plug). Single-
+/// member alpha, rides the carousel like the alpha posts.
+fn plug_neutron(y: f64, z: f64) -> AlphaSpec {
+    AlphaSpec {
+        rest_axis: DVec3::Y,
+        rest_center: DVec3::new(0.0, y, z),
+        orbits_core: true,
+        members: vec![AlphaMemberSpec {
+            profile_name: "neutron",
+            local_pos: DVec3::ZERO,
+            local_pole: DVec3::Y,
+            spin_sign: 1.0,
+        }],
     }
 }
 
 /// Half-gap between the members of a proton+neutron pair sharing a polar
 /// hole ("two baryons in the hole fill the hole much better" — atmo2.pdf).
-/// Same nestling scale as the alpha's neutron posts (±0.7 off-axis).
+/// Same nestling scale as the alpha's neutron posts (±POST_R off-axis).
 const PLUG_PAIR_GAP: f64 = 0.8;
 
 /// Radius of the carousel level: distance from the stack axis to a
@@ -280,87 +345,6 @@ const PLUG_PAIR_GAP: f64 = 0.8;
 /// sockets"). Proportional rescale; exact funnel coupling of the carousel
 /// level is a future refinement.
 const CAROUSEL_R: f64 = 4.5;
-
-/// Connector alpha: mounted SIDEWAYS on the stack axis between the center
-/// and a cap — facing like the polar plugs (edge-on, its disc feeding the
-/// axial channel), riding the carousel rotation and spinning on its own
-/// pole (nuclear.pdf Argon: "Level 3a is the posts up and down" — the
-/// session-29 diagram reading has them turned 90° to the core).
-fn sideways_alpha(y: f64) -> Vec<Constituent> {
-    vec![
-        Constituent {
-            profile_name: "proton",
-            local_pos: DVec3::new(-1.3, y, 0.0),
-            local_pole: DVec3::X,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "proton",
-            local_pos: DVec3::new(1.3, y, 0.0),
-            local_pole: DVec3::X,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "neutron",
-            local_pos: DVec3::new(0.0, y - 0.7, 0.0),
-            local_pole: DVec3::X,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "neutron",
-            local_pos: DVec3::new(0.0, y + 0.7, 0.0),
-            local_pole: DVec3::X,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-    ]
-}
-
-/// One alpha mounted ON THE CAROUSEL at azimuth `phi_deg`: its stack axis
-/// points RADIALLY (the center disk's equatorial output feeds this alpha's
-/// axial hole — nuclear.pdf's first carousel configuration, Neon), and the
-/// whole block rides the carousel around the core. Charge is flung out
-/// equatorially through these (dielec.pdf/diamag.pdf).
-fn carousel_alpha(phi_deg: f64) -> Vec<Constituent> {
-    let phi = phi_deg.to_radians();
-    let u = DVec3::new(phi.cos(), 0.0, phi.sin()); // radial stack axis
-    let center = u * CAROUSEL_R;
-    // Posts sit perpendicular to the alpha's own axis; vertical keeps them
-    // clear of both the core and the neighboring carousel blocks.
-    vec![
-        Constituent {
-            profile_name: "proton",
-            local_pos: center - u * 1.3,
-            local_pole: u,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "proton",
-            local_pos: center + u * 1.3,
-            local_pole: u,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "neutron",
-            local_pos: center + DVec3::new(0.0, 0.7, 0.0),
-            local_pole: u,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-        Constituent {
-            profile_name: "neutron",
-            local_pos: center + DVec3::new(0.0, -0.7, 0.0),
-            local_pole: u,
-            spin_sign: 1.0,
-            carousel: true,
-        },
-    ]
-}
 
 /// Stacked-nucleon pitch: a fused neighbor parks at the MOUTH of the
 /// source's intake funnel (2.6 r — see the funnel constants in the
@@ -375,30 +359,31 @@ const NUCLEON_PITCH: f64 = 2.6;
 /// pitch.
 const ALPHA_PITCH: f64 = 3.75;
 
-pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
+/// Build a nuclear preset in alpha-unit terms: a list of [`AlphaSpec`]s
+/// (rest frame + orbits_core + members), consumed by `spawn_preset`.
+/// Preset compositions are unchanged from the flat-constituent era —
+/// only the grouping into alpha units changed (session-31).
+fn preset_alphas(name: &str) -> Option<Vec<AlphaSpec>> {
     match name {
-        "alpha" => Some(alpha_block(0.0)),
+        "alpha" => Some(vec![core_alpha(0.0)]),
         // Carbon: three alphas stacked (nuclear.pdf: "Carbon blocks — three
         // alphas stacked"; the single-stack limit that makes C the basis of
         // life).
-        "carbon" => Some(
-            [
-                alpha_block(-ALPHA_PITCH),
-                alpha_block(0.0),
-                alpha_block(ALPHA_PITCH),
-            ]
-            .concat(),
-        ),
+        "carbon" => Some(vec![
+            core_alpha(-ALPHA_PITCH),
+            core_alpha(0.0),
+            core_alpha(ALPHA_PITCH),
+        ]),
         // Nitrogen: carbon stack + 7th proton plugged in the south pole
         // (edge-on, disc feeding the hole) and the balancing neutron in the
         // north (ammon.pdf), pole-down per graphene.pdf.
         "nitrogen" => {
-            let mut c = preset_constituents("carbon")?;
+            let mut a = preset_alphas("carbon")?;
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
-            c.push(plug_proton(-(ALPHA_PITCH + 3.9), 0.0));
-            c.push(plug_neutron(ALPHA_PITCH + 3.9, 0.0));
-            Some(c)
+            a.push(plug_proton(-(ALPHA_PITCH + 3.9), 0.0));
+            a.push(plug_neutron(ALPHA_PITCH + 3.9, 0.0));
+            Some(a)
         }
         // Oxygen: carbon stack + BOTH poles capped by a proton+neutron PAIR
         // (oxygen.pdf: the 7th and 8th protons go on the ends because four
@@ -406,50 +391,44 @@ pub fn preset_constituents(name: &str) -> Option<Vec<Constituent>> {
         // them in the hole). Each pair sits side by side — proton edge-on
         // (disc feeds the hole), neutron pole-down (channels axially).
         "oxygen" => {
-            let mut c = preset_constituents("carbon")?;
+            let mut a = preset_alphas("carbon")?;
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             let y = ALPHA_PITCH + 3.9;
-            c.push(plug_proton(-y, -PLUG_PAIR_GAP));
-            c.push(plug_neutron(-y, PLUG_PAIR_GAP));
-            c.push(plug_proton(y, -PLUG_PAIR_GAP));
-            c.push(plug_neutron(y, PLUG_PAIR_GAP));
-            Some(c)
+            a.push(plug_proton(-y, -PLUG_PAIR_GAP));
+            a.push(plug_neutron(-y, PLUG_PAIR_GAP));
+            a.push(plug_proton(y, -PLUG_PAIR_GAP));
+            a.push(plug_neutron(y, PLUG_PAIR_GAP));
+            Some(a)
         }
         // Neon: THE first carousel configuration (nuclear.pdf) — one
         // center alpha with four carousel alphas plugged edge-to-hole
         // around its equator. The axial charge hole top and bottom is
         // "surrounded by four charge maxima": unreactive, six-sided.
-        "neon" => Some(
-            [
-                alpha_block(0.0),
-                carousel_alpha(0.0),
-                carousel_alpha(90.0),
-                carousel_alpha(180.0),
-                carousel_alpha(270.0),
-            ]
-            .concat(),
-        ),
+        "neon" => Some(vec![
+            core_alpha(0.0),
+            carousel_alpha(0.0),
+            carousel_alpha(90.0),
+            carousel_alpha(180.0),
+            carousel_alpha(270.0),
+        ]),
         // Argon: Neon's carousel + the full axial line on the same center
         // disk — "nine disks... Level one is the center disk. Level two
         // consists of the four carousel disks. Level 3a is the posts up
         // and down. Level 3b is the caps top and bottom" (nuclear.pdf).
         // The connectors (3a) sit SIDEWAYS like the polar plugs; the caps
         // (3b) are parallel to the core.
-        "argon" => Some(
-            [
-                alpha_block(-2.0 * ALPHA_PITCH),    // cap (parallel to core)
-                sideways_alpha(-ALPHA_PITCH),       // connector (edge-on)
-                alpha_block(0.0),                   // center
-                sideways_alpha(ALPHA_PITCH),        // connector (edge-on)
-                alpha_block(2.0 * ALPHA_PITCH),     // cap
-                carousel_alpha(0.0),
-                carousel_alpha(90.0),
-                carousel_alpha(180.0),
-                carousel_alpha(270.0),
-            ]
-            .concat(),
-        ),
+        "argon" => Some(vec![
+            core_alpha(-2.0 * ALPHA_PITCH),  // cap (parallel to core)
+            sideways_alpha(-ALPHA_PITCH),    // connector (edge-on)
+            core_alpha(0.0),                 // center
+            sideways_alpha(ALPHA_PITCH),     // connector (edge-on)
+            core_alpha(2.0 * ALPHA_PITCH),   // cap
+            carousel_alpha(0.0),
+            carousel_alpha(90.0),
+            carousel_alpha(180.0),
+            carousel_alpha(270.0),
+        ]),
         _ => None,
     }
 }
@@ -459,26 +438,64 @@ pub fn preset_names() -> &'static [&'static str] {
     &["alpha", "carbon", "nitrogen", "oxygen", "neon", "argon"]
 }
 
+/// One alpha unit of a nucleus: rolls rigidly about its OWN axis
+/// (`roll_phase`), and — if non-core — additionally has its center+axis
+/// revolve around the nucleus axis (`RigidGroup::carousel_phase`,
+/// gated by `orbits_core`). Two independent kinematic DOFs replace the
+/// single `car_rot` channel that used to do both jobs at once and could
+/// only get one of them right per alpha (docs/ATOM_ROTATION_AND_SIM_DESIGN.md
+/// §0). See `AtomCore::sync_group_members` for the exact composition.
+pub struct AlphaUnit {
+    /// Indices into the group's flat `members`/`local_offsets`/etc arrays
+    /// (k, NOT particle ids — particle id = `group.members[members[i]]`).
+    pub members: Vec<usize>,
+    /// Each member's rest position in the ALPHA's own frame (+Y = axis),
+    /// parallel to `members`.
+    pub member_local_pos: Vec<DVec3>,
+    /// Each member's pole in the alpha frame, parallel to `members`.
+    pub member_local_pole: Vec<DVec3>,
+    /// Rest axis of this alpha in the NUCLEUS frame (Y core/cap, radial u
+    /// carousel, X sideways connector, edge-on/pole-on for plugs).
+    pub rest_axis: DVec3,
+    /// Rest center of this alpha in the NUCLEUS frame.
+    pub rest_center: DVec3,
+    /// Does this alpha's center+axis orbit the nucleus axis (carousel)?
+    pub orbits_core: bool,
+    /// Kinematic roll about the alpha's own axis (rad, wall clock).
+    pub roll_phase: f64,
+    pub roll_rate: f64,
+
+    // ── Part 2 promotes the alpha to a real body (unused in RigidLock,
+    // docs/ATOM_ROTATION_AND_SIM_DESIGN.md Part 2) — populated at spawn
+    // so the fields exist and are sane, but nothing reads them yet. ──
+    pub com: DVec3,
+    pub velocity: DVec3,
+    pub orientation: DQuat,
+    pub angular_velocity: DVec3,
+    pub mass: f64,
+    pub inertia: f64,
+}
+
 /// A rigidly-locked composite (nucleus). Constituents remain real particles
 /// (forces sampled per-constituent — an electron can capture at one specific
 /// proton's pole), but they integrate as one rigid body. Intra-group pair
 /// forces are skipped: the nucleus is pre-fused, its internal balance is
 /// not simulated (uf4.pdf: "the alphas can't be broken and rearranged").
 pub struct RigidGroup {
+    /// Alpha sub-units — the source of truth for kinematics
+    /// (`sync_group_members`). The flat arrays below are REST-POSE data
+    /// derived from `alphas` once at spawn (roll = 0, carousel phase = 0)
+    /// and never mutated after — they exist so `segment_sources`,
+    /// `march_reach`, `compute_disc_exits`, `build_group_carousel_overlay`,
+    /// and the flow-VFX emitters (all azimuth-averaged or drawn in a
+    /// phase-rotated child node) don't need to change for Part 1
+    /// (session-31 addendum A1).
+    pub alphas: Vec<AlphaUnit>,
     pub members: Vec<usize>,
     pub local_offsets: Vec<DVec3>,
     pub local_orients: Vec<DQuat>,
     /// Intrinsic axial spin rate of each member (rad/s about its own pole).
     pub member_spin: Vec<f64>,
-    /// Accumulated axial spin phase per member — members visibly rotate
-    /// about their own poles even though the group frame is rigid.
-    pub member_spin_phase: Vec<f64>,
-    /// Members that ride the carousel around the group's stack axis
-    /// (alpha neutron posts, polar plugs). Kinematic: preserves ALL pair
-    /// distances — every off-axis member rides the carousel at the same
-    /// phase, everything else is on-axis. Riders' orientations rotate with
-    /// the ride (they roll around the axis, not slide).
-    pub carousel: Vec<bool>,
     pub carousel_rate: f64,
     pub carousel_phase: f64,
     pub com: DVec3,
@@ -596,10 +613,17 @@ pub const ANGULAR_DAMPING: f64 = 0.998;
 pub const GROUP_SPIN_RELAX: f64 = 20.0;
 /// VISIBLE axial-spin rate of bodies (rad/s WALL clock — substep
 /// independent), far below the physical TAU·3 rad/sim-s so the eye can
-/// track it. Applied via display_spin_phase at render time. Initial
-/// phases are randomized so members don't turn in lockstep.
+/// track it. For free particles this drives `display_orientation`; for
+/// group members it is each alpha's `roll_phase` rate — a rigid roll of
+/// an off-axis disc both spins the protons in place and revolves the
+/// posts around the axis (docs/ATOM_ROTATION_AND_SIM_DESIGN.md §1.1).
+/// Initial phases are randomized so alphas don't turn in lockstep.
 pub const DISPLAY_SPIN_RATE: f64 = 0.9;
-/// VISIBLE carousel ride rate (rad/s WALL clock).
+/// VISIBLE carousel ride rate (rad/s WALL clock) — independent of
+/// `DISPLAY_SPIN_RATE`. Roll (an alpha spinning about its own axis) and
+/// orbit (a non-core alpha's center+axis revolving around the nucleus
+/// axis) are separate kinematic DOFs; locking their rates equal made the
+/// whole nucleus read as one solid gear (session-31).
 pub const CAROUSEL_VIS_RATE: f64 = 0.35;
 pub const MIN_RENDER_RADIUS: f32 = 0.15;
 pub const ENVELOPE_MIN_R: f64 = 0.25;
@@ -811,7 +835,6 @@ impl AtomCore {
             force_accum: DVec3::ZERO,
             torque_accum: DVec3::ZERO,
             group: None,
-            display_spin_phase: phase0,
             display_orientation: (orientation * DQuat::from_rotation_y(phase0)).normalize(),
         });
         Some(id)
@@ -826,7 +849,7 @@ impl AtomCore {
         vel: DVec3,
         axis: DVec3,
     ) -> Option<usize> {
-        let constituents = preset_constituents(name)?;
+        let alpha_specs = preset_alphas(name)?;
         let orientation = orientation_from_pole(axis);
         let gid = self.groups.len();
 
@@ -834,45 +857,78 @@ impl AtomCore {
         let mut local_offsets = Vec::new();
         let mut local_orients = Vec::new();
         let mut member_spin = Vec::new();
-        let mut carousel = Vec::new();
         let mut mass = 0.0;
         let mut inertia = 0.0;
+        let mut alphas: Vec<AlphaUnit> = Vec::new();
 
-        for c in &constituents {
-            let profile_id = self.profile_id_by_name(c.profile_name)?;
-            let prof_mass = self.profiles[profile_id].mass;
-            let prof_radius = self.profiles[profile_id].radius;
-            let spin = default_spin_rate(c.profile_name) * c.spin_sign;
-            let world_pos = pos + orientation * c.local_pos;
-            let world_pole = orientation * c.local_pole;
-            let id = self.spawn_particle_ex(profile_id, world_pos, vel, world_pole, spin)?;
-            self.particles[id].group = Some(gid);
-            members.push(id);
-            local_offsets.push(c.local_pos);
-            local_orients.push(orientation_from_pole(c.local_pole));
-            member_spin.push(spin);
-            carousel.push(c.carousel);
-            mass += prof_mass;
-            inertia += prof_mass * (c.local_pos.length_squared() + 0.4 * prof_radius * prof_radius);
+        for spec in &alpha_specs {
+            // Rest pose (roll = 0, carousel = 0): the alpha's own frame
+            // mapped straight into the nucleus frame by its rest_axis.
+            let r_a = orientation_from_pole(spec.rest_axis);
+            let mut a_members = Vec::new();
+            let mut a_local_pos = Vec::new();
+            let mut a_local_pole = Vec::new();
+            let mut a_mass = 0.0;
+            let mut a_inertia = 0.0;
+            for ms in &spec.members {
+                let profile_id = self.profile_id_by_name(ms.profile_name)?;
+                let prof_mass = self.profiles[profile_id].mass;
+                let prof_radius = self.profiles[profile_id].radius;
+                let spin = default_spin_rate(ms.profile_name) * ms.spin_sign;
+                let nucleus_local_pos = spec.rest_center + r_a * ms.local_pos;
+                let nucleus_local_pole = r_a * ms.local_pole;
+                let world_pos = pos + orientation * nucleus_local_pos;
+                let world_pole = orientation * nucleus_local_pole;
+                let id =
+                    self.spawn_particle_ex(profile_id, world_pos, vel, world_pole, spin)?;
+                self.particles[id].group = Some(gid);
+                let k = members.len();
+                members.push(id);
+                local_offsets.push(nucleus_local_pos);
+                local_orients.push(orientation_from_pole(nucleus_local_pole));
+                member_spin.push(spin);
+                mass += prof_mass;
+                inertia += prof_mass
+                    * (nucleus_local_pos.length_squared() + 0.4 * prof_radius * prof_radius);
+                a_members.push(k);
+                a_local_pos.push(ms.local_pos);
+                a_local_pole.push(ms.local_pole);
+                a_mass += prof_mass;
+                a_inertia +=
+                    prof_mass * (ms.local_pos.length_squared() + 0.4 * prof_radius * prof_radius);
+            }
+            // Each alpha's roll starts at a random phase so alphas don't
+            // turn in lockstep (the "synchronized ballet", session-29);
+            // members WITHIN one alpha share its roll — that coherence is
+            // correct (they're one rigid piece).
+            let roll_phase = self.rng.next_f64() * TAU;
+            alphas.push(AlphaUnit {
+                members: a_members,
+                member_local_pos: a_local_pos,
+                member_local_pole: a_local_pole,
+                rest_axis: spec.rest_axis,
+                rest_center: spec.rest_center,
+                orbits_core: spec.orbits_core,
+                roll_phase,
+                roll_rate: DISPLAY_SPIN_RATE,
+                com: spec.rest_center,
+                velocity: DVec3::ZERO,
+                orientation: orientation_from_pole(spec.rest_axis),
+                angular_velocity: DVec3::ZERO,
+                mass: a_mass,
+                inertia: a_inertia.max(1e-9),
+            });
         }
 
-        let n_members = members.len();
-        // Random display phases: members and nuclei must not turn in
-        // lockstep (the "synchronized ballet", session-29).
-        let member_spin_phase: Vec<f64> = (0..n_members)
-            .map(|_| self.rng.next_f64() * TAU)
-            .collect();
         let carousel_phase = self.rng.next_f64() * TAU;
         self.groups.push(RigidGroup {
+            alphas,
             members,
             local_offsets,
             local_orients,
             member_spin,
-            member_spin_phase,
-            carousel,
-            // Posts ride the disc outputs (oxygen.pdf: the neutrons keep
-            // the protons from turning by rolling with them). DISPLAY
-            // rate — wall clock, readable, substep independent.
+            // Carousel orbit — DISPLAY rate, wall clock, readable, substep
+            // independent (docs/ATOM_ROTATION_AND_SIM_DESIGN.md §1.4).
             carousel_rate: CAROUSEL_VIS_RATE,
             carousel_phase,
             com: pos,
@@ -895,12 +951,14 @@ impl AtomCore {
         Some(gid)
     }
 
-    /// Split a group into skin segments: carousel members (lateral > 1.5)
-    /// form one segment; the rest cluster along the axis with a gap
-    /// threshold that keeps a contiguous alpha stack together. Intra-alpha
-    /// member gaps are now ≤ 1.3 (proton↔post), inter-piece gaps ≥ 1.75
-    /// (argon center↔connector), so 1.5 splits pieces and keeps a
-    /// contiguous carbon stack whole.
+    /// Split a group into skin segments: alphas whose `rest_center` sits
+    /// off the stack axis (lateral > 1.5 — compares PLUG_PAIR_GAP 0.8 vs
+    /// CAROUSEL_R 4.5, so it's no longer a per-member magic number,
+    /// session-31 addendum A4) all belong to ONE carousel segment; the
+    /// rest cluster along the axis with a gap threshold that keeps a
+    /// contiguous alpha stack together. Intra-alpha member gaps are ≤ 1.3
+    /// (proton↔post), inter-piece gaps ≥ 1.75 (argon center↔connector),
+    /// so 1.5 splits pieces and keeps a contiguous carbon stack whole.
     pub fn compute_skin_segments(&self, group_idx: usize) -> Vec<SkinSegment> {
         const SEG_GAP: f64 = 1.5;
         let g = match self.groups.get(group_idx) {
@@ -909,12 +967,15 @@ impl AtomCore {
         };
         let mut carousel: Vec<usize> = Vec::new();
         let mut axial: Vec<(f64, usize)> = Vec::new();
-        for (k, off) in g.local_offsets.iter().enumerate() {
-            let lateral = (off.x * off.x + off.z * off.z).sqrt();
+        for a in &g.alphas {
+            let lateral = (a.rest_center.x * a.rest_center.x + a.rest_center.z * a.rest_center.z)
+                .sqrt();
             if lateral > 1.5 {
-                carousel.push(k);
+                carousel.extend(a.members.iter().copied());
             } else {
-                axial.push((off.y, k));
+                for &k in &a.members {
+                    axial.push((g.local_offsets[k].y, k));
+                }
             }
         }
         axial.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -952,67 +1013,117 @@ impl AtomCore {
         segments
     }
 
-    /// Reposition a group's members from the group frame and give them the
-    /// rigid-body velocity field (v_com + ω×r) plus their intrinsic axial
-    /// spin — velocity-dependent forces (doppler, corotation) on
-    /// constituents need correct member velocities.
+    /// Reposition a group's members from each alpha's frame and give them
+    /// the rigid-body velocity field (v_com + ω×r) plus their intrinsic
+    /// axial spin AND the kinematic display terms (roll, carousel) —
+    /// velocity-dependent forces (doppler, corotation) on constituents
+    /// need correct member velocities. Exact kinematics from
+    /// docs/ATOM_ROTATION_AND_SIM_DESIGN.md §1.3 + session-31 addendum A3:
+    ///
+    /// ```text
+    /// R_a   = orientation_from_pole(a.rest_axis)      // alpha +Y → rest_axis
+    /// Roll  = DQuat::from_rotation_y(a.roll_phase)     // about alpha-local +Y
+    /// Car   = if a.orbits_core { rotation_y(carousel_phase) } else { IDENTITY }
+    ///
+    /// inner       = R_a * (Roll * member_local_pos)     // roll revolves posts
+    /// nucleus_pos = Car * (a.rest_center + inner)        // carousel orbits piece
+    /// q_nucleus   = Car * R_a * Roll * orientation_from_pole(member_local_pole)
+    ///
+    /// p.position    = com + nucleus_orientation * nucleus_pos
+    /// p.orientation = (nucleus_orientation * q_nucleus).normalize()
+    /// ```
+    ///
+    /// Two independent rotational DOFs per alpha (roll about its OWN axis,
+    /// carousel about the NUCLEUS axis) replace the single `car_rot`
+    /// channel that used to try to do both jobs at once and could only get
+    /// one of them right per alpha (§0 of the design doc).
     fn sync_group_members(&mut self, gid: usize) {
-        struct MemberSync {
-            id: usize,
-            offset: DVec3,
-            orient: DQuat,
-            spin: f64,
-            spin_phase: f64,
-            carousel: bool,
+        struct AlphaSync {
+            rest_axis: DVec3,
+            rest_center: DVec3,
+            orbits_core: bool,
+            roll_phase: f64,
+            roll_rate: f64,
+            member_ids: Vec<usize>,
+            local_pos: Vec<DVec3>,
+            local_pole: Vec<DVec3>,
+            spins: Vec<f64>,
         }
-        let (data, com, vel, orientation, omega, car_rot, car_omega) = {
+        let (alpha_data, com, vel, nucleus_orientation, omega, carousel_phase, carousel_rate) = {
             let g = &self.groups[gid];
-            let data: Vec<MemberSync> = (0..g.members.len())
-                .map(|k| MemberSync {
-                    id: g.members[k],
-                    offset: g.local_offsets[k],
-                    orient: g.local_orients[k],
-                    spin: g.member_spin[k],
-                    spin_phase: g.member_spin_phase[k],
-                    carousel: g.carousel[k],
+            let alpha_data: Vec<AlphaSync> = g
+                .alphas
+                .iter()
+                .map(|a| AlphaSync {
+                    rest_axis: a.rest_axis,
+                    rest_center: a.rest_center,
+                    orbits_core: a.orbits_core,
+                    roll_phase: a.roll_phase,
+                    roll_rate: a.roll_rate,
+                    member_ids: a.members.iter().map(|&k| g.members[k]).collect(),
+                    local_pos: a.member_local_pos.clone(),
+                    local_pole: a.member_local_pole.clone(),
+                    spins: a.members.iter().map(|&k| g.member_spin[k]).collect(),
                 })
                 .collect();
-            let car_rot = DQuat::from_rotation_y(g.carousel_phase);
-            // Carousel angular velocity in world space (about the stack axis)
-            let car_omega = (g.orientation * DVec3::Y) * g.carousel_rate;
-            (data, g.com, g.velocity, g.orientation, g.angular_velocity, car_rot, car_omega)
+            (
+                alpha_data,
+                g.com,
+                g.velocity,
+                g.orientation,
+                g.angular_velocity,
+                g.carousel_phase,
+                g.carousel_rate,
+            )
         };
-        for ms in data {
-            let local_off = if ms.carousel { car_rot * ms.offset } else { ms.offset };
-            let world_off = orientation * local_off;
-            let p = &mut self.particles[ms.id];
-            p.position = com + world_off;
-            // Rigid frame × (carousel ride) × constituent frame. Carousel
-            // riders ROLL around the stack axis (their orientation tracks
-            // the ride, so an edge-on plug keeps facing its partner all
-            // the way around). The member's own axial spin is a DISPLAY
-            // phase applied at render time (render_orientation).
-            let member_orient = if ms.carousel { car_rot * ms.orient } else { ms.orient };
-            p.orientation = (orientation * member_orient).normalize();
-            p.display_spin_phase = ms.spin_phase;
-            p.velocity = vel + omega.cross(world_off);
-            if ms.carousel {
-                p.velocity += car_omega.cross(world_off);
-            }
-            let pole = p.pole_axis();
-            p.angular_velocity = omega + pole * ms.spin;
-            if ms.carousel {
-                p.angular_velocity += car_omega;
+        for a in &alpha_data {
+            let r_a = orientation_from_pole(a.rest_axis);
+            let roll = DQuat::from_rotation_y(a.roll_phase);
+            let car = if a.orbits_core {
+                DQuat::from_rotation_y(carousel_phase)
+            } else {
+                DQuat::IDENTITY
+            };
+            // Alpha axis/center in WORLD space, riding the carousel — used
+            // by the roll velocity term below (addendum A3).
+            let axis_w = nucleus_orientation * (car * a.rest_axis);
+            let center_w = com + nucleus_orientation * (car * a.rest_center);
+            let car_w = if a.orbits_core {
+                (nucleus_orientation * DVec3::Y) * carousel_rate
+            } else {
+                DVec3::ZERO
+            };
+            for i in 0..a.member_ids.len() {
+                let inner = r_a * (roll * a.local_pos[i]);
+                let nucleus_pos = car * (a.rest_center + inner);
+                let q_nucleus = car * r_a * roll * orientation_from_pole(a.local_pole[i]);
+                let world_off = nucleus_orientation * nucleus_pos;
+
+                let p = &mut self.particles[a.member_ids[i]];
+                p.position = com + world_off;
+                p.orientation = (nucleus_orientation * q_nucleus).normalize();
+
+                let mut v = vel + omega.cross(world_off);
+                let mut ang = omega + p.pole_axis() * a.spins[i];
+                if a.orbits_core {
+                    v += car_w.cross(world_off);
+                    ang += car_w;
+                }
+                let roll_w = axis_w * a.roll_rate;
+                v += roll_w.cross(p.position - center_w);
+                ang += roll_w;
+                p.velocity = v;
+                p.angular_velocity = ang;
             }
         }
     }
 
     /// Advance the VISIBLE kinematic rotations by wall-clock `delta`:
-    /// member axial-spin phases, the carousel ride, and free particles'
-    /// display twist. These run at readable DISPLAY rates, deliberately
-    /// far below the physical spin (TAU·3 rad/sim-s) and INDEPENDENT of
-    /// the substep count — substeps scale physics time, not how fast the
-    /// bodies visibly turn.
+    /// each alpha's roll phase, the shared carousel orbit, and free
+    /// particles' display twist. These run at readable DISPLAY rates,
+    /// deliberately far below the physical spin (TAU·3 rad/sim-s) and
+    /// INDEPENDENT of the substep count — substeps scale physics time, not
+    /// how fast the bodies visibly turn.
     pub fn advance_display(&mut self, delta: f64) {
         for p in &mut self.particles {
             if p.group.is_none() {
@@ -1033,10 +1144,8 @@ impl AtomCore {
             {
                 let g = &mut self.groups[gi];
                 g.carousel_phase = (g.carousel_phase + g.carousel_rate * delta) % TAU;
-                for k in 0..g.member_spin_phase.len() {
-                    g.member_spin_phase[k] = (g.member_spin_phase[k]
-                        + g.member_spin[k].signum() * DISPLAY_SPIN_RATE * delta)
-                        % TAU;
+                for a in &mut g.alphas {
+                    a.roll_phase = (a.roll_phase + a.roll_rate * delta) % TAU;
                 }
             }
             self.sync_group_members(gi);
@@ -2362,11 +2471,15 @@ impl AtomCore {
         buf
     }
 
-    /// Carousel dispersal overlay: one circle per carousel unit, plane ⊥
-    /// the unit's radial axis, radius = how far that unit's field reaches
-    /// perpendicular to the main disc — "4 protruding circles following
-    /// the outside parts". Group-local at carousel phase 0; render in a
-    /// child node rotated by get_group_carousel_phase. Packed like
+    /// Carousel dispersal overlay: one circle per carousel-level ALPHA
+    /// (session-31 addendum A6 — iterate alphas directly instead of
+    /// azimuth-clustering member offsets), plane ⊥ the alpha's radial
+    /// axis, radius = how far that alpha's field reaches perpendicular to
+    /// the main disc — "4 protruding circles following the outside parts".
+    /// Group-local at carousel phase 0; render in a child node rotated by
+    /// get_group_carousel_phase. Clamped to `0.45·CAROUSEL_R·√2` so
+    /// adjacent carousel circles (centers `CAROUSEL_R·√2` apart on a
+    /// 4-fold ring) kiss but never interpenetrate (§1.7). Packed like
     /// emission rings: [ring_count, pts_per_ring, xyz…].
     pub fn build_group_carousel_overlay(&self, group_idx: usize) -> Vec<f32> {
         const PTS: usize = 49;
@@ -2374,36 +2487,21 @@ impl AtomCore {
             Some(g) => g,
             None => return Vec::new(),
         };
-        let carousel_members: Vec<usize> = match g
-            .skin_segments
+        let units: Vec<&Vec<usize>> = g
+            .alphas
             .iter()
-            .find(|s| s.carousel)
-        {
-            Some(s) => s.members.clone(),
-            None => return Vec::new(),
-        };
-        // Cluster into units by azimuth.
-        let mut by_az: Vec<(f64, usize)> = carousel_members
-            .iter()
-            .map(|&k| {
-                let o = g.local_offsets[k];
-                (o.z.atan2(o.x), k)
+            .filter(|a| {
+                let lateral =
+                    (a.rest_center.x * a.rest_center.x + a.rest_center.z * a.rest_center.z)
+                        .sqrt();
+                lateral > 1.5
             })
+            .map(|a| &a.members)
             .collect();
-        by_az.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        let mut units: Vec<Vec<usize>> = Vec::new();
-        let mut last_az = f64::NAN;
-        for (az, k) in by_az {
-            if units.is_empty() || (az - last_az).abs() > 0.6 {
-                units.push(vec![k]);
-            } else {
-                units.last_mut().unwrap().push(k);
-            }
-            last_az = az;
-        }
         if units.is_empty() {
             return Vec::new();
         }
+        let max_r = 0.45 * CAROUSEL_R * std::f64::consts::SQRT_2;
         let mut buf: Vec<f32> = vec![units.len() as f32, PTS as f32];
         for unit in &units {
             let center = unit
@@ -2418,7 +2516,7 @@ impl AtomCore {
             let w = u.cross(DVec3::Y).normalize();
             // Perpendicular dispersal reach: march this unit's field in
             // the plane ⊥ its axis, average 4 directions.
-            let srcs = self.segment_sources(group_idx, Some(unit));
+            let srcs = self.segment_sources(group_idx, Some(unit.as_slice()));
             let mut r_disp = 0.0;
             for dir in [DVec3::Y, -DVec3::Y, w, -w] {
                 let hull = srcs
@@ -2445,7 +2543,7 @@ impl AtomCore {
                 }
                 r_disp += r;
             }
-            r_disp /= 4.0;
+            r_disp = (r_disp / 4.0).min(max_r);
             for p in 0..PTS {
                 let a = TAU * p as f64 / (PTS - 1) as f64;
                 let pt = center + (DVec3::Y * a.cos() + w * a.sin()) * r_disp;
@@ -2458,10 +2556,16 @@ impl AtomCore {
         buf
     }
 
-    /// Where each alpha block's disc meets the composite reach surface:
+    /// Where each AXIAL alpha's disc meets the composite reach surface:
     /// (ring radius, y) per alpha, group-local. Computed once at spawn and
     /// stored as `RigidGroup::disc_exits` — feeds the ring overlay and the
-    /// flow-VFX disc exit paths.
+    /// flow-VFX disc exit paths. Re-keyed off `AlphaUnit` directly
+    /// (session-31 addendum A5): one disc center per alpha whose
+    /// `rest_axis` is axial (|rest_axis·Y| > 0.9) AND has ≥ 2 proton
+    /// members, at `y = rest_center.y` — same output as the old
+    /// sorted-consecutive-proton-pairing for every preset, but without the
+    /// fragile pairing (adjacent-block protons used to sit closer together
+    /// than an alpha's own pair, so a gap-based clustering couldn't work).
     pub fn compute_disc_exits(&self, group_idx: usize) -> Vec<(f64, f64)> {
         let g = match self.groups.get(group_idx) {
             Some(g) => g,
@@ -2470,36 +2574,26 @@ impl AtomCore {
         if g.skin_reach.len() < 2 {
             return Vec::new();
         }
-        // Alpha disc latitudes: cluster the AXIAL protons' heights (each
-        // alpha = two stacked protons ±0.9 around its center; plug protons
-        // are edge-on and don't count).
-        let mut ys: Vec<f64> = Vec::new();
-        for (k, &pid) in g.members.iter().enumerate() {
-            let prof = &self.profiles[self.particles[pid].profile_id];
-            let axial = (g.local_orients[k] * DVec3::Y).dot(DVec3::Y).abs() > 0.9;
-            if prof.name == "proton" && axial {
-                ys.push(g.local_offsets[k].y);
+        let mut centers: Vec<f64> = Vec::new();
+        for a in &g.alphas {
+            if a.rest_axis.dot(DVec3::Y).abs() <= 0.9 {
+                continue;
+            }
+            let proton_count = a
+                .members
+                .iter()
+                .filter(|&&k| {
+                    self.profiles[self.particles[g.members[k]].profile_id].name == "proton"
+                })
+                .count();
+            if proton_count >= 2 {
+                centers.push(a.rest_center.y);
             }
         }
-        if ys.is_empty() {
+        if centers.is_empty() {
             return Vec::new();
         }
-        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        // Axial protons come as one stacked pair per alpha block, and
-        // blocks don't interleave — consecutive sorted heights pair up.
-        // (A gap-based clustering fails here: adjacent-block protons are
-        // CLOSER (0.8) than an alpha's own pair (1.8) at ALPHA_PITCH 2.6.)
-        let mut centers: Vec<f64> = Vec::new();
-        let mut i = 0;
-        while i < ys.len() {
-            if i + 1 < ys.len() {
-                centers.push((ys[i] + ys[i + 1]) / 2.0);
-                i += 2;
-            } else {
-                centers.push(ys[i]);
-                i += 1;
-            }
-        }
+        centers.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         // For each alpha center find where the skin surface crosses that
         // height: y(θ) = reach(θ)·cosθ runs from +reach to −reach over
@@ -3298,16 +3392,17 @@ pub fn profile_color(name: &str) -> (f32, f32, f32) {
     }
 }
 
-/// Render orientation. Group members: the rigid composition with the
-/// wall-clock spin applied directly about the body pole — continuous in
-/// the carousel phase (NO swing–twist extraction: that decomposition is
-/// singular near 180° configurations and made off-axis members flip
-/// wildly as the ride swept them through, session-29). Free particles:
-/// the parallel-transported display frame. The force model never reads
+/// Render orientation. Group members: just `p.orientation` — the roll
+/// (each alpha spinning about its own axis) and the carousel orbit are
+/// already baked into it by `sync_group_members` (§1.3). NO swing–twist
+/// extraction and NO extra rotY on top: that decomposition is singular
+/// near 180° configurations and made off-axis members flip wildly as the
+/// ride swept them through (session-29). Free particles: the
+/// parallel-transported display frame. The force model never reads
 /// rotation about the pole, so both are purely visual.
 fn render_orientation(p: &SimParticle) -> DQuat {
     if p.group.is_some() {
-        (p.orientation * DQuat::from_rotation_y(p.display_spin_phase)).normalize()
+        p.orientation
     } else {
         p.display_orientation
     }
@@ -3339,8 +3434,8 @@ fn push_transform_color(
 /// Reorient a saved spin-mode path trace so the pattern's symmetry axis —
 /// the axial hole the body spins around, which in spin mode is the
 /// outermost orbital level's LAB axis (X, Y or Z depending on the stack) —
-/// lands on +Y, the pole axis atom-mode bodies spin about
-/// (`member_spin_phase` / axial spin rotate meshes about local +Y).
+/// lands on +Y, the pole axis atom-mode bodies spin about (an alpha's
+/// `roll_phase` rotates group-member meshes about local +Y).
 ///
 /// The axis is recovered from the data itself, so traces saved before this
 /// fix reorient too: for a surface of revolution the covariance eigenvalue
@@ -3819,8 +3914,9 @@ mod tests {
     }
 
     /// Display rotations are WALL-clock: physics stepping must not move
-    /// the carousel or spin phases (that's what made visible speed scale
-    /// with the substep count), advance_display must.
+    /// the carousel or any alpha's roll phase (that's what made visible
+    /// speed scale with the substep count) — advance_display must, at the
+    /// documented rates (session-31 addendum A8).
     #[test]
     fn display_phases_are_wall_clock() {
         let dir = config_dir();
@@ -3833,19 +3929,35 @@ mod tests {
             .expect("alpha preset");
         core.running = true;
         let car0 = core.groups[0].carousel_phase;
-        let spin0 = core.groups[0].member_spin_phase[0];
+        let roll0 = core.groups[0].alphas[0].roll_phase;
         core.step_n(2000);
         assert_eq!(
             core.groups[0].carousel_phase, car0,
             "sim steps must not advance the carousel"
         );
-        assert_eq!(core.groups[0].member_spin_phase[0], spin0);
+        assert_eq!(
+            core.groups[0].alphas[0].roll_phase, roll0,
+            "sim steps must not advance an alpha's roll"
+        );
         core.advance_display(0.5);
         assert!(
-            (core.groups[0].carousel_phase - car0).abs() > 1e-6,
-            "advance_display should ride the carousel"
+            (core.groups[0].carousel_phase - (car0 + CAROUSEL_VIS_RATE * 0.5) % TAU).abs()
+                < 1e-9,
+            "advance_display should ride the carousel at CAROUSEL_VIS_RATE"
         );
-        assert!((core.groups[0].member_spin_phase[0] - spin0).abs() > 1e-6);
+        assert!(
+            (core.groups[0].alphas[0].roll_phase - (roll0 + DISPLAY_SPIN_RATE * 0.5) % TAU)
+                .abs()
+                < 1e-9,
+            "advance_display should roll the alpha at DISPLAY_SPIN_RATE"
+        );
+
+        // Roll and carousel are INDEPENDENT rates (session-31: locking
+        // them equal made the whole nucleus read as one solid gear).
+        assert!(
+            (CAROUSEL_VIS_RATE - DISPLAY_SPIN_RATE).abs() > 1e-6,
+            "carousel orbit rate must be independent of the roll rate"
+        );
     }
 
     /// Skin segmentation: carbon reads as ONE tube; neon = center +
@@ -3983,5 +4095,288 @@ mod tests {
             rho_eq > 3.0 * rho_pole,
             "skin must read as a wide equatorial ledge: eq={rho_eq} pole={rho_pole}"
         );
+    }
+
+    /// Overlay-clamp (session-31 addendum A6/A8, replaces the old
+    /// `carousel_circles_tangent_at_new_radius` which assumed CAROUSEL_R
+    /// 8.0): every carousel dispersal circle's radius stays within the
+    /// §1.7 clamp `0.45·CAROUSEL_R·√2` at the restored R = 4.5, so
+    /// adjacent circles (centers `CAROUSEL_R·√2` apart on the 4-fold
+    /// ring) kiss but never interpenetrate.
+    #[test]
+    fn carousel_overlay_circles_are_clamped() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon");
+        assert!((CAROUSEL_R - 4.5).abs() < 1e-9, "CAROUSEL_R should be restored to ~4.5");
+        let overlay = core.build_group_carousel_overlay(0);
+        assert!(!overlay.is_empty());
+        let n_units = overlay[0] as usize;
+        let pts = overlay[1] as usize;
+        assert_eq!(n_units, 4, "four carousel units, four circles");
+        let max_r = 0.45 * CAROUSEL_R * std::f64::consts::SQRT_2;
+        for u in 0..n_units {
+            let base = 2 + u * pts * 3;
+            // Average over the UNIQUE points only (p in 0..pts-1) — point
+            // pts-1 duplicates point 0 (the circle closes at a = TAU), and
+            // including it twice biases a naive average off the true
+            // center enough to spuriously inflate the recovered radius.
+            let mut center = DVec3::ZERO;
+            for p in 0..(pts - 1) {
+                let o = base + p * 3;
+                center += DVec3::new(
+                    overlay[o] as f64,
+                    overlay[o + 1] as f64,
+                    overlay[o + 2] as f64,
+                );
+            }
+            center /= (pts - 1) as f64;
+            for p in 0..pts {
+                let o = base + p * 3;
+                let pt = DVec3::new(
+                    overlay[o] as f64,
+                    overlay[o + 1] as f64,
+                    overlay[o + 2] as f64,
+                );
+                let r = (pt - center).length();
+                assert!(
+                    r <= max_r + 1e-6,
+                    "carousel overlay circle radius {r} exceeds clamp {max_r}"
+                );
+            }
+        }
+    }
+
+    /// A core alpha's post offset (in the nucleus XZ plane, perpendicular
+    /// to the axis) rotates ~90° over a quarter roll period; its protons
+    /// stay on axis (docs/ATOM_ROTATION_AND_SIM_DESIGN.md §1.8).
+    #[test]
+    fn alpha_roll_revolves_posts() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        let gid = 0;
+        let proton_id = core.profile_id_by_name("proton").unwrap();
+        let neutron_id = core.profile_id_by_name("neutron").unwrap();
+        let post = *core.groups[gid]
+            .members
+            .iter()
+            .find(|&&id| core.particles[id].profile_id == neutron_id)
+            .unwrap();
+        let proton = *core.groups[gid]
+            .members
+            .iter()
+            .find(|&&id| core.particles[id].profile_id == proton_id)
+            .unwrap();
+
+        let com = core.groups[gid].com;
+        let axis = core.groups[gid].orientation * DVec3::Y;
+        let perp = |p: DVec3| -> DVec3 {
+            let rel = p - com;
+            rel - axis * rel.dot(axis)
+        };
+        let post_perp0 = perp(core.particles[post].position);
+        let proton_perp0 = perp(core.particles[proton].position).length();
+
+        let quarter = (TAU / 4.0) / DISPLAY_SPIN_RATE;
+        core.advance_display(quarter);
+
+        let post_perp1 = perp(core.particles[post].position);
+        let proton_perp1 = perp(core.particles[proton].position).length();
+
+        let cos_ang = post_perp0.normalize().dot(post_perp1.normalize());
+        assert!(
+            cos_ang.abs() < 0.15,
+            "post should revolve ~90° about the alpha axis, cos={cos_ang}"
+        );
+        assert!(
+            proton_perp0 < 1e-6 && proton_perp1 < 1e-6,
+            "protons should stay on the alpha axis: {proton_perp0} -> {proton_perp1}"
+        );
+    }
+
+    /// The exact §0 failure case: a carousel alpha's proton pole (the
+    /// alpha's own radial axis) tracks the carousel orbit, AND — once
+    /// rolling — its posts revolve about the ALPHA's own axis (not stay
+    /// pinned top/bottom of the piece, as the single `car_rot` channel
+    /// used to leave them).
+    #[test]
+    fn carousel_orbit_tracks_pole() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        let gid = 0;
+        let proton_id = core.profile_id_by_name("proton").unwrap();
+        let neutron_id = core.profile_id_by_name("neutron").unwrap();
+        let ai = core.groups[gid]
+            .alphas
+            .iter()
+            .position(|a| a.orbits_core)
+            .expect("neon should have a carousel alpha");
+        let protons: Vec<usize> = core.groups[gid].alphas[ai]
+            .members
+            .iter()
+            .copied()
+            .filter(|&k| core.particles[core.groups[gid].members[k]].profile_id == proton_id)
+            .map(|k| core.groups[gid].members[k])
+            .collect();
+        let post = core.groups[gid].alphas[ai]
+            .members
+            .iter()
+            .copied()
+            .find(|&k| core.particles[core.groups[gid].members[k]].profile_id == neutron_id)
+            .map(|k| core.groups[gid].members[k])
+            .unwrap();
+        assert_eq!(protons.len(), 2, "carousel alpha should have 2 protons");
+
+        // Phase A: orbit only (this alpha's own roll frozen) — the proton
+        // pole must track the carousel orbit.
+        core.groups[gid].alphas[ai].roll_rate = 0.0;
+        let pole0 = core.particles[protons[0]].pole_axis();
+        let quarter_orbit = (TAU / 4.0) / CAROUSEL_VIS_RATE;
+        core.advance_display(quarter_orbit);
+        let pole1 = core.particles[protons[0]].pole_axis();
+        assert!(
+            pole0.dot(pole1).abs() < 0.15,
+            "carousel proton pole should track the orbit, cos={}",
+            pole0.dot(pole1)
+        );
+
+        // Phase B: roll only (freeze the carousel now) — the post must
+        // revolve about THIS alpha's own axis.
+        core.groups[gid].carousel_rate = 0.0;
+        core.groups[gid].alphas[ai].roll_rate = DISPLAY_SPIN_RATE;
+        let center =
+            (core.particles[protons[0]].position + core.particles[protons[1]].position) * 0.5;
+        let axis = (core.particles[protons[1]].position - core.particles[protons[0]].position)
+            .normalize();
+        let perp = |p: DVec3| -> DVec3 {
+            let rel = p - center;
+            rel - axis * rel.dot(axis)
+        };
+        let post_perp0 = perp(core.particles[post].position);
+        let quarter_roll = (TAU / 4.0) / DISPLAY_SPIN_RATE;
+        core.advance_display(quarter_roll);
+        let post_perp1 = perp(core.particles[post].position);
+        let cos_ang = post_perp0.normalize().dot(post_perp1.normalize());
+        assert!(
+            cos_ang.abs() < 0.15,
+            "post should revolve ~90° about the alpha's OWN axis, cos={cos_ang}"
+        );
+        assert!(
+            (post_perp0.length() - post_perp1.length()).abs() < 0.05,
+            "post's distance from its own alpha axis should be preserved (rigid roll)"
+        );
+    }
+
+    /// A core alpha (orbits_core=false) and a carousel alpha
+    /// (orbits_core=true), given equal roll rates, both revolve their
+    /// posts about their OWN axes by the same angle — no special-casing
+    /// between core and carousel (§1.3 "Key properties").
+    #[test]
+    fn core_and_carousel_symmetric() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("neon preset");
+        let gid = 0;
+        let proton_id = core.profile_id_by_name("proton").unwrap();
+        let neutron_id = core.profile_id_by_name("neutron").unwrap();
+        let core_ai = core.groups[gid]
+            .alphas
+            .iter()
+            .position(|a| !a.orbits_core)
+            .unwrap();
+        let car_ai = core.groups[gid]
+            .alphas
+            .iter()
+            .position(|a| a.orbits_core)
+            .unwrap();
+        // Freeze the carousel orbit so only roll moves anything — an
+        // apples-to-apples comparison of the two alphas' own-axis
+        // revolution.
+        core.groups[gid].carousel_rate = 0.0;
+        core.groups[gid].alphas[core_ai].roll_rate = DISPLAY_SPIN_RATE;
+        core.groups[gid].alphas[car_ai].roll_rate = DISPLAY_SPIN_RATE;
+
+        let members_of = |g: &RigidGroup, ai: usize, particles: &[SimParticle]| -> (Vec<usize>, usize) {
+            let protons: Vec<usize> = g.alphas[ai]
+                .members
+                .iter()
+                .copied()
+                .filter(|&k| particles[g.members[k]].profile_id == proton_id)
+                .map(|k| g.members[k])
+                .collect();
+            let post = g.alphas[ai]
+                .members
+                .iter()
+                .copied()
+                .find(|&k| particles[g.members[k]].profile_id == neutron_id)
+                .map(|k| g.members[k])
+                .unwrap();
+            (protons, post)
+        };
+        let (core_protons, core_post) = members_of(&core.groups[gid], core_ai, &core.particles);
+        let (car_protons, car_post) = members_of(&core.groups[gid], car_ai, &core.particles);
+
+        let perp_of = |particles: &[SimParticle], protons: &[usize], post: usize| -> DVec3 {
+            let center = (particles[protons[0]].position + particles[protons[1]].position) * 0.5;
+            let axis =
+                (particles[protons[1]].position - particles[protons[0]].position).normalize();
+            let rel = particles[post].position - center;
+            rel - axis * rel.dot(axis)
+        };
+        let core_perp0 = perp_of(&core.particles, &core_protons, core_post);
+        let car_perp0 = perp_of(&core.particles, &car_protons, car_post);
+
+        let quarter = (TAU / 4.0) / DISPLAY_SPIN_RATE;
+        core.advance_display(quarter);
+
+        let core_perp1 = perp_of(&core.particles, &core_protons, core_post);
+        let car_perp1 = perp_of(&core.particles, &car_protons, car_post);
+
+        let core_cos = core_perp0.normalize().dot(core_perp1.normalize());
+        let car_cos = car_perp0.normalize().dot(car_perp1.normalize());
+        assert!(core_cos.abs() < 0.15, "core alpha post should revolve ~90°, cos={core_cos}");
+        assert!(car_cos.abs() < 0.15, "carousel alpha post should revolve ~90°, cos={car_cos}");
+    }
+
+    /// Two alphas in one nucleus have different roll phases after spawn —
+    /// they must not turn in lockstep (the "synchronized ballet",
+    /// session-29/session-31 addendum A8).
+    #[test]
+    fn no_lockstep() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        let g = &core.groups[0];
+        assert!(g.alphas.len() >= 2, "need multiple alphas");
+        let phases: Vec<f64> = g.alphas.iter().map(|a| a.roll_phase).collect();
+        let all_equal = phases.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-9);
+        assert!(!all_equal, "alphas should not share one roll phase: {phases:?}");
     }
 }
