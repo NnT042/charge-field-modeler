@@ -1,10 +1,18 @@
 extends CanvasLayer
 #
-# DEBUG tuning UI — labeled sliders for the atom-mode force couplings.
-# Hidden by default (constants are locked and derived — see
-# Couplings::default() in rust/src/atom_core.rs). Toggled by the HUD's
-# Debug button for physics experiments. Contains NO physics — it is a pure
-# getter/setter bridge to AtomSim.
+# DEBUG tuning UI — labeled sliders for the atom-mode sandbox experiment
+# knobs. Hidden by default. Toggled by the HUD's Debug button.
+#
+# The nine LOCKED force couplings (G_q, C_q, V_q, D_q, T_q, I_q, Corot, S_q,
+# P_amb) are intentionally NOT exposed here any more — they are pinned by
+# the M5 test suite and derived per Couplings::default() in
+# rust/src/atom_core.rs ("not sliders any more"). Fiddling them from the UI
+# only breaks calibrated physics.
+#
+# What remains are the live experiment knobs actively used this session:
+# nuclear binding v2 (channeling / nuclear ambient / intra boost) and skin
+# v4 mote parameters (fraction / scale / lifetime). Contains NO physics —
+# it is a pure getter/setter bridge to AtomSim.
 #
 
 var _sim: Node = null
@@ -12,15 +20,14 @@ var _mode: Node = null
 var _rows: Array = []  # each: {slider, value_label, getter, setter, updating}
 
 const PARAMS := [
-	{"label": "G_q  Gravity",  "get": "get_gravity_coupling", "set": "set_gravity_coupling", "min": 0.0, "max": 3.0,  "step": 0.005},
-	{"label": "C_q  Charge",   "get": "get_charge_coupling",  "set": "set_charge_coupling",  "min": 0.0, "max": 2000.0, "step": 5.0},
-	{"label": "V_q  Vortex",   "get": "get_vortex_coupling",  "set": "set_vortex_coupling",  "min": 0.0, "max": 2.0,  "step": 0.005},
-	{"label": "D_q  Doppler",  "get": "get_drag_coupling",    "set": "set_drag_coupling",    "min": 0.0, "max": 2.0,  "step": 0.005},
-	{"label": "T_q  Torque",   "get": "get_torque_coupling",  "set": "set_torque_coupling",  "min": 0.0, "max": 2.0,  "step": 0.005},
-	{"label": "I_q  Intake",   "get": "get_intake_coupling",  "set": "set_intake_coupling",  "min": 0.0, "max": 3.0,  "step": 0.005},
-	{"label": "Corot Drag",    "get": "get_corot_coupling",   "set": "set_corot_coupling",   "min": 0.0, "max": 3.0,  "step": 0.005},
-	{"label": "S_q  Stream",   "get": "get_stream_coupling",  "set": "set_stream_coupling",  "min": 0.0, "max": 100.0, "step": 0.5},
-	{"label": "P_amb Ambient", "get": "get_ambient_pressure", "set": "set_ambient_pressure", "min": 0.0, "max": 1.0,  "step": 0.002},
+	{"section": "Nuclear binding (sandbox)"},
+	{"label": "Channeling",    "get": "get_channeling_coupling", "set": "set_channeling_coupling", "min": 0.0, "max": 1.0,  "step": 0.005},
+	{"label": "Nuclear ambient", "get": "get_nuclear_ambient",   "set": "set_nuclear_ambient",      "min": 0.0, "max": 30.0, "step": 0.1},
+	{"label": "Intra boost",   "get": "get_intra_boost",         "set": "set_intra_boost",          "min": 0.0, "max": 6.0,  "step": 0.05},
+	{"section": "Skin motes"},
+	{"label": "Mote fraction", "get": "get_mote_fraction",       "set": "set_mote_fraction",         "min": 0.0, "max": 1.0,  "step": 0.01},
+	{"label": "Mote scale",    "get": "get_mote_scale",          "set": "set_mote_scale",            "min": 0.5, "max": 8.0,  "step": 0.1},
+	{"label": "Mote lifetime", "get": "get_mote_lifetime",       "set": "set_mote_lifetime",         "min": 0.2, "max": 8.0,  "step": 0.1},
 ]
 
 func setup(sim: Node, mode: Node = null) -> void:
@@ -29,7 +36,6 @@ func setup(sim: Node, mode: Node = null) -> void:
 	layer = 10
 
 	var panel := PanelContainer.new()
-	panel.position = Vector2(12, 330)
 	panel.custom_minimum_size = Vector2(320, 0)
 	add_child(panel)
 
@@ -42,19 +48,34 @@ func setup(sim: Node, mode: Node = null) -> void:
 	title.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(title)
 
-	var calib_btn := Button.new()
-	calib_btn.text = "Calibrate G_q  (polar orbit)"
-	calib_btn.pressed.connect(_on_calibrate)
-	vbox.add_child(calib_btn)
-
 	for p in PARAMS:
-		_add_row(vbox, p)
+		if p.has("section"):
+			vbox.add_child(HSeparator.new())
+			var section_label := Label.new()
+			section_label.text = p["section"]
+			section_label.add_theme_font_size_override("font_size", 12)
+			vbox.add_child(section_label)
+		else:
+			_add_row(vbox, p)
 
 	# Debug visualization toggles (superseded visuals, kept for inspection)
 	if _mode != null:
 		vbox.add_child(HSeparator.new())
 		_add_debug_check(vbox, "Pole axis lines", "show_pole_lines")
 		_add_debug_check(vbox, "Profile rings (wireframe)", "show_profile_rings")
+
+	# Position: mid-right edge, biased slightly below center (0.55) so it
+	# clears the top-right ReadoutPanel (~y=52..300). All rows/sections are
+	# built above this point so reset_size() picks up the real combined
+	# minimum height before we anchor+offset the rect — computing offsets
+	# off a not-yet-laid-out size (still (0,0) at this point otherwise)
+	# would collapse the panel to zero height.
+	panel.reset_size()
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+	panel.anchor_top = 0.55
+	panel.anchor_bottom = 0.55
+	panel.offset_right = -12.0
+	panel.offset_left = panel.offset_right - 320.0
 
 func _add_debug_check(parent: VBoxContainer, label: String, prop: String) -> void:
 	var check := CheckBox.new()
@@ -98,12 +119,6 @@ func _on_slider_changed(value: float, entry: Dictionary) -> void:
 		return  # programmatic refresh, not a user drag — don't echo back
 	_sim.call(entry["setter"], value)
 	entry["value_label"].text = "%.3f" % value
-
-func _on_calibrate() -> void:
-	if _sim == null:
-		return
-	var g: float = _sim.call("auto_calibrate_polar")
-	print("[tuning] auto_calibrate_polar -> G_q = %.4f" % g)
 
 func _process(_delta: float) -> void:
 	# Mirror live values (keyboard +/-, calibrate) back into the sliders,

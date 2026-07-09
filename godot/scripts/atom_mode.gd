@@ -571,8 +571,14 @@ func _update_group_skins() -> void:
 				overlay.mesh = _build_ring_lines_mesh(obuf)
 				mi.add_child(overlay)
 			group_skin_overlays.append(overlay)
+	# The group overlay (emission rings + carousel circle) rides the frozen
+	# rigid-group frame, which only tracks the force-driven bodies in
+	# RigidLock mode (0). In RigidAlpha/FreeNucleon it visually disconnects
+	# from the bodies it's meant to annotate, so hide it there; per-alpha
+	# anchored overlays are future work.
+	var dyn: int = atom_sim.get_nucleus_dynamics()
 	for gi in range(group_skins.size()):
-		group_skins[gi].visible = show_clouds
+		group_skins[gi].visible = show_clouds and dyn == 0
 		group_skins[gi].transform = atom_sim.get_group_transform(gi)
 		var overlay = group_skin_overlays[gi]
 		if overlay:
