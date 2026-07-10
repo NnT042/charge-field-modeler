@@ -41,7 +41,9 @@ func _process(_delta: float) -> bool:
 			print("[probe] DISSOLVED")
 			quit(0)
 			return true
-	if frames >= 4000:
+	# 10000 frames x 100 substeps = 1M steps — past the deepest pre-fix
+	# whirl-instability horizon (825k, seed k=7; session 32).
+	if frames >= 10000:
 		print("[probe] done, stable")
 		quit(0)
 		return true

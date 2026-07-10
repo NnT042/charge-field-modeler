@@ -1521,6 +1521,407 @@ mod tests {
         );
     }
 
+    /// Session-32 long-horizon drift report. The user's live carbon
+    /// collapse at ~300-400 sim-time units = 600k-800k steps (dt=0.0005)
+    /// sits far beyond every green harness (150k transient seeds, 250k
+    /// quiet confirm) — the round-6 fixes stretched the horizon ~4x but
+    /// something still drifts unboundedly. This drives 8 seed phases
+    /// through 1M steps each and logs the full state signature at every
+    /// sample (spacings, kinetic energy, alpha spin/relative-velocity,
+    /// worst axis tilt, channeling factor of the tightest member pair) so
+    /// the slow mechanism shows itself BEFORE the spacing blows up.
+    /// Report only — no assertions. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_long_horizon_drift --nocapture`
+    #[test]
+    #[ignore]
+    fn report_long_horizon_drift() {
+        const STEPS: usize = 1_000_000;
+        const SAMPLE_EVERY: usize = 25_000;
+
+        for k in 0..8usize {
+            let mut core = standard_core();
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+            let members_of =
+                |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].members.clone();
+            let closest_pair = |core: &AtomCore, ai: usize, aj: usize| -> (usize, usize) {
+                let (mi, mj) = (members_of(core, ai), members_of(core, aj));
+                let mut best_pair = (
+                    core.groups[gid].members[mi[0]],
+                    core.groups[gid].members[mj[0]],
+                );
+                let mut best_r = f64::MAX;
+                for &ki in &mi {
+                    for &kj in &mj {
+                        let pi = core.groups[gid].members[ki];
+                        let pj = core.groups[gid].members[kj];
+                        let r = core.pair_distance(pi, pj);
+                        if r < best_r {
+                            best_r = r;
+                            best_pair = (pi, pj);
+                        }
+                    }
+                }
+                best_pair
+            };
+
+            println!(
+                "\n== seed k={k} (d0={d0:.4?}) ==\n\
+                 {:>8} {:>7} {:>22} {:>10} {:>8} {:>8} {:>7} {:>8}",
+                "step", "worst%", "spacings", "KE", "mean|w|", "mean|dv|", "tilt", "channel"
+            );
+            for s in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                let mut worst_idx = 0usize;
+                let mut worst_drift = 0.0f64;
+                let spacings: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                for (idx, &d) in spacings.iter().enumerate() {
+                    let drift = ((d - d0[idx]) / d0[idx]).abs();
+                    if drift > worst_drift {
+                        worst_drift = drift;
+                        worst_idx = idx;
+                    }
+                }
+                let v_mean = (0..n_alphas)
+                    .map(|ai| core.groups[gid].alphas[ai].velocity)
+                    .fold(DVec3::ZERO, |acc, v| acc + v)
+                    / n_alphas as f64;
+                let mean_w = (0..n_alphas)
+                    .map(|ai| core.groups[gid].alphas[ai].angular_velocity.length())
+                    .sum::<f64>()
+                    / n_alphas as f64;
+                let mean_dv = (0..n_alphas)
+                    .map(|ai| (core.groups[gid].alphas[ai].velocity - v_mean).length())
+                    .sum::<f64>()
+                    / n_alphas as f64;
+                let min_tilt = (0..n_alphas)
+                    .map(|ai| (core.groups[gid].alphas[ai].orientation * DVec3::Y).dot(DVec3::Y))
+                    .fold(f64::MAX, f64::min);
+                let (wa, wb) = pairs[worst_idx];
+                let (pi, pj) = closest_pair(&core, wa, wb);
+                let fb = core.pair_force_breakdown(pi, pj);
+                println!(
+                    "{:>8} {:>6.1}% {:>22} {:>10.4e} {:>8.5} {:>8.5} {:>7.4} {:>8.4}",
+                    (s + 1) * SAMPLE_EVERY,
+                    worst_drift * 100.0,
+                    format!("{spacings:.3?}"),
+                    core.total_kinetic_energy(),
+                    mean_w,
+                    mean_dv,
+                    min_tilt,
+                    fb[1],
+                );
+                let finite = core.particles.iter().all(|p| p.position.is_finite());
+                if !finite || worst_drift > 1.0 {
+                    println!(
+                        "  ^ seed k={k} COLLAPSED at step {} (worst pair {wa}-{wb}, \
+                         r={:.4} channel={:.4} f_grav={:.3} f_charge={:.3} \
+                         f_ambient={:.3} f_intake={:.3} f_stream={:.3} f_contact={:.3}, \
+                         finite={finite})",
+                        (s + 1) * SAMPLE_EVERY,
+                        fb[0], fb[1], fb[2], fb[3], fb[4], fb[5], fb[6], fb[7],
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Session-32 onset zoom. `report_long_horizon_drift` showed every
+    /// seed detonates at 525k-700k steps with an ABRUPT signature: quiet
+    /// at ~1e-4 relative velocity for hundreds of k-steps, then KE x10 in
+    /// one 25k sample, then a ~75k-step death spiral. Channeling stays at
+    /// its maximum until AFTER the KE spike, so channeling erosion is the
+    /// consequence, not the trigger. This re-drives seed 0 (deterministic),
+    /// fast-forwards through the quiet phase, then samples every 500 steps
+    /// through the detonation window logging: per-alpha roll azimuth (and
+    /// relative azimuth between adjacent alphas — the posts sweep past
+    /// each other as rolls decorrelate), axial vs tumble spin split,
+    /// closest member pair between adjacent alphas with its profile kinds
+    /// and force breakdown. Report only. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_onset_zoom --nocapture`
+    #[test]
+    #[ignore]
+    fn report_onset_zoom() {
+        const QUIET_STEPS: usize = 540_000;
+        const ZOOM_SAMPLES: usize = 220;
+        const SAMPLE_EVERY: usize = 500;
+
+        let mut core = standard_core();
+        burn_seed_offset(&mut core, 0);
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        let n_alphas = core.groups[gid].alphas.len();
+
+        // Roll azimuth: where the alpha's body X axis points in the world
+        // XZ plane (valid while the alpha axis stays ~Y, which holds until
+        // the detonation is already underway).
+        let azimuth = |core: &AtomCore, ai: usize| -> f64 {
+            let x = core.groups[gid].alphas[ai].orientation * DVec3::X;
+            x.z.atan2(x.x).to_degrees()
+        };
+        let members_of =
+            |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].members.clone();
+        // Closest member pair between adjacent alphas ai/aj: particle ids,
+        // distance, and profile ids (0=proton 1=neutron).
+        let closest = |core: &AtomCore, ai: usize, aj: usize| -> (usize, usize, f64) {
+            let (mi, mj) = (members_of(core, ai), members_of(core, aj));
+            let mut best = (0usize, 0usize, f64::MAX);
+            for &ki in &mi {
+                for &kj in &mj {
+                    let pi = core.groups[gid].members[ki];
+                    let pj = core.groups[gid].members[kj];
+                    let r = core.pair_distance(pi, pj);
+                    if r < best.2 {
+                        best = (pi, pj, r);
+                    }
+                }
+            }
+            best
+        };
+
+        core.step_n(QUIET_STEPS);
+        println!(
+            "\n== onset zoom, seed k=0, from step {QUIET_STEPS} ==\n\
+             {:>7} {:>10} {:>8} {:>8} {:>7} {:>7} {:>7} {:>17} {:>17}",
+            "step", "KE", "rel01", "rel12", "w_ax", "w_tum", "tilt", "close01", "close12"
+        );
+        for s in 0..ZOOM_SAMPLES {
+            core.step_n(SAMPLE_EVERY);
+            let step = QUIET_STEPS + (s + 1) * SAMPLE_EVERY;
+            let az: Vec<f64> = (0..n_alphas).map(|ai| azimuth(&core, ai)).collect();
+            let rel01 = (az[1] - az[0]).rem_euclid(360.0);
+            let rel12 = (az[2] - az[1]).rem_euclid(360.0);
+            let (mut w_ax, mut w_tum) = (0.0f64, 0.0f64);
+            let mut min_tilt = f64::MAX;
+            for ai in 0..n_alphas {
+                let a = &core.groups[gid].alphas[ai];
+                let axis = a.orientation * DVec3::Y;
+                let ax = a.angular_velocity.dot(axis);
+                w_ax += ax.abs();
+                w_tum += (a.angular_velocity - axis * ax).length();
+                min_tilt = min_tilt.min(axis.dot(DVec3::Y));
+            }
+            w_ax /= n_alphas as f64;
+            w_tum /= n_alphas as f64;
+            let fmt_close = |core: &AtomCore, ai: usize, aj: usize| -> String {
+                let (pi, pj, r) = closest(core, ai, aj);
+                let (qi, qj) = (
+                    core.particles[pi].profile_id,
+                    core.particles[pj].profile_id,
+                );
+                let kind = |q: usize| if q == 1 { "n" } else { "p" };
+                let fb = core.pair_force_breakdown(pi, pj);
+                // net radial push-pull: charge+stream out, ambient+intake+grav in
+                let net = fb[3] + fb[6] - fb[2] - fb[4] - fb[5];
+                format!("{}{}{:5.2} net{:+.3}", kind(qi), kind(qj), r, net)
+            };
+            println!(
+                "{:>7} {:>10.4e} {:>7.1} {:>7.1} {:>7.4} {:>7.4} {:>7.4} {:>17} {:>17}",
+                step,
+                core.total_kinetic_energy(),
+                rel01,
+                rel12,
+                w_ax,
+                w_tum,
+                min_tilt,
+                fmt_close(&core, 0, 1),
+                fmt_close(&core, 1, 2),
+            );
+        }
+    }
+
+    /// Session-32 buckling-mode probe. `report_onset_zoom` showed the
+    /// RigidAlpha carbon stack sits at an unstable equilibrium: tumble
+    /// angular velocity grows EXPONENTIALLY from the numerical noise floor
+    /// (e-fold ~9k steps) at frozen geometry — a compressed-column
+    /// buckling saddle that velocity damping can slow but never stabilize.
+    /// This applies a controlled 1e-4 perturbation to the MIDDLE alpha
+    /// (pure tilt about X / pure lateral shear along X / control) and logs
+    /// the growth curve plus the mode shape (per-alpha axis tilt and com
+    /// lateral offset), so the fix can target the actual unstable
+    /// direction. Report only. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_buckling_mode --nocapture`
+    #[test]
+    #[ignore]
+    fn report_buckling_mode() {
+        const SETTLE: usize = 20_000;
+        const STEPS: usize = 160_000;
+        const SAMPLE_EVERY: usize = 4_000;
+        const EPS: f64 = 1e-4;
+
+        for scenario in ["control", "tilt-mid", "shear-mid"] {
+            let mut core = standard_core();
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            core.step_n(SETTLE);
+
+            match scenario {
+                "tilt-mid" => {
+                    let a = &mut core.groups[gid].alphas[1];
+                    a.orientation = (glam::DQuat::from_axis_angle(DVec3::X, EPS)
+                        * a.orientation)
+                        .normalize();
+                }
+                "shear-mid" => {
+                    core.groups[gid].alphas[1].com += DVec3::new(EPS, 0.0, 0.0);
+                }
+                _ => {}
+            }
+
+            let com0: Vec<DVec3> = (0..n_alphas)
+                .map(|ai| core.groups[gid].alphas[ai].com)
+                .collect();
+            println!(
+                "\n== {scenario} (eps={EPS}) ==\n\
+                 {:>7} {:>10} {:>9} {:>9} {:>26} {:>26}",
+                "step", "KE", "w_tum", "dv", "axis.x per alpha", "com.x offset per alpha"
+            );
+            for s in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                let v_mean = (0..n_alphas)
+                    .map(|ai| core.groups[gid].alphas[ai].velocity)
+                    .fold(DVec3::ZERO, |acc, v| acc + v)
+                    / n_alphas as f64;
+                let mut w_tum = 0.0f64;
+                let mut dv = 0.0f64;
+                let mut ax_x = Vec::new();
+                let mut off_x = Vec::new();
+                for ai in 0..n_alphas {
+                    let a = &core.groups[gid].alphas[ai];
+                    let axis = a.orientation * DVec3::Y;
+                    let w_axial = axis * a.angular_velocity.dot(axis);
+                    w_tum += (a.angular_velocity - w_axial).length();
+                    dv += (a.velocity - v_mean).length();
+                    ax_x.push(axis.x);
+                    off_x.push(a.com.x - com0[ai].x);
+                }
+                w_tum /= n_alphas as f64;
+                dv /= n_alphas as f64;
+                println!(
+                    "{:>7} {:>10.4e} {:>9.2e} {:>9.2e} {:>26} {:>26}",
+                    SETTLE + (s + 1) * SAMPLE_EVERY,
+                    core.total_kinetic_energy(),
+                    w_tum,
+                    dv,
+                    format!("{ax_x:+.5?}"),
+                    format!("{off_x:+.5?}"),
+                );
+            }
+        }
+    }
+
+    /// Session-32 stability-vs-time probe. `report_buckling_mode` showed
+    /// tilt/shear kicks DECAY at t~180k, yet `report_onset_zoom` showed
+    /// noise-floor tumble growing exponentially from t~598k — the
+    /// equilibrium starts stable and slowly drifts across a bifurcation.
+    /// Two creeping candidates from the drift report: alpha roll spin
+    /// (0.0387->0.0406, rotor whirl threshold) and stack compression
+    /// (spacings tighten ~0.5%, Euler buckling load). This kicks the
+    /// middle alpha (1e-4 tilt) at a series of checkpoints along the seed-0
+    /// trajectory and logs whether each kick decays or grows, plus the
+    /// slow-state (spin, spacings, net compression on the closest pair) at
+    /// each checkpoint. Report only. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_stability_vs_time --nocapture`
+    #[test]
+    #[ignore]
+    fn report_stability_vs_time() {
+        const CHECKPOINTS: [usize; 5] = [100_000, 300_000, 450_000, 530_000, 570_000];
+        const OBSERVE: usize = 36_000;
+        const SAMPLE_EVERY: usize = 3_000;
+        const EPS: f64 = 1e-4;
+
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        let n_alphas = core.groups[gid].alphas.len();
+
+        let mut now = 0usize;
+        for &cp in CHECKPOINTS.iter() {
+            core.step_n(cp - now);
+            now = cp;
+
+            // Slow-state snapshot at the checkpoint.
+            let w_ax_mean = (0..n_alphas)
+                .map(|ai| {
+                    let a = &core.groups[gid].alphas[ai];
+                    a.angular_velocity.dot(a.orientation * DVec3::Y).abs()
+                })
+                .sum::<f64>()
+                / n_alphas as f64;
+            let d01 = (core.groups[gid].alphas[0].com - core.groups[gid].alphas[1].com)
+                .length();
+            let d12 = (core.groups[gid].alphas[1].com - core.groups[gid].alphas[2].com)
+                .length();
+            println!(
+                "\n== checkpoint {cp}: w_ax={w_ax_mean:.5} d01={d01:.4} d12={d12:.4} \
+                 KE={:.4e} ==",
+                core.total_kinetic_energy()
+            );
+
+            // Kick and observe. NOTE: the kick itself perturbs the
+            // trajectory that later checkpoints ride on — acceptable, the
+            // kicks are tiny and decayed kicks leave ~nothing behind.
+            {
+                let a = &mut core.groups[gid].alphas[1];
+                a.orientation = (glam::DQuat::from_axis_angle(DVec3::X, EPS)
+                    * a.orientation)
+                    .normalize();
+            }
+            println!("{:>9} {:>9} {:>9}", "step", "w_tum", "dv");
+            for s in 0..(OBSERVE / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                now += SAMPLE_EVERY;
+                let v_mean = (0..n_alphas)
+                    .map(|ai| core.groups[gid].alphas[ai].velocity)
+                    .fold(DVec3::ZERO, |acc, v| acc + v)
+                    / n_alphas as f64;
+                let mut w_tum = 0.0f64;
+                let mut dv = 0.0f64;
+                for ai in 0..n_alphas {
+                    let a = &core.groups[gid].alphas[ai];
+                    let axis = a.orientation * DVec3::Y;
+                    let w_axial = axis * a.angular_velocity.dot(axis);
+                    w_tum += (a.angular_velocity - w_axial).length();
+                    dv += (a.velocity - v_mean).length();
+                }
+                println!(
+                    "{:>9} {:>9.2e} {:>9.2e}",
+                    cp + (s + 1) * SAMPLE_EVERY,
+                    w_tum / n_alphas as f64,
+                    dv / n_alphas as f64,
+                );
+            }
+        }
+    }
+
     // ── Flyby / swat robustness (session-31 round 4, work item 2/3)
     // ────────────────────────────────────────────────────────────────
 

@@ -901,6 +901,18 @@ impl Default for Couplings {
     ///   flyby/swat case directly; `alpha_transient_survives_all_seeds`
     ///   re-validates across 8 distinct roll/carousel seed phases (the
     ///   axis the round-4 "Jenga" report actually varied along).
+    ///
+    ///   Session 32 (whirl-instability fix) RETUNED `nuclear_ambient`
+    ///   2.0 → 5.0. Attenuating same-group `corot`/`vortex` by the
+    ///   channeling factor (see the attenuation block in `compute_forces`)
+    ///   killed the slow corot-driven whirl instability that dissolved
+    ///   every seed at 225k-825k steps (user-observed "carbon dissolves at
+    ///   ~300-400 sim time"), but also removed the incidental corot drag
+    ///   that had been aiding flyby/swat recovery: at ambient=2.0 the
+    ///   quiet drift stays a superb 1.5% but flyby drift degrades to
+    ///   33.2%; ambient=5.0 balances both at 12.3%/11.9% — the sweep
+    ///   chooser's worst-case-margin winner (11 of 12 quiet passers are
+    ///   also flyby-robust post-fix).
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -914,7 +926,7 @@ impl Default for Couplings {
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
             channeling: 0.85,
-            nuclear_ambient: 2.0,
+            nuclear_ambient: 5.0,
         }
     }
 }
@@ -1642,6 +1654,7 @@ impl AtomCore {
         self.particles.clear();
         self.groups.clear();
         self.vfx_particles.clear();
+        self.time = 0.0;
     }
 
     pub fn set_particle_pole(&mut self, id: usize, target: DVec3) {
@@ -2438,10 +2451,30 @@ impl AtomCore {
                         // mechanism, visible once ALPHA_TRANS_RELAX
                         // removed the fast breathing pump).
                         torque: base_cq.torque * atten,
-                        vortex: base_cq.vortex,
+                        // Corot and vortex are attenuated with the push for
+                        // the same reason torque is: both are couplings to
+                        // the partner's EMITTED swirl (gear-mesh with the
+                        // collision field), and a channeled pair routes that
+                        // charge through instead. Un-attenuated, corot's
+                        // cross-coupled force on the closest facing-proton
+                        // pairs taps the (kinematically re-imposed, hence
+                        // inexhaustible) member_spin reservoir as a
+                        // circulatory "whirl" instability: the stack sits
+                        // just below threshold, the middle alpha's ~2x roll
+                        // drive sweeps the relative roll phase across the
+                        // stability boundary after a seed-dependent 200-800k
+                        // steps, and the lateral shear mode then grows
+                        // exponentially from the noise floor until the
+                        // channeling tail releases the stored compression —
+                        // the session-32 "carbon dissolves at 300-400 sim
+                        // time" collapse (see report_long_horizon_drift /
+                        // report_onset_zoom / report_stability_vs_time).
+                        // Intake stays UN-attenuated: it IS the channeled
+                        // flow (see the block comment above).
+                        vortex: base_cq.vortex * atten,
                         drag: base_cq.drag,
                         intake: base_cq.intake,
-                        corot: base_cq.corot,
+                        corot: base_cq.corot * atten,
                         stream: base_cq.stream * atten,
                         intra_nucleus_boost: base_cq.intra_nucleus_boost,
                         channeling: base_cq.channeling,
