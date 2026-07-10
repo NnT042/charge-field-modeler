@@ -1922,6 +1922,149 @@ mod tests {
         }
     }
 
+    /// Session-32 neutron-post anatomy experiment (start-here item 1a,
+    /// user design question): compare `PostAnatomy::Axial` (session-31
+    /// modeling choice) vs `PostAnatomy::Radial` (deut.pdf charge-channel/
+    /// self-balancing-regulator reading) across the full stability
+    /// battery. Report only — adoption of Radial requires re-earning the
+    /// sweep tables and updating the default. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_post_anatomy --nocapture`
+    #[test]
+    #[ignore]
+    fn report_post_anatomy() {
+        use crate::atom_core::PostAnatomy;
+
+        for anatomy in [PostAnatomy::Axial, PostAnatomy::Radial] {
+            println!("\n===== {anatomy:?} =====");
+
+            // (a) FreeNucleon lone alpha: intra-alpha cohesion with no
+            // rigid constraint (nucleon_balance's scenario at the
+            // concluded boost=1.0).
+            {
+                let mut core = standard_core();
+                core.post_anatomy = anatomy;
+                let gid = core
+                    .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("alpha preset");
+                core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::FreeNucleon);
+                let members = core.groups[gid].members.clone();
+                let d0 = pair_dists(&core, &members);
+                core.step_n(20_000);
+                let d1 = pair_dists(&core, &members);
+                let max_rel = d0
+                    .iter()
+                    .zip(&d1)
+                    .map(|(a, b)| (a - b).abs() / a.max(1e-9))
+                    .fold(0.0f64, f64::max);
+                let finite = core.particles.iter().all(|p| p.position.is_finite());
+                println!(
+                    "FreeNucleon lone alpha, 20k steps: max_pair_drift={:.1}% \
+                     KE={:.4e} finite={finite}",
+                    max_rel * 100.0,
+                    core.total_kinetic_energy(),
+                );
+            }
+
+            // (b) RigidAlpha carbon quiet run, 100k steps.
+            {
+                let mut core = standard_core();
+                core.post_anatomy = anatomy;
+                let gid = core
+                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("carbon preset");
+                core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+                let n_alphas = core.groups[gid].alphas.len();
+                let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                let mut max_drift = 0.0f64;
+                for _ in 0..50 {
+                    core.step_n(2_000);
+                    for (idx, &(a, b)) in pairs.iter().enumerate() {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        max_drift = max_drift.max(((d - d0[idx]) / d0[idx]).abs());
+                    }
+                }
+                let w_ax = (0..n_alphas)
+                    .map(|ai| {
+                        let a = &core.groups[gid].alphas[ai];
+                        a.angular_velocity.dot(a.orientation * DVec3::Y).abs()
+                    })
+                    .sum::<f64>()
+                    / n_alphas as f64;
+                let finite = core.particles.iter().all(|p| p.position.is_finite());
+                println!(
+                    "RigidAlpha carbon quiet, 100k steps: max_drift={:.1}% \
+                     KE={:.4e} roll={w_ax:.4} finite={finite}",
+                    max_drift * 100.0,
+                    core.total_kinetic_energy(),
+                );
+            }
+
+            // (c) Flyby + swat at the shipped couplings defaults.
+            {
+                let def = crate::atom_core::Couplings::default();
+                let (drift, finite) = run_flyby_scenario_anatomy(
+                    def.channeling,
+                    def.nuclear_ambient,
+                    15_000,
+                    15_000,
+                    500,
+                    anatomy,
+                );
+                println!(
+                    "Flyby/swat at defaults: max_drift={:.1}% finite={finite} \
+                     (limit {:.0}%)",
+                    drift * 100.0,
+                    FLYBY_DRIFT_LIMIT * 100.0
+                );
+            }
+
+            // (d) Seed-phase robustness: 4 seeds x 200k quiet steps.
+            {
+                print!("Transient seeds (200k steps): ");
+                for k in 0..4usize {
+                    let mut core = standard_core();
+                    core.post_anatomy = anatomy;
+                    burn_seed_offset(&mut core, k);
+                    let gid = core
+                        .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                        .expect("carbon preset");
+                    core.set_nucleus_dynamics(
+                        crate::atom_core::NucleusDynamics::RigidAlpha,
+                    );
+                    let n_alphas = core.groups[gid].alphas.len();
+                    let com =
+                        |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                    let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                        .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                        .collect();
+                    let d0: Vec<f64> = pairs
+                        .iter()
+                        .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                        .collect();
+                    let mut max_drift = 0.0f64;
+                    for _ in 0..40 {
+                        core.step_n(5_000);
+                        for (idx, &(a, b)) in pairs.iter().enumerate() {
+                            let d = (com(&core, a) - com(&core, b)).length();
+                            max_drift =
+                                max_drift.max(((d - d0[idx]) / d0[idx]).abs());
+                        }
+                    }
+                    print!("k={k}:{:.1}% ", max_drift * 100.0);
+                }
+                println!();
+            }
+        }
+    }
+
     // ── Flyby / swat robustness (session-31 round 4, work item 2/3)
     // ────────────────────────────────────────────────────────────────
 
@@ -1948,7 +2091,28 @@ mod tests {
         phase_b_steps: usize,
         sample_every: usize,
     ) -> (f64, bool) {
+        run_flyby_scenario_anatomy(
+            channeling,
+            ambient,
+            phase_a_steps,
+            phase_b_steps,
+            sample_every,
+            crate::atom_core::PostAnatomy::default(),
+        )
+    }
+
+    /// `run_flyby_scenario` with an explicit internal-post [`PostAnatomy`]
+    /// (session-32 anatomy experiment — `report_post_anatomy`).
+    fn run_flyby_scenario_anatomy(
+        channeling: f64,
+        ambient: f64,
+        phase_a_steps: usize,
+        phase_b_steps: usize,
+        sample_every: usize,
+        anatomy: crate::atom_core::PostAnatomy,
+    ) -> (f64, bool) {
         let mut core = standard_core();
+        core.post_anatomy = anatomy;
         core.couplings.channeling = channeling;
         core.couplings.nuclear_ambient = ambient;
         let gid = core

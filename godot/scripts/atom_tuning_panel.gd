@@ -58,6 +58,27 @@ func setup(sim: Node, mode: Node = null) -> void:
 		else:
 			_add_row(vbox, p)
 
+	# Post anatomy A/B (session-32 experiment): Axial is the shipped
+	# default (Radial measured strictly worse binding under the current
+	# force model — see report_post_anatomy); the toggle stays for visual
+	# comparison. Takes effect on the next spawn, so re-select or Reset
+	# the scenario after switching.
+	vbox.add_child(HSeparator.new())
+	var anatomy_row := HBoxContainer.new()
+	anatomy_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(anatomy_row)
+	var anatomy_label := Label.new()
+	anatomy_label.text = "Post anatomy"
+	anatomy_label.custom_minimum_size = Vector2(110, 0)
+	anatomy_label.add_theme_font_size_override("font_size", 12)
+	anatomy_row.add_child(anatomy_label)
+	var anatomy_opt := OptionButton.new()
+	anatomy_opt.add_item("Axial (default)", 0)
+	anatomy_opt.add_item("Radial (experiment)", 1)
+	anatomy_opt.selected = int(_sim.get_post_anatomy())
+	anatomy_opt.item_selected.connect(_on_anatomy_selected)
+	anatomy_row.add_child(anatomy_opt)
+
 	# Debug visualization toggles (superseded visuals, kept for inspection)
 	if _mode != null:
 		vbox.add_child(HSeparator.new())
@@ -79,6 +100,13 @@ func setup(sim: Node, mode: Node = null) -> void:
 	# User calibration (session 31): ~50 px lower than the anchor bias alone.
 	panel.offset_top += 50.0
 	panel.offset_bottom += 50.0
+
+func _on_anatomy_selected(idx: int) -> void:
+	_sim.set_post_anatomy(idx)
+	# Anatomy only applies at spawn — respawn the current scenario so the
+	# switch is visible immediately.
+	if _mode != null:
+		_mode.reset_scenario()
 
 func _add_debug_check(parent: VBoxContainer, label: String, prop: String) -> void:
 	var check := CheckBox.new()

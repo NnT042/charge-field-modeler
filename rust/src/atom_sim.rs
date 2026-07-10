@@ -583,6 +583,14 @@ impl AtomSim {
         packed(&self.core.build_group_emission_rings(group_idx.max(0) as usize))
     }
 
+    /// Three-ring alpha skin, WORLD space, live in every dynamics mode
+    /// (session-32). Variable-polyline buffer:
+    /// `[n_polylines, (pt_count, x,y,z × pt_count)…]`.
+    #[func]
+    fn build_group_alpha_rings(&self, group_idx: i32) -> PackedFloat32Array {
+        packed(&self.core.build_group_alpha_rings(group_idx.max(0) as usize))
+    }
+
     /// Carousel dispersal circles (group-local, carousel phase 0) —
     /// render in a child node rotated by get_group_carousel_phase.
     #[func]
@@ -702,6 +710,29 @@ impl AtomSim {
             NucleusDynamics::RigidLock => 0,
             NucleusDynamics::RigidAlpha => 1,
             NucleusDynamics::FreeNucleon => 2,
+        }
+    }
+
+    /// Internal neutron-post pole anatomy (session-32 experiment): 0 =
+    /// Axial (pole along the alpha stack axis, the session-31 choice),
+    /// 1 = Radial (pole along the post's own lateral offset — deut.pdf
+    /// charge-channel/regulator reading). Takes effect on the NEXT
+    /// spawn_preset — re-spawn the scenario to apply.
+    #[func]
+    fn set_post_anatomy(&mut self, anatomy: i32) {
+        use crate::atom_core::PostAnatomy;
+        self.core.post_anatomy = match anatomy {
+            1 => PostAnatomy::Radial,
+            _ => PostAnatomy::Axial,
+        };
+    }
+
+    #[func]
+    fn get_post_anatomy(&self) -> i32 {
+        use crate::atom_core::PostAnatomy;
+        match self.core.post_anatomy {
+            PostAnatomy::Axial => 0,
+            PostAnatomy::Radial => 1,
         }
     }
 }

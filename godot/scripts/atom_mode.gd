@@ -17,6 +17,7 @@ var type_renderers := {}  # "proton" -> MultiMeshInstance3D
 var skin_renderers := {}  # "proton" -> MultiMeshInstance3D (field-extent skin)
 var group_skins: Array[MeshInstance3D] = []  # composite nucleus skins, one per rigid group
 var group_skin_overlays: Array = []  # carousel dispersal circles (or null), ride the carousel
+var alpha_rings_mi: MeshInstance3D = null  # live three-ring alpha skin (world space, all modes)
 var _group_skins_dirty := false
 var _skin_mat: StandardMaterial3D
 var _ring_mat: StandardMaterial3D  # max-emission rings on the gold skin
@@ -557,9 +558,6 @@ func _update_group_skins() -> void:
 		group_skin_overlays.clear()
 		for gi in range(gcount):
 			var mi := MeshInstance3D.new()
-			var mesh := ArrayMesh.new()
-			_add_emission_ring_surfaces(mesh, gi)
-			mi.mesh = mesh
 			add_child(mi)
 			group_skins.append(mi)
 			# Carousel dispersal circles ride the carousel: child node
@@ -571,11 +569,11 @@ func _update_group_skins() -> void:
 				overlay.mesh = _build_ring_lines_mesh(obuf)
 				mi.add_child(overlay)
 			group_skin_overlays.append(overlay)
-	# The group overlay (emission rings + carousel circle) rides the frozen
-	# rigid-group frame, which only tracks the force-driven bodies in
-	# RigidLock mode (0). In RigidAlpha/FreeNucleon it visually disconnects
-	# from the bodies it's meant to annotate, so hide it there; per-alpha
-	# anchored overlays are future work.
+	# The carousel dispersal circle still rides the frozen rigid-group
+	# frame, which only tracks the force-driven bodies in RigidLock mode
+	# (0) — hide it elsewhere. The emission rings moved to the live
+	# per-alpha three-ring overlay (_update_alpha_rings), which works in
+	# every mode.
 	var dyn: int = atom_sim.get_nucleus_dynamics()
 	for gi in range(group_skins.size()):
 		group_skins[gi].visible = show_clouds and dyn == 0
@@ -583,6 +581,44 @@ func _update_group_skins() -> void:
 		var overlay = group_skin_overlays[gi]
 		if overlay:
 			overlay.rotation = Vector3(0.0, atom_sim.get_group_carousel_phase(gi), 0.0)
+	_update_alpha_rings()
+
+## Three-ring alpha skin (session-32): two disc rings per alpha (one in
+## each proton's LIVE disc plane — tilt readout), one center ring at the
+## alpha midplane reach level, and a radial tick at each neutron post's
+## actual azimuth (live roll readout). The Rust builder anchors all
+## geometry to current member particle state in WORLD space, so this
+## single identity-transform mesh is correct in every dynamics mode —
+## rebuilt every frame (a few hundred line vertices; trivial).
+func _update_alpha_rings() -> void:
+	if alpha_rings_mi == null:
+		alpha_rings_mi = MeshInstance3D.new()
+		add_child(alpha_rings_mi)
+	if not show_clouds:
+		alpha_rings_mi.mesh = null
+		return
+	var mesh := ArrayMesh.new()
+	var gcount: int = atom_sim.get_group_count()
+	for gi in range(gcount):
+		var buf: PackedFloat32Array = atom_sim.build_group_alpha_rings(gi)
+		if buf.size() < 2:
+			continue
+		var n := int(buf[0])
+		var o := 1
+		for _l in range(n):
+			var pts := int(buf[o])
+			o += 1
+			var verts := PackedVector3Array()
+			verts.resize(pts)
+			for v in range(pts):
+				verts[v] = Vector3(buf[o], buf[o + 1], buf[o + 2])
+				o += 3
+			var arrays := []
+			arrays.resize(Mesh.ARRAY_MAX)
+			arrays[Mesh.ARRAY_VERTEX] = verts
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
+			mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)
+	alpha_rings_mi.mesh = mesh if mesh.get_surface_count() > 0 else null
 
 ## Build a line-strip mesh from a packed ring buffer
 ## [ring_count, pts_per_ring, xyz…] with the ring material.
@@ -603,22 +639,3 @@ func _build_ring_lines_mesh(rbuf: PackedFloat32Array) -> ArrayMesh:
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)
 	return mesh
 
-## Add the per-alpha max-emission ring circles (bright gold lines on the
-## skin surface) as extra line-strip surfaces of the skin mesh.
-func _add_emission_ring_surfaces(mesh: ArrayMesh, gi: int) -> void:
-	var rbuf: PackedFloat32Array = atom_sim.build_group_emission_rings(gi)
-	if rbuf.size() < 2:
-		return
-	var nrings := int(rbuf[0])
-	var ppr := int(rbuf[1])
-	for r in range(nrings):
-		var verts := PackedVector3Array()
-		verts.resize(ppr)
-		for v in range(ppr):
-			var o := 2 + (r * ppr + v) * 3
-			verts[v] = Vector3(rbuf[o], rbuf[o + 1], rbuf[o + 2])
-		var arrays := []
-		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = verts
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
-		mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)

@@ -205,6 +205,30 @@ struct AlphaSpec {
 /// appear separately in every builder.
 const POST_R: f64 = 0.7;
 
+/// Pole anatomy of the alpha's INTERNAL neutron posts (session-32
+/// experiment, user design question from end of session 31).
+///
+/// - `Axial` (the session-31 modeling choice, NOT pinned by the papers):
+///   post pole parallel to the alpha stack axis.
+/// - `Radial`: post pole along its own lateral offset — sideways to the
+///   through-stream, the pole facing the region where the two proton
+///   discs' emission crosses. The user reads deut.pdf this way: posts are
+///   CHARGE CHANNELS ("not only acting as posts... also charge channels";
+///   neutrons 1D "lightning rods", protons 2D fans) acting as
+///   self-balancing regulators — a disc dip feeds more flow into that
+///   side's neutron pole, which flings it back out toward the disc as a
+///   restoring nudge.
+///
+/// Does NOT affect the polar plug neutrons (`plug_neutron`): those are
+/// pole-on-axis per graphene.pdf — a DIFFERENT, paper-pinned position.
+/// Selected via `AtomCore::post_anatomy`; takes effect at `spawn_preset`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PostAnatomy {
+    #[default]
+    Axial,
+    Radial,
+}
+
 /// The standard 4-nucleon alpha shape, in the ALPHA's OWN frame: two
 /// protons stacked hole-to-hole on the axis (CDs spinning the SAME
 /// direction so charge channels through pole-to-pole as a dipole —
@@ -214,10 +238,14 @@ const POST_R: f64 = 0.7;
 /// the hole in the CD is the recycling channel) — their exact starting
 /// azimuth doesn't matter (each alpha's `roll_phase` is a free, randomized
 /// DOF, session-31): what matters is they're off-axis and roll with the
-/// alpha. Shared by every alpha builder below (core, cap, connector,
-/// carousel) — only the alpha's `rest_axis`/`rest_center`/`orbits_core`
-/// differ.
-fn alpha_members() -> Vec<AlphaMemberSpec> {
+/// alpha. Post POLE orientation is the open [`PostAnatomy`] question.
+/// Shared by every alpha builder below (core, cap, connector, carousel) —
+/// only the alpha's `rest_axis`/`rest_center`/`orbits_core` differ.
+fn alpha_members(anatomy: PostAnatomy) -> Vec<AlphaMemberSpec> {
+    let post_pole = |lateral: DVec3| match anatomy {
+        PostAnatomy::Axial => DVec3::Y,
+        PostAnatomy::Radial => lateral.normalize(),
+    };
     vec![
         AlphaMemberSpec {
             profile_name: "proton",
@@ -234,13 +262,13 @@ fn alpha_members() -> Vec<AlphaMemberSpec> {
         AlphaMemberSpec {
             profile_name: "neutron",
             local_pos: DVec3::new(-POST_R, 0.0, 0.0),
-            local_pole: DVec3::Y,
+            local_pole: post_pole(DVec3::new(-POST_R, 0.0, 0.0)),
             spin_sign: 1.0,
         },
         AlphaMemberSpec {
             profile_name: "neutron",
             local_pos: DVec3::new(POST_R, 0.0, 0.0),
-            local_pole: DVec3::Y,
+            local_pole: post_pole(DVec3::new(POST_R, 0.0, 0.0)),
             spin_sign: 1.0,
         },
     ]
@@ -250,12 +278,12 @@ fn alpha_members() -> Vec<AlphaMemberSpec> {
 /// core (used for the core alpha itself and, in argon, the top/bottom
 /// caps — nuclear.pdf: "Level one is the center disk... Level 3b is the
 /// caps top and bottom"). Does not ride the carousel.
-fn core_alpha(y: f64) -> AlphaSpec {
+fn core_alpha(y: f64, anatomy: PostAnatomy) -> AlphaSpec {
     AlphaSpec {
         rest_axis: DVec3::Y,
         rest_center: DVec3::new(0.0, y, 0.0),
         orbits_core: false,
-        members: alpha_members(),
+        members: alpha_members(anatomy),
     }
 }
 
@@ -264,14 +292,14 @@ fn core_alpha(y: f64) -> AlphaSpec {
 /// axial hole — nuclear.pdf's first carousel configuration, Neon), and the
 /// whole block rides the carousel around the core. Charge is flung out
 /// equatorially through these (dielec.pdf/diamag.pdf).
-fn carousel_alpha(phi_deg: f64) -> AlphaSpec {
+fn carousel_alpha(phi_deg: f64, anatomy: PostAnatomy) -> AlphaSpec {
     let phi = phi_deg.to_radians();
     let u = DVec3::new(phi.cos(), 0.0, phi.sin()); // radial stack axis
     AlphaSpec {
         rest_axis: u,
         rest_center: u * CAROUSEL_R,
         orbits_core: true,
-        members: alpha_members(),
+        members: alpha_members(anatomy),
     }
 }
 
@@ -280,12 +308,12 @@ fn carousel_alpha(phi_deg: f64) -> AlphaSpec {
 /// axial channel), riding the carousel rotation and spinning on its own
 /// pole (nuclear.pdf Argon: "Level 3a is the posts up and down" — the
 /// session-29 diagram reading has them turned 90° to the core).
-fn sideways_alpha(y: f64) -> AlphaSpec {
+fn sideways_alpha(y: f64, anatomy: PostAnatomy) -> AlphaSpec {
     AlphaSpec {
         rest_axis: DVec3::X,
         rest_center: DVec3::new(0.0, y, 0.0),
         orbits_core: true,
-        members: alpha_members(),
+        members: alpha_members(anatomy),
     }
 }
 
@@ -410,22 +438,22 @@ const ALPHA_PITCH: f64 = 3.75;
 /// (rest frame + orbits_core + members), consumed by `spawn_preset`.
 /// Preset compositions are unchanged from the flat-constituent era —
 /// only the grouping into alpha units changed (session-31).
-fn preset_alphas(name: &str) -> Option<Vec<AlphaSpec>> {
+fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
     match name {
-        "alpha" => Some(vec![core_alpha(0.0)]),
+        "alpha" => Some(vec![core_alpha(0.0, anatomy)]),
         // Carbon: three alphas stacked (nuclear.pdf: "Carbon blocks — three
         // alphas stacked"; the single-stack limit that makes C the basis of
         // life).
         "carbon" => Some(vec![
-            core_alpha(-ALPHA_PITCH),
-            core_alpha(0.0),
-            core_alpha(ALPHA_PITCH),
+            core_alpha(-ALPHA_PITCH, anatomy),
+            core_alpha(0.0, anatomy),
+            core_alpha(ALPHA_PITCH, anatomy),
         ]),
         // Nitrogen: carbon stack + 7th proton plugged in the south pole
         // (edge-on, disc feeding the hole) and the balancing neutron in the
         // north (ammon.pdf), pole-down per graphene.pdf.
         "nitrogen" => {
-            let mut a = preset_alphas("carbon")?;
+            let mut a = preset_alphas("carbon", anatomy)?;
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             a.push(plug_proton(-(ALPHA_PITCH + 3.9), 0.0));
@@ -438,7 +466,7 @@ fn preset_alphas(name: &str) -> Option<Vec<AlphaSpec>> {
         // them in the hole). Each pair sits side by side — proton edge-on
         // (disc feeds the hole), neutron pole-down (channels axially).
         "oxygen" => {
-            let mut a = preset_alphas("carbon")?;
+            let mut a = preset_alphas("carbon", anatomy)?;
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             let y = ALPHA_PITCH + 3.9;
@@ -453,11 +481,11 @@ fn preset_alphas(name: &str) -> Option<Vec<AlphaSpec>> {
         // around its equator. The axial charge hole top and bottom is
         // "surrounded by four charge maxima": unreactive, six-sided.
         "neon" => Some(vec![
-            core_alpha(0.0),
-            carousel_alpha(0.0),
-            carousel_alpha(90.0),
-            carousel_alpha(180.0),
-            carousel_alpha(270.0),
+            core_alpha(0.0, anatomy),
+            carousel_alpha(0.0, anatomy),
+            carousel_alpha(90.0, anatomy),
+            carousel_alpha(180.0, anatomy),
+            carousel_alpha(270.0, anatomy),
         ]),
         // Argon: Neon's carousel + the full axial line on the same center
         // disk — "nine disks... Level one is the center disk. Level two
@@ -466,15 +494,15 @@ fn preset_alphas(name: &str) -> Option<Vec<AlphaSpec>> {
         // The connectors (3a) sit SIDEWAYS like the polar plugs; the caps
         // (3b) are parallel to the core.
         "argon" => Some(vec![
-            core_alpha(-2.0 * ALPHA_PITCH),  // cap (parallel to core)
-            sideways_alpha(-ALPHA_PITCH),    // connector (edge-on)
-            core_alpha(0.0),                 // center
-            sideways_alpha(ALPHA_PITCH),     // connector (edge-on)
-            core_alpha(2.0 * ALPHA_PITCH),   // cap
-            carousel_alpha(0.0),
-            carousel_alpha(90.0),
-            carousel_alpha(180.0),
-            carousel_alpha(270.0),
+            core_alpha(-2.0 * ALPHA_PITCH, anatomy),  // cap (parallel to core)
+            sideways_alpha(-ALPHA_PITCH, anatomy),    // connector (edge-on)
+            core_alpha(0.0, anatomy),                 // center
+            sideways_alpha(ALPHA_PITCH, anatomy),     // connector (edge-on)
+            core_alpha(2.0 * ALPHA_PITCH, anatomy),   // cap
+            carousel_alpha(0.0, anatomy),
+            carousel_alpha(90.0, anatomy),
+            carousel_alpha(180.0, anatomy),
+            carousel_alpha(270.0, anatomy),
         ]),
         _ => None,
     }
@@ -521,6 +549,19 @@ pub struct AlphaUnit {
     pub angular_velocity: DVec3,
     pub mass: f64,
     pub inertia: f64,
+
+    /// Three-ring skin radii (session-32, user-proposed): quantitative,
+    /// computed ONCE at spawn from this alpha's OWN reach surface
+    /// (`march_reach` over just its members, alpha frame — see
+    /// `compute_alpha_ring_radii`). `ring_disc_r` = reach-surface radius
+    /// at the proton disc planes (y = ±NUCLEON_PITCH/2); `ring_mid_r` =
+    /// equatorial reach at the alpha midplane where the neutron posts
+    /// live. 0.0 = not a standard 4-nucleon alpha, draw no rings. The
+    /// ring GEOMETRY is anchored to live member particle positions in
+    /// `build_group_alpha_rings`, so the readout works in every
+    /// `NucleusDynamics` mode (closes the session-31 hidden-overlay gap).
+    pub ring_disc_r: f64,
+    pub ring_mid_r: f64,
 }
 
 /// A rigidly-locked composite (nucleus). Constituents remain real particles
@@ -1008,6 +1049,10 @@ pub struct AtomCore {
     pub mote_fraction: f64,
     pub mote_scale: f32,
     pub mote_lifetime: f64,
+    /// Internal neutron-post pole anatomy for alpha builders (session-32
+    /// experiment — see [`PostAnatomy`]). Takes effect at `spawn_preset`;
+    /// changing it does not retrofit already-spawned groups.
+    pub post_anatomy: PostAnatomy,
 }
 
 impl Default for AtomCore {
@@ -1063,6 +1108,7 @@ impl AtomCore {
             mote_fraction: DEFAULT_MOTE_FRACTION,
             mote_scale: DEFAULT_MOTE_SCALE,
             mote_lifetime: DEFAULT_MOTE_LIFETIME,
+            post_anatomy: PostAnatomy::default(),
         }
     }
 
@@ -1150,7 +1196,7 @@ impl AtomCore {
         vel: DVec3,
         axis: DVec3,
     ) -> Option<usize> {
-        let alpha_specs = preset_alphas(name)?;
+        let alpha_specs = preset_alphas(name, self.post_anatomy)?;
         let orientation = orientation_from_pole(axis);
         let gid = self.groups.len();
 
@@ -1219,6 +1265,8 @@ impl AtomCore {
                 angular_velocity: DVec3::ZERO,
                 mass: a_mass,
                 inertia: a_inertia.max(1e-9),
+                ring_disc_r: 0.0,
+                ring_mid_r: 0.0,
             });
         }
 
@@ -1250,7 +1298,81 @@ impl AtomCore {
         self.groups[gid].disc_exits = exits;
         let segments = self.compute_skin_segments(gid);
         self.groups[gid].skin_segments = segments;
+        self.compute_alpha_ring_radii(gid);
         Some(gid)
+    }
+
+    /// Spawn-time pass for the three-ring alpha skin (session-32): for
+    /// every standard 4-nucleon alpha (2 protons + posts), march THIS
+    /// alpha's own reach surface (its members only, in the alpha's own
+    /// frame — `member_local_pos`/`member_local_pole` are already
+    /// alpha-frame) and store two quantitative radii on the [`AlphaUnit`]:
+    /// the reach radius at the proton disc planes and the equatorial reach
+    /// at the midplane. Radii are static spawn data (the reach surface is
+    /// a rest-pose property, like the group `skin_reach`); the rings'
+    /// live placement comes from member particle state in
+    /// `build_group_alpha_rings`.
+    fn compute_alpha_ring_radii(&mut self, gid: usize) {
+        let n_alphas = self.groups[gid].alphas.len();
+        for ai in 0..n_alphas {
+            let srcs: Vec<FieldSrc> = {
+                let g = &self.groups[gid];
+                let a = &g.alphas[ai];
+                let proton_count = a
+                    .members
+                    .iter()
+                    .filter(|&&k| {
+                        self.profiles[self.particles[g.members[k]].profile_id].name
+                            == "proton"
+                    })
+                    .count();
+                if proton_count < 2 {
+                    continue;
+                }
+                a.members
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &k)| {
+                        let profile = self.particles[g.members[k]].profile_id;
+                        FieldSrc {
+                            pos: a.member_local_pos[i],
+                            pole: a.member_local_pole[i],
+                            mass: self.profiles[profile].mass,
+                            radius: self.profiles[profile]
+                                .radius
+                                .max(MIN_RENDER_RADIUS as f64),
+                            profile,
+                        }
+                    })
+                    .collect()
+            };
+            let table = self.march_reach(&srcs, DVec3::ZERO, SKIN_REACH_RINGS);
+            if table.len() < 2 {
+                continue;
+            }
+            let mid_r = reach_at_theta(&table, std::f64::consts::PI / 2.0);
+            // Disc ring: where the reach surface crosses the (north)
+            // proton disc plane y = +NUCLEON_PITCH/2 — same crossing
+            // logic as `compute_disc_exits`, in the alpha frame.
+            let yc = NUCLEON_PITCH / 2.0;
+            let n = table.len();
+            let mut disc_r = 0.0f64;
+            for i in 0..(n - 1) {
+                let th0 = std::f64::consts::PI * i as f64 / (n - 1) as f64;
+                let th1 = std::f64::consts::PI * (i + 1) as f64 / (n - 1) as f64;
+                let y0 = table[i] * th0.cos();
+                let y1 = table[i + 1] * th1.cos();
+                if (y0 - yc) * (y1 - yc) <= 0.0 && (y0 - y1).abs() > 1e-12 {
+                    let f = ((y0 - yc) / (y0 - y1)).clamp(0.0, 1.0);
+                    let th = th0 + (th1 - th0) * f;
+                    disc_r = reach_at_theta(&table, th) * th.sin();
+                    break;
+                }
+            }
+            let a = &mut self.groups[gid].alphas[ai];
+            a.ring_mid_r = mid_r;
+            a.ring_disc_r = disc_r;
+        }
     }
 
     /// Split a group into skin segments: alphas whose `rest_center` sits
@@ -3525,6 +3647,110 @@ impl AtomCore {
             .count()
     }
 
+    /// Three-ring alpha skin (session-32, user-proposed): per standard
+    /// alpha, two DISC rings (one at each proton, in that proton's own
+    /// live disc plane — tilt readout) and one CENTER ring at the alpha
+    /// midplane (equatorial reach level, where the neutron posts live)
+    /// with a short radial TICK at each post's actual azimuth (live roll
+    /// readout). All geometry is anchored to CURRENT member particle
+    /// positions/orientations, so it tracks the bodies in every
+    /// `NucleusDynamics` mode — RigidLock kinematics, RigidAlpha rigid
+    /// bodies, even FreeNucleon distortion (the "rings" then deform with
+    /// the alpha, which is itself a readout). Radii are the spawn-time
+    /// quantitative reach values (`compute_alpha_ring_radii`).
+    ///
+    /// WORLD-space variable-polyline buffer:
+    /// `[n_polylines, (pt_count, x,y,z × pt_count)…]`.
+    pub fn build_group_alpha_rings(&self, group_idx: usize) -> Vec<f32> {
+        const PTS: usize = 49;
+        const TICK_IN: f64 = 0.85;
+        const TICK_OUT: f64 = 1.15;
+        let g = match self.groups.get(group_idx) {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+
+        let mut buf: Vec<f32> = vec![0.0]; // n_polylines patched at the end
+        let mut count = 0u32;
+        let push_polyline = |buf: &mut Vec<f32>, pts: &[DVec3]| {
+            buf.push(pts.len() as f32);
+            for p in pts {
+                buf.extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+            }
+        };
+        let circle = |center: DVec3, normal: DVec3, r: f64| -> Vec<DVec3> {
+            let e1 = normal.any_orthonormal_vector();
+            let e2 = normal.cross(e1);
+            (0..PTS)
+                .map(|p| {
+                    let phi = TAU * p as f64 / (PTS - 1) as f64;
+                    center + (e1 * phi.cos() + e2 * phi.sin()) * r
+                })
+                .collect()
+        };
+
+        for a in &g.alphas {
+            if a.ring_disc_r <= 0.0 {
+                continue;
+            }
+            let mut protons: Vec<usize> = Vec::new();
+            let mut neutrons: Vec<usize> = Vec::new();
+            for &k in &a.members {
+                let id = g.members[k];
+                match self.profiles[self.particles[id].profile_id].name.as_str() {
+                    "proton" => protons.push(id),
+                    "neutron" => neutrons.push(id),
+                    _ => {}
+                }
+            }
+            if protons.len() != 2 {
+                continue;
+            }
+            let p1 = self.particles[protons[0]].position;
+            let p2 = self.particles[protons[1]].position;
+            let axis_vec = p2 - p1;
+            if axis_vec.length_squared() < 1e-12 {
+                continue;
+            }
+            let axis = axis_vec.normalize();
+            let center = (p1 + p2) * 0.5;
+
+            // Disc rings in each proton's own live disc plane.
+            for &pid in &protons {
+                let pole = self.particles[pid].pole_axis();
+                push_polyline(
+                    &mut buf,
+                    &circle(self.particles[pid].position, pole, a.ring_disc_r),
+                );
+                count += 1;
+            }
+            // Center ring at the midplane, ⊥ the live alpha axis.
+            push_polyline(&mut buf, &circle(center, axis, a.ring_mid_r));
+            count += 1;
+            // Post ticks: radial dashes at each neutron's actual azimuth.
+            for &nid in &neutrons {
+                let d = self.particles[nid].position - center;
+                let lat = d - axis * d.dot(axis);
+                if lat.length_squared() > 1e-12 {
+                    let u = lat.normalize();
+                    push_polyline(
+                        &mut buf,
+                        &[
+                            center + u * (a.ring_mid_r * TICK_IN),
+                            center + u * (a.ring_mid_r * TICK_OUT),
+                        ],
+                    );
+                    count += 1;
+                }
+            }
+        }
+        if count == 0 {
+            return Vec::new();
+        }
+        buf[0] = count as f32;
+        buf
+    }
+
     // ── Charge cloud VFX ─────────────────────────────────────────────────
     // Charge-recycling FLOW visualization: every dot is a photon parcel on
     // a COMPLETE path — pulled down the polar funnel, through the body (or
@@ -3534,6 +3760,49 @@ impl AtomCore {
     // and dispersed by a cap electron riding the pole. Paths are kinematic
     // illustrations of the force model (probability maps + composite
     // reach), not collision-checked trajectories — spin mode does that.
+
+    /// Anchor frame for a group's flow VFX and group-anchored motes. In
+    /// RigidLock this is the phase-driven `(g.com, g.orientation)`. In
+    /// RigidAlpha/FreeNucleon the group container is FROZEN while the real
+    /// bodies move (addendum A10) — the session-31 round-4 gate hid the
+    /// nuclei flow engine there because it visually disconnected. Session
+    /// 32 replaces the gate with a LIVE frame derived from member particle
+    /// state: center = mean member position, axis = the line through the
+    /// two rest-axially-extreme members, applied as a minimal rotation on
+    /// top of the frozen orientation — continuous, equal to the frozen
+    /// frame while undeformed, and valid in every mode (same
+    /// particle-anchored principle as `build_group_alpha_rings`).
+    fn live_group_frame(&self, gi: usize) -> (DVec3, DQuat) {
+        let g = &self.groups[gi];
+        if self.dynamics == NucleusDynamics::RigidLock || g.members.len() < 2 {
+            return (g.com, g.orientation);
+        }
+        let mut com = DVec3::ZERO;
+        for &m in &g.members {
+            com += self.particles[m].position;
+        }
+        com /= g.members.len() as f64;
+        let (mut k_lo, mut k_hi) = (0usize, 0usize);
+        for (k, off) in g.local_offsets.iter().enumerate() {
+            if off.y < g.local_offsets[k_lo].y {
+                k_lo = k;
+            }
+            if off.y > g.local_offsets[k_hi].y {
+                k_hi = k;
+            }
+        }
+        if k_lo == k_hi {
+            return (com, g.orientation);
+        }
+        let live_axis = self.particles[g.members[k_hi]].position
+            - self.particles[g.members[k_lo]].position;
+        if live_axis.length_squared() < 1e-12 {
+            return (com, g.orientation);
+        }
+        let frozen_axis = g.orientation * DVec3::Y;
+        let align = DQuat::from_rotation_arc(frozen_axis, live_axis.normalize());
+        (com, (align * g.orientation).normalize())
+    }
 
     /// Advance the cloud particles by wall-clock `delta` seconds and return
     /// the MultiMesh buffer (12 transform + 4 color floats per particle).
@@ -3614,10 +3883,8 @@ impl AtomCore {
                 }
             })
             .collect();
-        let group_frames: Vec<(DVec3, DQuat)> = self
-            .groups
-            .iter()
-            .map(|g| (g.com, g.orientation))
+        let group_frames: Vec<(DVec3, DQuat)> = (0..self.groups.len())
+            .map(|gi| self.live_group_frame(gi))
             .collect();
 
         // Age + kinematic path evaluation. A skin-dying Flow parcel that
@@ -3848,19 +4115,16 @@ impl AtomCore {
         // through and out the far pole (THROUGH_WEIGHT) — more engines,
         // proportionally denser flow.
         //
-        // Gated to RigidLock only (session-31 round 4): this whole engine
-        // (and the group-anchored motes it seeds) rides the group's FROZEN
-        // phase-driven frame (`group_frames` = `(g.com, g.orientation)`,
-        // which only `sync_group_members`/RigidLock kinematics update).
-        // In RigidAlpha/FreeNucleon the group is a container only — its
-        // `com`/`orientation` stop integrating (docs/ATOM_ROTATION_AND_SIM_DESIGN.md
-        // addendum A10) while the real force-driven bodies move — so this
-        // loop would visually disconnect the flow VFX from the alphas it's
-        // supposed to be riding (user report). Per-alpha anchoring is the
-        // future fix (anchor to `VfxAnchor::Particle`/an alpha frame
-        // instead of `VfxAnchor::Group`); free-particle flow (the loop
-        // above) is unaffected since it never anchors to the group.
-        if self.dynamics == NucleusDynamics::RigidLock {
+        // Session-31 round 4 gated this engine to RigidLock because it
+        // rode the group's FROZEN phase-driven frame and visually
+        // disconnected in RigidAlpha/FreeNucleon (user report). Session 32
+        // removed the gate: `group_frames` now comes from
+        // `live_group_frame`, which tracks the actual member bodies in
+        // every mode, so the flow (and the motes it seeds) stays attached
+        // to the stack it annotates. Rest-frame path data (skin_reach,
+        // disc_exits, local y-extents) rides that live frame — exact while
+        // the stack is undeformed, and a few-percent approximation under
+        // bound-stack breathing, which is well inside the VFX bar.
         for gi in 0..self.groups.len() {
             let (com, g_rot) = group_frames[gi];
             let axis = g_rot * DVec3::Y;
@@ -4002,7 +4266,6 @@ impl AtomCore {
                 }
             }
         }
-        } // end `if self.dynamics == NucleusDynamics::RigidLock` (nuclei emitter)
 
         // Bond stream bridges — a molecular bond IS two facing polar
         // streams meeting head-on (fourier.pdf/jup3.pdf): show charge
@@ -4946,6 +5209,71 @@ mod tests {
             3,
             "argon = center + two caps axial (connectors are sideways), three rings"
         );
+    }
+
+    /// Three-ring alpha skin (session-32): every standard 4-nucleon alpha
+    /// gets spawn-time reach radii and a live world-space polyline set —
+    /// 2 disc rings + 1 center ring + 2 post ticks = 5 polylines per
+    /// alpha, in EVERY dynamics mode (the whole point: the overlay must
+    /// not disappear in RigidAlpha the way the group-frame rings did).
+    #[test]
+    fn alpha_rings_live_in_all_modes() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.running = true;
+
+        for a in &core.groups[0].alphas {
+            assert!(
+                a.ring_disc_r > 1.0 && a.ring_mid_r > 1.0,
+                "spawn-time ring radii should be outside the body: disc={} mid={}",
+                a.ring_disc_r,
+                a.ring_mid_r
+            );
+            // The reach surface BULGES at the proton disc planes (that's
+            // where the alpha pushes farthest) and waists slightly at the
+            // midplane between them — the disc rings must sit outside the
+            // center ring, or the radii sampling is wrong.
+            assert!(
+                a.ring_disc_r > a.ring_mid_r,
+                "disc ring should bulge past the midplane waist: disc={} mid={}",
+                a.ring_disc_r,
+                a.ring_mid_r
+            );
+        }
+
+        let parse_polylines = |buf: &[f32]| -> usize {
+            assert!(!buf.is_empty(), "ring buffer should not be empty");
+            let n = buf[0] as usize;
+            let mut o = 1usize;
+            for _ in 0..n {
+                let pts = buf[o] as usize;
+                assert!(pts >= 2, "each polyline needs >= 2 points");
+                o += 1 + pts * 3;
+            }
+            assert_eq!(o, buf.len(), "buffer length must match its header");
+            n
+        };
+
+        for mode in [
+            NucleusDynamics::RigidLock,
+            NucleusDynamics::RigidAlpha,
+            NucleusDynamics::FreeNucleon,
+        ] {
+            core.set_nucleus_dynamics(mode);
+            core.step_n(200);
+            let buf = core.build_group_alpha_rings(0);
+            let n = parse_polylines(&buf);
+            assert_eq!(
+                n, 15,
+                "carbon = 3 alphas x (2 disc + 1 center + 2 ticks) polylines in {mode:?}"
+            );
+        }
     }
 
     /// Display rotations are WALL-clock: physics stepping must not move
