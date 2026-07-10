@@ -41,6 +41,22 @@ pub const FLOW_PROTON_POLE_PASS: f64 = 0.35;
 /// the sandbox.
 pub const FLOW_SOLVE_EVERY: usize = 8;
 
+/// Phase B default: stream-tension coupling. Each capture link carries
+/// `flow` charge/sec; interrupting it costs pressure, so the pair is
+/// pulled together with force `FLOW_TENSION × flow` along the link
+/// (graphene.pdf: "the vertical charge streams ... tie them together
+/// pretty tightly"). No 1/r² — a captured stream is a conduit, not a
+/// radiant field; the capture falloff already bounds its range.
+/// Runtime field `AtomCore::flow_tension` (seeded from this) so the
+/// calibration sweep and the debug panel can vary it.
+pub const DEFAULT_FLOW_TENSION: f64 = 1.0;
+/// Phase B default: channel-alignment stiffness. The cos² capture
+/// gates are differentiated into restoring torques on both ends of
+/// every link — the configuration-space stiffness the session-32 whirl
+/// analysis proved velocity damping cannot provide, and the deut.pdf
+/// post-regulator mechanism. Runtime field `AtomCore::flow_align`.
+pub const DEFAULT_FLOW_ALIGN: f64 = 0.5;
+
 /// Live charge-flow state of one particle. Pole index convention:
 /// 0 = south (−pole_axis), 1 = north (+pole_axis).
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +73,11 @@ pub struct FlowState {
     /// Total output relative to the free-field baseline — the Phase B
     /// force multiplier. 1.0 for a free particle by construction.
     pub mult: f64,
+    /// Total geometric capture demand per output port ([south pole,
+    /// north pole, disc]) from the last sweep — the share normalizer
+    /// Phase B needs to evaluate a single link's flow at force time
+    /// without re-scanning the whole network.
+    pub demand: [f64; 3],
 }
 
 impl Default for FlowState {
@@ -67,6 +88,7 @@ impl Default for FlowState {
             lateral: 0.0,
             stress: 0.0,
             mult: 1.0,
+            demand: [0.0; 3],
         }
     }
 }
@@ -230,6 +252,7 @@ impl AtomCore {
             flow.intake = intake[j];
             flow.stress = stress;
             flow.mult = if baseline > 1e-12 { output / baseline } else { 0.0 };
+            flow.demand = port_demand[j];
 
             if conduit {
                 // Neutron: 1D pipe — what enters one pole exits the
@@ -257,6 +280,107 @@ impl AtomCore {
     }
 }
 
+impl AtomCore {
+    /// Phase B: stream tension + channel-alignment stiffness for one
+    /// pair, evaluated at CURRENT geometry with flow amplitudes (and
+    /// port-demand normalizers) from the last solver sweep. Returns
+    /// `(force_on_j, torque_on_i, torque_on_j)`; the force on i is the
+    /// exact opposite (the stream pulls both ends together — no
+    /// momentum injection, unlike the vortex term's known defect).
+    ///
+    /// Both directions (i feeds j, j feeds i) are summed. Per capture
+    /// link the energy is `−k·fall(r)·emit(θ_e)·recv(θ_v)·flow`, so:
+    /// - tension: `k·flow_link` along the line (falloff bounds range);
+    /// - torques: analytic derivatives of the cos²/sin² gates —
+    ///   `τ = −(∂E/∂c)(u×w)` for each orientation-dependent gate,
+    ///   restoring the pole/disc alignment that keeps the channel open
+    ///   (the deut.pdf regulator; the configuration-space stiffness the
+    ///   whirl saga proved missing).
+    pub(crate) fn flow_tension_pair(
+        &self,
+        i: usize,
+        j: usize,
+        d_hat: DVec3,
+        r: f64,
+    ) -> (DVec3, DVec3, DVec3) {
+        let k_t = self.flow_tension;
+        let k_a = self.flow_align;
+        if k_t.abs() < 1e-12 && k_a.abs() < 1e-12 {
+            return (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO);
+        }
+        let fall = capture_falloff(r);
+        if fall < 1e-6 {
+            return (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO);
+        }
+
+        let mut f_on_j = DVec3::ZERO;
+        let mut tau = [DVec3::ZERO, DVec3::ZERO]; // [on i, on j]
+
+        // (emitter, receiver, d̂ from emitter to receiver, sign of the
+        // tension force on j along d_hat)
+        for &(e, v, dir, sign_j) in &[(i, j, d_hat, -1.0), (j, i, -d_hat, 1.0)] {
+            let pole_e = self.particles[e].pole_axis();
+            let pole_v = self.particles[v].pole_axis();
+            let fe = &self.particles[e].flow;
+            let tau_e_idx = if e == i { 0 } else { 1 };
+            let tau_v_idx = 1 - tau_e_idx;
+
+            for p in 0..2usize {
+                let face = if p == 1 { pole_v } else { -pole_v };
+                let c_recv = (-dir).dot(face).max(0.0);
+                if c_recv < 1e-6 {
+                    continue;
+                }
+                let recv = c_recv * c_recv;
+
+                // Pole (through-charge) ports of the emitter.
+                for q in 0..2usize {
+                    let out = fe.out_pole[q];
+                    if out <= 1e-12 {
+                        continue;
+                    }
+                    let out_dir = if q == 1 { pole_e } else { -pole_e };
+                    let c_emit = out_dir.dot(dir).max(0.0);
+                    if c_emit < 1e-6 {
+                        continue;
+                    }
+                    let emit = c_emit * c_emit;
+                    let share = 1.0 / fe.demand[q].max(1.0);
+                    let flow = fall * emit * recv * out * share;
+                    f_on_j += d_hat * (sign_j * k_t * flow);
+                    // Alignment: receiver face toward the arrival line,
+                    // emitter exit toward the departure line.
+                    let k_link = k_a * fall * out * share;
+                    tau[tau_v_idx] +=
+                        (face.cross(-dir)) * (2.0 * k_link * emit * c_recv);
+                    tau[tau_e_idx] +=
+                        (out_dir.cross(dir)) * (2.0 * k_link * recv * c_emit);
+                }
+
+                // Disc (lateral) port of the emitter: sin² gate — the
+                // restoring torque keeps the disc PLANE containing the
+                // line to the receiver.
+                let out = fe.lateral;
+                if out > 1e-12 {
+                    let c_disc = pole_e.dot(dir);
+                    let emit = 1.0 - c_disc * c_disc;
+                    if emit > 1e-6 {
+                        let share = 1.0 / fe.demand[2].max(1.0);
+                        let flow = fall * emit * recv * out * share;
+                        f_on_j += d_hat * (sign_j * k_t * flow);
+                        let k_link = k_a * fall * out * share;
+                        tau[tau_v_idx] +=
+                            (face.cross(-dir)) * (2.0 * k_link * emit * c_recv);
+                        tau[tau_e_idx] -=
+                            (pole_e.cross(dir)) * (2.0 * k_link * recv * c_disc);
+                    }
+                }
+            }
+        }
+        (f_on_j, tau[0], tau[1])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +392,17 @@ mod tests {
     fn settle(core: &mut AtomCore, steps: usize) {
         core.running = true;
         core.step_n(steps);
+    }
+
+    /// All pairwise distances between the given particle ids.
+    fn pair_dists(core: &AtomCore, members: &[usize]) -> Vec<f64> {
+        let mut d = Vec::new();
+        for a in 0..members.len() {
+            for b in (a + 1)..members.len() {
+                d.push(core.pair_distance(members[a], members[b]));
+            }
+        }
+        d
     }
 
     #[test]
@@ -349,6 +484,168 @@ mod tests {
              (haf.pdf: bare stacks channel weakly): lone={lone_through} \
              carbon={carbon_through}"
         );
+    }
+
+    /// Session-32 Phase B calibration: sweep flow_tension × flow_align
+    /// against BOTH regimes that must hold simultaneously — the
+    /// FreeNucleon lone alpha (intra-alpha cohesion, currently
+    /// dissolves at ~2500% drift) and the RigidAlpha carbon quiet run
+    /// (inter-alpha binding, must not over-compress or destabilize).
+    /// For the FreeNucleon rows the worst post-proton pair's force
+    /// breakdown is printed at the end so the ejection mechanism is
+    /// visible, not just the drift. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_flow_calibration --nocapture`
+    #[test]
+    #[ignore]
+    fn report_flow_calibration() {
+        println!(
+            "\n{:>8} {:>7} | {:>12} {:>10} | {:>12} {:>10}",
+            "tension", "align", "free_drift", "free_KE", "rigid_drift", "rigid_KE"
+        );
+        for &tension in &[0.0, 1.0, 2.0, 4.0, 8.0, 16.0] {
+            for &align in &[0.0, 0.5 * tension] {
+                if tension == 0.0 && align != 0.0 {
+                    continue;
+                }
+                // FreeNucleon lone alpha, 20k steps.
+                let mut core = standard_core();
+                core.flow_tension = tension;
+                core.flow_align = align;
+                let gid = core
+                    .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("alpha preset");
+                core.set_nucleus_dynamics(NucleusDynamics::FreeNucleon);
+                let members = core.groups[gid].members.clone();
+                let d0 = pair_dists(&core, &members);
+                core.running = true;
+                core.step_n(20_000);
+                let d1 = pair_dists(&core, &members);
+                let free_drift = d0
+                    .iter()
+                    .zip(&d1)
+                    .map(|(a, b)| (a - b).abs() / a.max(1e-9))
+                    .fold(0.0f64, f64::max);
+                let free_ke = core.total_kinetic_energy();
+
+                // RigidAlpha carbon quiet, 20k steps.
+                let mut core = standard_core();
+                core.flow_tension = tension;
+                core.flow_align = align;
+                let gid = core
+                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("carbon preset");
+                core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+                core.running = true;
+                let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let n_alphas = core.groups[gid].alphas.len();
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                core.step_n(20_000);
+                let rigid_drift = pairs
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &(a, b))| {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        ((d - d0[k]) / d0[k]).abs()
+                    })
+                    .fold(0.0f64, f64::max);
+                let rigid_ke = core.total_kinetic_energy();
+
+                println!(
+                    "{tension:>8.1} {align:>7.2} | {:>11.1}% {free_ke:>10.4} | {:>11.1}% {rigid_ke:>10.4}",
+                    free_drift * 100.0,
+                    rigid_drift * 100.0,
+                );
+            }
+        }
+
+        // Ejection anatomy at tension=0: what actually blows the free
+        // alpha apart? Print every intra-alpha pair's breakdown at the
+        // rest pose after a short settle.
+        let mut core = standard_core();
+        core.flow_tension = 0.0;
+        core.flow_align = 0.0;
+        let gid = core
+            .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("alpha preset");
+        core.set_nucleus_dynamics(NucleusDynamics::FreeNucleon);
+        core.running = true;
+        core.step_n(100);
+        let members = core.groups[gid].members.clone();
+        println!(
+            "\n-- free-alpha pair anatomy at t≈0 (tension off) --\n\
+             {:>5} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>9}",
+            "pair", "r", "channel", "grav", "charge", "ambient", "intake", "stream", "contact", "tension"
+        );
+        for a in 0..members.len() {
+            for b in (a + 1)..members.len() {
+                let (i, j) = (members[a], members[b]);
+                let fb = core.pair_force_breakdown(i, j);
+                println!(
+                    "{a}-{b:<3} {:>6.3} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>+9.4}",
+                    fb[0], fb[1], fb[2], fb[3], fb[4], fb[5], fb[6], fb[7], fb[8],
+                );
+            }
+        }
+    }
+
+    /// Session-32 Phase B: watch WHERE the FreeNucleon alpha goes at a
+    /// given tension instead of only the endpoint drift — per-member
+    /// positions (cylindrical: radial offset from the alpha axis, y) and
+    /// all pair distances, sampled through the run. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_free_alpha_trajectory --nocapture`
+    #[test]
+    #[ignore]
+    fn report_free_alpha_trajectory() {
+        for &tension in &[0.0, 8.0, 16.0] {
+            let mut core = standard_core();
+            core.flow_tension = tension;
+            core.flow_align = tension * 0.5;
+            let gid = core
+                .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("alpha preset");
+            core.set_nucleus_dynamics(NucleusDynamics::FreeNucleon);
+            core.running = true;
+            let members = core.groups[gid].members.clone();
+
+            println!(
+                "\n== tension={tension} ==\n{:>6} {:>10} {:>44} {:>36}",
+                "step", "KE", "members (lat,y)", "pair r (01 02 03 12 13 23)"
+            );
+            for s in 0..10 {
+                core.step_n(4_000);
+                let com: DVec3 = members
+                    .iter()
+                    .map(|&m| core.particles[m].position)
+                    .sum::<DVec3>()
+                    / members.len() as f64;
+                let cyl: Vec<String> = members
+                    .iter()
+                    .map(|&m| {
+                        let d = core.particles[m].position - com;
+                        format!("({:.2},{:+.2})", (d.x * d.x + d.z * d.z).sqrt(), d.y)
+                    })
+                    .collect();
+                let dists: Vec<String> = pair_dists(&core, &members)
+                    .iter()
+                    .map(|d| format!("{d:.2}"))
+                    .collect();
+                println!(
+                    "{:>6} {:>10.4} {:>44} {:>36}",
+                    (s + 1) * 4_000,
+                    core.total_kinetic_energy(),
+                    cyl.join(" "),
+                    dists.join(" "),
+                );
+            }
+        }
     }
 
     /// Session-32 Phase A network dump: the flow table for the preset

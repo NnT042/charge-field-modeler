@@ -1,7 +1,40 @@
 # Through-Charge Flow Model — Design (Session 32)
 
-**Status: Phase A implemented (flow network + diagnostics, no force
-changes). Phases B/C are design-locked but not built.**
+**Status: Phases A and B implemented. Phase C is design-locked but not
+built.**
+
+Phase B outcome (session 32): stream tension + channel-alignment
+stiffness live on same-group pairs (`AtomCore::flow_tension = 1.0`,
+`flow_align = 0.5`; `flow_tension_pair` in charge_flow.rs, hooked into
+`compute_forces`). The sweep winner moved to channeling=0.9,
+nuclear_ambient=2.0 with 7.8% quiet / 7.8% flyby — the tension supplies
+part of the glue the higher ambient had been compensating for, and the
+balanced margins beat the pre-tension 12.3%/11.9%. `pair_force_breakdown`
+gained a 9th element (signed tension along d_hat).
+
+Phase B findings on the FreeNucleon lone alpha (the stretch goal — NOT
+yet achieved, by design honesty):
+
+- The dominant "dissolution" was a GEOMETRY bug, not physics: the two
+  rest-pose posts (±0.7, disc-shaped contact radius 1.0) were
+  interpenetrating, and FreeNucleon's first step fired them out on a
+  58-unit compressed contact spring. Fixed via the neutron-as-rod
+  same-group contact rule (phos.pdf "neutrons are 1D"), keeping POST_R
+  at the earned 0.7 (widening it to 1.05 wrecked the RigidAlpha flyby
+  envelope — 1/11 robust — and was reverted).
+- With contact fixed: posts are still net-repelled (the neutron's REAL
+  measured equatorial emission leak, ~0.53 vs 1.23 polar peak, drives
+  un-channeled post-post charge repulsion 1.47 at rest), and once posts
+  leave, the protons collapse into contact — oxygen.pdf's "neutrons
+  keep the protons apart" is load-bearing.
+- Tension response is monotone and real (free-alpha KE 5.9 → 0.9 across
+  tension 0 → 16) but link tension alone cannot confine: at 16 the
+  posts nearly stall while the over-pulled PROTONS eject axially.
+- Conclusion: the missing piece is AMBIENT CONFINEMENT — the external
+  field pressing inward on the composite (haf.pdf side-charge, salt.pdf
+  pressure), which is the SAME mechanism as Phase C's stray-immunity
+  bulk occlusion. FreeNucleon cohesion therefore lands with Phase C,
+  not with more link tension.
 
 The user's top priority after the whirl-instability fix: the force model
 treats emission/absorption as static geometric profiles, so every effect

@@ -1161,6 +1161,19 @@ mod tests {
             }
         }
 
+        // LONG-HORIZON VETO (session-32 Phase B lesson): combos that won
+        // this 20k-sweep + 15k-flyby chooser but FAILED the 8-seed ×
+        // 1M-step gate (`report_long_horizon_drift`) — the short-horizon
+        // metrics have a blind spot past the 250k confirm, and defaults
+        // must never ship on them alone. Each entry carries its gate
+        // evidence; re-run the gate to challenge an entry.
+        //
+        // - (0.9, 2.0): won the Phase-B sweep at 7.8%/7.8%, then 4 of 8
+        //   seeds collapsed at 475k-825k steps (session 32, flow tension
+        //   1.0/0.5 active). Same slow-escape shape the whirl fix
+        //   addressed, at a different point in coupling space.
+        const LONG_HORIZON_VETO: &[(f64, f64)] = &[(0.9, 2.0)];
+
         // Choose defaults = the combo with the largest margin against BOTH
         // failure modes (lowest worst-case max-drift across quiet AND
         // flyby), ties broken toward mid-range ambient — away from the
@@ -1169,6 +1182,16 @@ mod tests {
         let mid_ambient = ambients.iter().sum::<f64>() / ambients.len() as f64;
         let mut chosen: Option<(f64, f64, f64, f64)> = None; // (chan, amb, quiet_drift, flyby_drift)
         for &(c, a, qd, fd) in &robust {
+            if LONG_HORIZON_VETO
+                .iter()
+                .any(|&(vc, va)| (c - vc).abs() < 1e-9 && (a - va).abs() < 1e-9)
+            {
+                println!(
+                    "  (skipping channeling={c} ambient={a}: long-horizon veto — \
+                     failed the 8-seed 1M gate, see LONG_HORIZON_VETO)"
+                );
+                continue;
+            }
             let margin = qd.max(fd);
             let take = match chosen {
                 None => true,

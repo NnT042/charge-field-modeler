@@ -207,6 +207,18 @@ struct AlphaSpec {
 /// posts) — how far the posts sit from the alpha's own stack axis, in the
 /// alpha's own rest frame. Replaces the four `0.7` literals that used to
 /// appear separately in every builder.
+///
+/// Session 32: briefly widened to 1.05 because at 0.7 the two posts sat
+/// 1.4 apart with DISC-shaped contact radius 1.0 each — interpenetrating
+/// at rest, so the moment FreeNucleon activated intra-alpha forces the
+/// compressed contact spring (58 force units) fired both posts out
+/// instantly (the real reason `nucleon_balance` read ~2500% drift at
+/// every boost). But widening the posts degraded the RigidAlpha flyby
+/// envelope (1/11 robust — inter-alpha geometry left its earned basin),
+/// so the fix moved to the CONTACT SHAPE instead: same-group neutrons
+/// collide as thin RODS (phos.pdf "neutrons are 1D... lightning rods"),
+/// not discs — see the contact section in `compute_forces`. Geometry
+/// stays at the earned 0.7.
 const POST_R: f64 = 0.7;
 
 /// Pole anatomy of the alpha's INTERNAL neutron posts (session-32
@@ -958,6 +970,18 @@ impl Default for Couplings {
     ///   33.2%; ambient=5.0 balances both at 12.3%/11.9% — the sweep
     ///   chooser's worst-case-margin winner (11 of 12 quiet passers are
     ///   also flyby-robust post-fix).
+    ///
+    ///   Session 32 Phase B (through-charge flow tension,
+    ///   docs/THROUGH_CHARGE_DESIGN.md): with stream tension +
+    ///   channel-alignment stiffness active on same-group pairs
+    ///   (flow_tension=1.0, flow_align=0.5), the 20k sweep's winner moved
+    ///   to `channeling=0.9, nuclear_ambient=2.0` (7.8%/7.8%) — but that
+    ///   combo FAILED the 8-seed × 1M-step long-horizon gate (4/8 seeds
+    ///   collapse at 475k-825k), so it is on the sweep chooser's
+    ///   LONG_HORIZON_VETO list and the defaults stay at the
+    ///   gate-surviving `channeling=0.85, nuclear_ambient=5.0`
+    ///   (12.3%/11.9% with tension). Lesson encoded in the chooser:
+    ///   short-horizon margins alone must never ship a default.
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -1060,6 +1084,12 @@ pub struct AtomCore {
     /// Physics step counter — cadence source for the through-charge flow
     /// sweep (`charge_flow::FLOW_SOLVE_EVERY`).
     pub(crate) step_count: u64,
+    /// Phase B flow couplings (session 32, docs/THROUGH_CHARGE_DESIGN.md):
+    /// stream-tension and channel-alignment stiffness, applied to
+    /// non-skipped same-group pairs in `compute_forces`. Runtime fields so
+    /// the calibration sweep and the debug panel can vary them.
+    pub flow_tension: f64,
+    pub flow_align: f64,
 }
 
 impl Default for AtomCore {
@@ -1117,6 +1147,8 @@ impl AtomCore {
             mote_lifetime: DEFAULT_MOTE_LIFETIME,
             post_anatomy: PostAnatomy::default(),
             step_count: 0,
+            flow_tension: crate::charge_flow::DEFAULT_FLOW_TENSION,
+            flow_align: crate::charge_flow::DEFAULT_FLOW_ALIGN,
         }
     }
 
@@ -1954,10 +1986,12 @@ impl AtomCore {
     /// force_breakdown-style numbers at the failure step for the best
     /// combo"). Read-only; not used by the sim step itself.
     /// Returns `[r, channel, f_grav, f_charge_on_j, f_ambient,
-    /// f_intake_on_j, f_stream, f_contact]`, all UNSIGNED magnitudes of the
-    /// term as it appears in `net_on_j` (gravity/ambient/intake pull j
-    /// toward i; charge/stream/contact push j away from i).
-    pub fn pair_force_breakdown(&self, i: usize, j: usize) -> [f64; 8] {
+    /// f_intake_on_j, f_stream, f_contact, f_tension]` — indices 2..=7 are
+    /// UNSIGNED magnitudes of the term as it appears in `net_on_j`
+    /// (gravity/ambient/intake pull j toward i; charge/stream/contact push
+    /// j away from i); index 8 (session-32 flow tension) is SIGNED along
+    /// d_hat (negative pulls j toward i).
+    pub fn pair_force_breakdown(&self, i: usize, j: usize) -> [f64; 9] {
         let gi = self.particles[i].group;
         let gj = self.particles[j].group;
         let same_group = gi.is_some() && gi == gj;
@@ -2040,10 +2074,20 @@ impl AtomCore {
         let ri = pi_prof.radius.max(MIN_RENDER_RADIUS as f64);
         let rj = pj_prof.radius.max(MIN_RENDER_RADIUS as f64);
         let r_contact = if same_group {
+            // Same-group rule incl. the session-32 neutron-as-rod
+            // addendum — keep in lockstep with compute_forces.
             let sin_theta_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
             let sin_theta_j = (1.0 - cos_theta_j * cos_theta_j).max(0.0).sqrt();
-            let ri_eff = ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i);
-            let rj_eff = rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j);
+            let ri_eff = if pi_prof.name == "neutron" {
+                ri * POLE_HALF_THICKNESS
+            } else {
+                ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i)
+            };
+            let rj_eff = if pj_prof.name == "neutron" {
+                rj * POLE_HALF_THICKNESS
+            } else {
+                rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j)
+            };
             ri_eff + rj_eff
         } else {
             ri + rj
@@ -2061,6 +2105,16 @@ impl AtomCore {
             0.0
         };
 
+        // Session-32 Phase B: signed flow-tension component on j along
+        // d_hat (negative = pulls j toward i), zero for non-same-group
+        // pairs (the term is gated in compute_forces).
+        let f_tension = if same_group {
+            let (f_on_j, _, _) = self.flow_tension_pair(i, j, d_hat, r);
+            f_on_j.dot(d_hat)
+        } else {
+            0.0
+        };
+
         [
             r,
             channel,
@@ -2070,6 +2124,7 @@ impl AtomCore {
             f_intake_on_j,
             f_stream,
             f_contact,
+            f_tension,
         ]
     }
 
@@ -2838,6 +2893,28 @@ impl AtomCore {
                     }
                 }
 
+                // Through-charge stream tension + channel-alignment
+                // stiffness (session-32 Phase B —
+                // docs/THROUGH_CHARGE_DESIGN.md): a same-group pair
+                // joined by a live capture link is pulled together with
+                // the link's flow, and both ends feel restoring torques
+                // from the cos²/sin² capture gates (graphene.pdf: "the
+                // vertical charge streams ... tie them together";
+                // deut.pdf posts as self-balancing charge channels).
+                // Equal-and-opposite by construction. Gated to
+                // same-group pairs in Phase B so the locked molecular
+                // tests are untouched; Phase C extends output-stream
+                // effects to third parties (auger.pdf intruder
+                // repulsion).
+                if same_group {
+                    let (f_on_j, tau_i, tau_j) =
+                        self.flow_tension_pair(i, j, d_hat, r);
+                    self.particles[j].force_accum += f_on_j;
+                    self.particles[i].force_accum -= f_on_j;
+                    self.particles[i].torque_accum += tau_i;
+                    self.particles[j].torque_accum += tau_j;
+                }
+
                 // Contact repulsion: hard-sphere boundary at sum of radii,
                 // with near-critical normal damping while approaching —
                 // an undamped spring against the 1/1836-mass electron
@@ -2863,15 +2940,35 @@ impl AtomCore {
                 // SAME-GROUP-GATED only (RigidAlpha/FreeNucleon intra-
                 // nucleus pairs); every other pair keeps the plain
                 // sphere-sum contact that the M5 lockdown tests pin.
+                // Session-32 addendum to the same-group rule: NEUTRONS
+                // collide as thin RODS, not discs — "protons are more 2D
+                // while neutrons are more 1D... neutrons act more like
+                // little lightning rods" (phos.pdf). The disc formula
+                // gave a neutron a disc's FULL radius equator-on, which
+                // put the two rest-pose posts (1.4 apart, ±POST_R) in
+                // deep interpenetration: invisible while same-alpha
+                // pairs are skipped, but FreeNucleon's first step fired
+                // them out on a 58-unit compressed contact spring (the
+                // real bulk of nucleon_balance's ~2500% drift). A rod is
+                // thin in EVERY presentation at these scales, so the
+                // neutron contributes POLE_HALF_THICKNESS·r flat.
+                // Inter-alpha same-group distances never reach contact
+                // range, so the earned RigidAlpha tables are unaffected.
                 let ri = pi_prof.radius.max(MIN_RENDER_RADIUS as f64);
                 let rj = pj_prof.radius.max(MIN_RENDER_RADIUS as f64);
                 let r_contact = if same_group {
                     let sin_theta_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
                     let sin_theta_j = (1.0 - cos_theta_j * cos_theta_j).max(0.0).sqrt();
-                    let ri_eff =
-                        ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i);
-                    let rj_eff =
-                        rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j);
+                    let ri_eff = if pi_prof.name == "neutron" {
+                        ri * POLE_HALF_THICKNESS
+                    } else {
+                        ri * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_i)
+                    };
+                    let rj_eff = if pj_prof.name == "neutron" {
+                        rj * POLE_HALF_THICKNESS
+                    } else {
+                        rj * (POLE_HALF_THICKNESS + (1.0 - POLE_HALF_THICKNESS) * sin_theta_j)
+                    };
                     ri_eff + rj_eff
                 } else {
                     ri + rj
