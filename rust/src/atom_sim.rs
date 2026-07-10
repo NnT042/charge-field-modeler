@@ -532,6 +532,26 @@ impl AtomSim {
         self.core.pair_distance(a.max(0) as usize, b.max(0) as usize)
     }
 
+    /// Through-charge flow state of one particle (session 32, Phase A):
+    /// `[in_S, in_N, out_S, out_N, lateral, mult, stress]`. Empty array
+    /// for an invalid id.
+    #[func]
+    fn get_flow_summary(&self, particle_id: i32) -> PackedFloat32Array {
+        let Some(p) = self.core.particles.get(particle_id.max(0) as usize) else {
+            return PackedFloat32Array::new();
+        };
+        let f = p.flow;
+        packed(&[
+            f.intake[0] as f32,
+            f.intake[1] as f32,
+            f.out_pole[0] as f32,
+            f.out_pole[1] as f32,
+            f.lateral as f32,
+            f.mult as f32,
+            f.stress as f32,
+        ])
+    }
+
     // ── Charge cloud VFX (emission smoke + intake vortex) ─────────────────
 
     #[func]

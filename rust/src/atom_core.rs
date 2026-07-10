@@ -166,6 +166,10 @@ pub struct SimParticle {
     /// bodies flip wildly, session-29), while spinning about the pole at
     /// the readable display rate. Physics orientation is untouched.
     pub display_orientation: DQuat,
+    /// Live through-charge flow state (session 32, Phase A —
+    /// docs/THROUGH_CHARGE_DESIGN.md). Filled by `solve_charge_flow`
+    /// during stepping; no force term reads it yet.
+    pub flow: crate::charge_flow::FlowState,
 }
 
 impl SimParticle {
@@ -386,7 +390,7 @@ const CAROUSEL_R: f64 = 4.5;
 /// where the density still feeds momentum back (session-29 decision;
 /// nuclear.pdf: fusion forces baryons inside the free-field standoff,
 /// but not into contact).
-const NUCLEON_PITCH: f64 = 2.6;
+pub(crate) const NUCLEON_PITCH: f64 = 2.6;
 
 /// Channeling recapture tail multiplier (session-31 round 4 — binding v2
 /// hardening). `channeling_factor`'s distance falloff used to hit exactly
@@ -402,7 +406,7 @@ const NUCLEON_PITCH: f64 = 2.6;
 /// alpha a restoring basin: channeling — and therefore some of the binding
 /// glue — is still partially in effect out past the old cutoff, so a
 /// perturbed alpha is pulled back rather than ejected outright.
-const CHANNEL_TAIL: f64 = 3.0;
+pub(crate) const CHANNEL_TAIL: f64 = 3.0;
 
 /// Disc-aware contact fraction (A13, session-31 round 3): the bodies in
 /// this model are DISCS, not spheres — the whole force model is planar
@@ -1053,6 +1057,9 @@ pub struct AtomCore {
     /// experiment — see [`PostAnatomy`]). Takes effect at `spawn_preset`;
     /// changing it does not retrofit already-spawned groups.
     pub post_anatomy: PostAnatomy,
+    /// Physics step counter — cadence source for the through-charge flow
+    /// sweep (`charge_flow::FLOW_SOLVE_EVERY`).
+    pub(crate) step_count: u64,
 }
 
 impl Default for AtomCore {
@@ -1109,6 +1116,7 @@ impl AtomCore {
             mote_scale: DEFAULT_MOTE_SCALE,
             mote_lifetime: DEFAULT_MOTE_LIFETIME,
             post_anatomy: PostAnatomy::default(),
+            step_count: 0,
         }
     }
 
@@ -1183,6 +1191,7 @@ impl AtomCore {
             group: None,
             alpha: None,
             display_orientation: (orientation * DQuat::from_rotation_y(phase0)).normalize(),
+            flow: crate::charge_flow::FlowState::default(),
         });
         Some(id)
     }
@@ -2086,6 +2095,17 @@ impl AtomCore {
             return;
         }
         let dt = self.dt;
+
+        // 0. Through-charge flow relaxation sweep (session 32, Phase A —
+        // docs/THROUGH_CHARGE_DESIGN.md). Runs BEFORE forces so Phase B
+        // force terms will read a network consistent with the geometry
+        // they act on. Every FLOW_SOLVE_EVERY steps: re-routing is not
+        // instantaneous physically, and the stale window (4 ms sim time)
+        // is far below any mechanical timescale here.
+        self.step_count = self.step_count.wrapping_add(1);
+        if self.step_count % crate::charge_flow::FLOW_SOLVE_EVERY as u64 == 0 {
+            self.solve_charge_flow();
+        }
 
         // 1. Forces at current state
         self.compute_forces();

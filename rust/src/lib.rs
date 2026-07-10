@@ -2,6 +2,7 @@ use godot::prelude::*;
 
 pub mod atom_core;
 pub mod atom_scenarios;
+pub mod charge_flow;
 mod atom_sim;
 mod field_sim;
 mod focus_particle;
