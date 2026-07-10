@@ -455,34 +455,68 @@ const ALPHA_PITCH: f64 = 3.75;
 /// Preset compositions are unchanged from the flat-constituent era —
 /// only the grouping into alpha units changed (session-31).
 fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
+    // A symmetric stack of `n` core alphas about the origin, ALPHA_PITCH
+    // apart — the axial spine the element presets build on.
+    let stack = |n: usize| -> Vec<AlphaSpec> {
+        (0..n)
+            .map(|k| {
+                let y = (k as f64 - (n as f64 - 1.0) / 2.0) * ALPHA_PITCH;
+                core_alpha(y, anatomy)
+            })
+            .collect()
+    };
     match name {
         "alpha" => Some(vec![core_alpha(0.0, anatomy)]),
-        // Carbon: three alphas stacked (nuclear.pdf: "Carbon blocks — three
-        // alphas stacked"; the single-stack limit that makes C the basis of
-        // life).
-        "carbon" => Some(vec![
-            core_alpha(-ALPHA_PITCH, anatomy),
-            core_alpha(0.0, anatomy),
-            core_alpha(ALPHA_PITCH, anatomy),
-        ]),
-        // Nitrogen: carbon stack + 7th proton plugged in the south pole
-        // (edge-on, disc feeding the hole) and the balancing neutron in the
-        // north (ammon.pdf), pole-down per graphene.pdf.
+        // Carbon (session-32 correction, user + meth.pdf/graphene.pdf):
+        // TWO stacked alphas with a proton+neutron PLUG PAIR at each
+        // pole — 6p 6n. graphene.pdf: "in the case of Carbon, we will
+        // get a proton on each pole, as well as a neutron... the proton
+        // is plugged in with its equator pointing down [edge-on, disc
+        // feeds the hole], the neutron with its pole pointing down";
+        // "the proton and neutron in the original configuration of
+        // Carbon didn't spread out. They stayed in line." meth.pdf shows
+        // stronger neighbors (Oxygen) can BREAK Carbon into other forms
+        // — the shape is environmental; this is the default. The old
+        // "three alphas stacked" reading (nuclear.pdf) is kept as the
+        // `tri_alpha` harness structure below: per haf.pdf a bare stack
+        // channels weakly without polar plug fans, which is exactly why
+        // it fought the binding model for two sessions.
+        "carbon" => {
+            let mut a = stack(2);
+            // End proton of the 2-stack sits at ALPHA_PITCH/2 + 1.3;
+            // the plug pair parks one funnel mouth (2.6) beyond it.
+            let y = ALPHA_PITCH / 2.0 + 3.9;
+            a.push(plug_proton(-y, -PLUG_PAIR_GAP));
+            a.push(plug_neutron(-y, PLUG_PAIR_GAP));
+            a.push(plug_proton(y, -PLUG_PAIR_GAP));
+            a.push(plug_neutron(y, PLUG_PAIR_GAP));
+            Some(a)
+        }
+        // The bare three-alpha stack — NOT an element (session-32): kept
+        // as the canonical stability-harness structure (the hard case
+        // every binding regression showed up in) and as haf.pdf's
+        // negative exemplar: a stack with no polar plug fans "will be
+        // channeling weakly... relying only on ambient field potential".
+        "tri_alpha" => Some(stack(3)),
+        // Nitrogen: three-alpha core + 7th proton plugged in the south
+        // pole (edge-on, disc feeding the hole) and the balancing
+        // neutron in the north (ammon.pdf), pole-down per graphene.pdf.
         "nitrogen" => {
-            let mut a = preset_alphas("carbon", anatomy)?;
+            let mut a = stack(3);
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             a.push(plug_proton(-(ALPHA_PITCH + 3.9), 0.0));
             a.push(plug_neutron(ALPHA_PITCH + 3.9, 0.0));
             Some(a)
         }
-        // Oxygen: carbon stack + BOTH poles capped by a proton+neutron PAIR
-        // (oxygen.pdf: the 7th and 8th protons go on the ends because four
-        // alphas can't stack; atmo2.pdf: their neutrons are paired with
-        // them in the hole). Each pair sits side by side — proton edge-on
-        // (disc feeds the hole), neutron pole-down (channels axially).
+        // Oxygen: three-alpha core + BOTH poles capped by a
+        // proton+neutron PAIR (oxygen.pdf: the 7th and 8th protons go on
+        // the ends because four alphas can't stack; atmo2.pdf: their
+        // neutrons are paired with them in the hole). Each pair sits
+        // side by side — proton edge-on (disc feeds the hole), neutron
+        // pole-down (channels axially).
         "oxygen" => {
-            let mut a = preset_alphas("carbon", anatomy)?;
+            let mut a = stack(3);
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             let y = ALPHA_PITCH + 3.9;
@@ -524,9 +558,11 @@ fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
     }
 }
 
-/// Preset names for UI listings.
+/// Preset names for UI listings. `tri_alpha` is the bare 3-stack harness
+/// structure (not an element) — listed so the sandbox can compare it
+/// against the corrected plugged carbon live.
 pub fn preset_names() -> &'static [&'static str] {
-    &["alpha", "carbon", "nitrogen", "oxygen", "neon", "argon"]
+    &["alpha", "carbon", "tri_alpha", "nitrogen", "oxygen", "neon", "argon"]
 }
 
 /// One alpha unit of a nucleus: rolls rigidly about its OWN axis
@@ -5307,7 +5343,17 @@ mod tests {
         core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         let rings = core.build_group_emission_rings(0);
-        assert_eq!(rings[0] as usize, 3, "carbon = three alphas, three rings");
+        assert_eq!(
+            rings[0] as usize,
+            2,
+            "carbon (session-32 shape) = two core alphas, two rings (plugs ring nothing)"
+        );
+
+        core.clear_particles();
+        core.spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("tri_alpha preset");
+        let rings = core.build_group_emission_rings(0);
+        assert_eq!(rings[0] as usize, 3, "tri_alpha = three alphas, three rings");
 
         // Carousel alphas are NOT axial engines: neon rings only its
         // center alpha, argon its five axial disks.
@@ -5345,7 +5391,15 @@ mod tests {
             .expect("carbon preset");
         core.running = true;
 
-        for a in &core.groups[0].alphas {
+        // Session-32 carbon: 2 ring-bearing core alphas + 4 single-member
+        // plug alphas (which draw no rings — radii stay 0).
+        let ringed = core.groups[0]
+            .alphas
+            .iter()
+            .filter(|a| a.ring_disc_r > 0.0)
+            .count();
+        assert_eq!(ringed, 2, "carbon = two ring-bearing core alphas");
+        for a in core.groups[0].alphas.iter().filter(|a| a.ring_disc_r > 0.0) {
             assert!(
                 a.ring_disc_r > 1.0 && a.ring_mid_r > 1.0,
                 "spawn-time ring radii should be outside the body: disc={} mid={}",
@@ -5387,8 +5441,8 @@ mod tests {
             let buf = core.build_group_alpha_rings(0);
             let n = parse_polylines(&buf);
             assert_eq!(
-                n, 15,
-                "carbon = 3 alphas x (2 disc + 1 center + 2 ticks) polylines in {mode:?}"
+                n, 10,
+                "carbon = 2 core alphas x (2 disc + 1 center + 2 ticks) polylines in {mode:?}"
             );
         }
     }
@@ -5453,7 +5507,20 @@ mod tests {
 
         core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon");
-        assert_eq!(core.groups[0].skin_segments.len(), 1, "carbon = one tube");
+        assert_eq!(
+            core.groups[0].skin_segments.len(),
+            3,
+            "carbon (session-32 plugged shape) = core tube + two plug-pair ends"
+        );
+
+        core.clear_particles();
+        core.spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("tri_alpha");
+        assert_eq!(
+            core.groups[0].skin_segments.len(),
+            1,
+            "bare 3-stack = one tube"
+        );
 
         core.clear_particles();
         core.spawn_preset("neon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
@@ -5577,12 +5644,14 @@ mod tests {
         );
     }
 
-    /// TEMP diagnostic probe: reproduce the APP loop for carbon +
-    /// RigidAlpha (user report: dissolves within seconds in the app while
-    /// the contiguous-step harness holds 100k steps at 2.1%). Mimics
-    /// atom_mode.gd _process: step_n(substeps) + advance_display(dt) +
-    /// advance_clouds(dt) with VFX enabled, mode toggled after a few
-    /// seconds of RigidLock display time (as a user would).
+    /// TEMP diagnostic probe: reproduce the APP loop for the 3-alpha
+    /// stack + RigidAlpha (session-31 user report: dissolves within
+    /// seconds in the app while the contiguous-step harness holds 100k
+    /// steps at 2.1% — the structure was then called "carbon"; session 32
+    /// renamed the bare stack `tri_alpha` and gave carbon its real
+    /// plugged 2+2 shape). Mimics atom_mode.gd _process: step_n(substeps)
+    /// + advance_display(dt) + advance_clouds(dt) with VFX enabled, mode
+    /// toggled after a few seconds of RigidLock display time.
     #[test]
     #[ignore]
     fn probe_app_loop_carbon_rigidalpha() {
@@ -5594,8 +5663,8 @@ mod tests {
         core.register_profile("proton", 1.0, 1.0, &p_csv);
         core.register_profile("neutron", 1.0, 1.0, &n_csv);
         core.register_profile("electron", 1.0 / 1836.0, 0.3, &e_csv);
-        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
-            .expect("carbon");
+        core.spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("tri_alpha");
         core.set_vfx_enabled(true);
         core.running = true;
 
@@ -6074,8 +6143,8 @@ mod tests {
             "RigidLock must skip ALL same-group pairs"
         );
 
-        // RigidAlpha: carbon's three alphas are stacked along the axis —
-        // adjacent alphas must now feel each other.
+        // RigidAlpha: carbon's core alphas and plugs share the axis —
+        // adjacent alpha units must now feel each other.
         core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
         core.compute_forces();
         assert!(

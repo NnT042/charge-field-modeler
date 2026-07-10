@@ -259,7 +259,11 @@ func spawn_scenario(scenario: String) -> void:
 			# the pair is driven out past molecular range.
 			_spawn_formed_h(Vector3(0, -3, 0), 1.0)
 			_spawn_formed_h(Vector3(0, 3, 0), -1.0)
-		"alpha", "carbon", "nitrogen", "oxygen", "neon", "argon":
+		"alpha", "carbon", "tri_alpha", "nitrogen", "oxygen", "neon", "argon":
+			# "tri_alpha" = the bare 3-stack harness structure (session 32:
+			# carbon's REAL default shape is 2 alphas + a proton/neutron
+			# plug pair each pole — meth.pdf/graphene.pdf; the bare stack
+			# stays available for live comparison, haf.pdf's unstable case).
 			atom_sim.spawn_preset(scenario, Vector3.ZERO, Vector3.ZERO, Vector3.UP)
 		"helium":
 			atom_sim.spawn_preset("alpha", Vector3.ZERO, Vector3.ZERO, Vector3.UP)
@@ -638,4 +642,3 @@ func _build_ring_lines_mesh(rbuf: PackedFloat32Array) -> ArrayMesh:
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINE_STRIP, arrays)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _ring_mat)
 	return mesh
-

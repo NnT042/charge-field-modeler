@@ -611,14 +611,16 @@ mod tests {
     /// one rigid piece).
     #[test]
     fn heavier_presets_smoke() {
-        for name in ["carbon", "nitrogen", "oxygen", "neon", "argon"] {
+        for name in ["carbon", "tri_alpha", "nitrogen", "oxygen", "neon", "argon"] {
             let mut core = standard_core();
             let gid = core
                 .spawn_preset(name, DVec3::ZERO, DVec3::new(0.1, 0.0, 0.05), DVec3::Y)
                 .unwrap_or_else(|| panic!("{name} preset missing"));
             let members = core.groups[gid].members.clone();
             let expected = match name {
+                // Session-32 carbon: 2 core alphas (8) + 2 plug pairs (4).
                 "carbon" => 12,
+                "tri_alpha" => 12, // bare 3-stack (harness structure)
                 "nitrogen" => 14,
                 "oxygen" => 16,
                 "neon" => 20,   // center alpha + 4 carousel alphas
@@ -946,7 +948,7 @@ mod tests {
                 core.couplings.channeling = channeling;
                 core.couplings.nuclear_ambient = ambient;
                 let gid = core
-                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                     .expect("carbon preset");
                 core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
                 let n_alphas = core.groups[gid].alphas.len();
@@ -1035,7 +1037,7 @@ mod tests {
             core.couplings.channeling = bc;
             core.couplings.nuclear_ambient = ba;
             let gid = core
-                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("carbon preset");
             core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
             let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
@@ -1290,7 +1292,7 @@ mod tests {
         core.couplings.channeling = def.channeling;
         core.couplings.nuclear_ambient = def.nuclear_ambient;
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
         let n_alphas = core.groups[gid].alphas.len();
@@ -1367,7 +1369,7 @@ mod tests {
         let mut core = standard_core();
         burn_seed_offset(&mut core, k);
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
 
@@ -1480,7 +1482,7 @@ mod tests {
             let mut core = standard_core();
             burn_seed_offset(&mut core, k);
             let gid = core
-                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("carbon preset");
             core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
             let n_alphas = core.groups[gid].alphas.len();
@@ -1566,7 +1568,7 @@ mod tests {
             let mut core = standard_core();
             burn_seed_offset(&mut core, k);
             let gid = core
-                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("carbon preset");
             core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
             let n_alphas = core.groups[gid].alphas.len();
@@ -1691,7 +1693,7 @@ mod tests {
         let mut core = standard_core();
         burn_seed_offset(&mut core, 0);
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
         let n_alphas = core.groups[gid].alphas.len();
@@ -1797,7 +1799,7 @@ mod tests {
         for scenario in ["control", "tilt-mid", "shear-mid"] {
             let mut core = standard_core();
             let gid = core
-                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("carbon preset");
             core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
             let n_alphas = core.groups[gid].alphas.len();
@@ -1881,7 +1883,7 @@ mod tests {
 
         let mut core = standard_core();
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
         let n_alphas = core.groups[gid].alphas.len();
@@ -1994,7 +1996,7 @@ mod tests {
                 let mut core = standard_core();
                 core.post_anatomy = anatomy;
                 let gid = core
-                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                     .expect("carbon preset");
                 core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
                 let n_alphas = core.groups[gid].alphas.len();
@@ -2057,7 +2059,7 @@ mod tests {
                     core.post_anatomy = anatomy;
                     burn_seed_offset(&mut core, k);
                     let gid = core
-                        .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                        .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                         .expect("carbon preset");
                     core.set_nucleus_dynamics(
                         crate::atom_core::NucleusDynamics::RigidAlpha,
@@ -2085,6 +2087,72 @@ mod tests {
                 }
                 println!();
             }
+        }
+    }
+
+    /// Session-32 plugged-carbon stability report: the corrected carbon
+    /// (2 core alphas + a proton/neutron plug pair each pole) in
+    /// RigidAlpha across 4 seed phases. Plugs are single-member alpha
+    /// units — independent force-held bodies — so this measures both
+    /// core-stack binding AND plug retention (a brand-new question; the
+    /// old 3-stack had no plugs). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_carbon_stability --nocapture`
+    #[test]
+    #[ignore]
+    fn report_carbon_stability() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        for k in 0..4usize {
+            let mut core = standard_core();
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+
+            let mut worst = 0.0f64;
+            let mut worst_pair = (0usize, 0usize);
+            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    let drift = ((d - d0[idx]) / d0[idx]).abs();
+                    if drift > worst {
+                        worst = drift;
+                        worst_pair = (a, b);
+                    }
+                }
+            }
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            // Alpha-unit sizes tell which pair kind drifted (4 = core
+            // alpha, 1 = plug).
+            let kind = |ai: usize| {
+                if core.groups[gid].alphas[ai].members.len() == 4 {
+                    "core"
+                } else {
+                    "plug"
+                }
+            };
+            println!(
+                "seed k={k}: worst_drift={:.1}% over {STEPS} steps \
+                 (pair {}-{} = {}-{}) finite={finite}",
+                worst * 100.0,
+                worst_pair.0,
+                worst_pair.1,
+                kind(worst_pair.0),
+                kind(worst_pair.1),
+            );
         }
     }
 
@@ -2139,7 +2207,7 @@ mod tests {
         core.couplings.channeling = channeling;
         core.couplings.nuclear_ambient = ambient;
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
 
@@ -2226,7 +2294,7 @@ mod tests {
         core.couplings.channeling = channeling;
         core.couplings.nuclear_ambient = ambient;
         let gid = core
-            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
 

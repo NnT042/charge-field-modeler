@@ -153,19 +153,25 @@ text = "Helium"
 [node name="CarbonBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-tooltip_text = "Three stacked alphas (the single-stack limit)"
+tooltip_text = "Two stacked alphas + proton/neutron plug pair each pole (default form, meth.pdf)"
 text = "Carbon"
+
+[node name="TriAlphaBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Bare 3-alpha stack (harness structure; haf.pdf: channels weakly without polar fans)"
+text = "Tri-alpha"
 
 [node name="NitrogenBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-tooltip_text = "Carbon stack + south proton plug, north neutron"
+tooltip_text = "3-alpha core + south proton plug, north neutron"
 text = "Nitrogen"
 
 [node name="OxygenBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-tooltip_text = "Carbon stack + proton plugs in both poles"
+tooltip_text = "3-alpha core + proton/neutron plug pairs in both poles"
 text = "Oxygen"
 
 [node name="NeonBtn" type="Button" parent="ScenarioPanel/Margin/VBox"]

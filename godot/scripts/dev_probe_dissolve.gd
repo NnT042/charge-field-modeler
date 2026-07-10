@@ -9,6 +9,9 @@ var frames := 0
 var mode: Node = null
 var d0 := {}
 
+# Particle-index pairs for the BARE 3-STACK ("tri_alpha" since session 32
+# — the structure the session-31 dissolution reports were filed against;
+# carbon's real shape is now 2 plugged alphas, see preset_alphas).
 const PAIRS := [[0, 4], [4, 8], [0, 8], [0, 1], [8, 9]]
 
 func _initialize() -> void:
@@ -25,7 +28,7 @@ func _sample() -> Dictionary:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 5:
-		mode.spawn_scenario("carbon")
+		mode.spawn_scenario("tri_alpha")
 	elif frames == 60:
 		mode.set_nucleus_dynamics(1)
 		d0 = _sample()

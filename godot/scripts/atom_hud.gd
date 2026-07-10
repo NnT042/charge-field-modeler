@@ -36,6 +36,7 @@ func _ready() -> void:
 		"AlphaBtn": "alpha",
 		"HeliumBtn": "helium",
 		"CarbonBtn": "carbon",
+		"TriAlphaBtn": "tri_alpha",
 		"NitrogenBtn": "nitrogen",
 		"OxygenBtn": "oxygen",
 		"NeonBtn": "neon",

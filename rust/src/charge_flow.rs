@@ -528,13 +528,14 @@ mod tests {
                     .fold(0.0f64, f64::max);
                 let free_ke = core.total_kinetic_energy();
 
-                // RigidAlpha carbon quiet, 20k steps.
+                // RigidAlpha 3-stack quiet, 20k steps (the binding
+                // harness structure — see `tri_alpha`'s doc).
                 let mut core = standard_core();
                 core.flow_tension = tension;
                 core.flow_align = align;
                 let gid = core
-                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
-                    .expect("carbon preset");
+                    .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("tri_alpha preset");
                 core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
                 core.running = true;
                 let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
@@ -655,7 +656,7 @@ mod tests {
     #[test]
     #[ignore]
     fn report_flow_network() {
-        for preset in ["alpha", "carbon", "neon", "argon"] {
+        for preset in ["alpha", "carbon", "tri_alpha", "neon", "argon"] {
             let mut core = standard_core();
             core.spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                 .expect("preset");
