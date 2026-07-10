@@ -535,10 +535,14 @@ Non-skipped same-group pairs get every pairwise force term multiplied by
 
 `set_nucleus_dynamics` seeds state on entry:
 - **→ RigidAlpha / FreeNucleon:** capture each alpha's CURRENT kinematic
-  pose as its body state: `orientation = g.orientation·Car·R_a·Roll`,
-  `com = g.com + g.orientation·(Car·rest_center)`, `velocity` = the
-  rigid+carousel field at the alpha center, `angular_velocity` = group ω
-  (+ carousel ω if orbits_core) + own-axis roll rate. FreeNucleon
+  POSE as its body state: `orientation = g.orientation·Car·R_a·Roll`,
+  `com = g.com + g.orientation·(Car·rest_center)`. Velocities seed from
+  the group's REAL rigid field only (`velocity` = group v + group ω ×
+  offset, `angular_velocity` = group ω) — do NOT add the display roll or
+  carousel rates: they are render-channel readability rates, and seeding
+  them as physical momentum injects fictional energy whose ~2 s decay
+  drags the force equilibrium through a phase-dependent migration that
+  can shed an alpha (the session-31 round-5 dissolution). FreeNucleon
   additionally leaves each member particle with its current
   position/velocity/ω (already correct from the last sync) and simply
   stops rigid syncing.

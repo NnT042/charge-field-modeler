@@ -76,6 +76,9 @@ func setup(sim: Node, mode: Node = null) -> void:
 	panel.anchor_bottom = 0.55
 	panel.offset_right = -12.0
 	panel.offset_left = panel.offset_right - 320.0
+	# User calibration (session 31): ~50 px lower than the anchor bias alone.
+	panel.offset_top += 50.0
+	panel.offset_bottom += 50.0
 
 func _add_debug_check(parent: VBoxContainer, label: String, prop: String) -> void:
 	var check := CheckBox.new()

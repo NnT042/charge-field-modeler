@@ -688,6 +688,17 @@ pub const GROUP_SPIN_RELAX: f64 = 20.0;
 /// to be able to turn here"). This only bleeds off numerical spin-up, not
 /// the emergent ω.
 pub const ALPHA_SPIN_RELAX: f64 = 0.5;
+
+/// Translational charge-field lock on RigidAlpha nuclei (1/s): damps each
+/// alpha's velocity toward the nucleus's mass-weighted mean velocity —
+/// relative motion only, whole-nucleus translation is untouched. The same
+/// ambient lock that suppresses tumble (nuclear.pdf: "The charge field
+/// then locks them into these configurations") dissipates internal
+/// oscillation; without it the bound stack's breathing mode is UNDAMPED
+/// and the velocity-dependent pair terms slowly pump it to ejection at a
+/// ~160k-step horizon (session-31 round-5 "Jenga" reproduction —
+/// dev_probe_dissolve.gd / probe_app_loop_carbon_rigidalpha).
+pub const ALPHA_TRANS_RELAX: f64 = 0.5;
 /// VISIBLE axial-spin rate of bodies (rad/s WALL clock — substep
 /// independent), far below the physical TAU·3 rad/sim-s so the eye can
 /// track it. For free particles this drives `display_orientation`; for
@@ -778,11 +789,13 @@ pub struct Couplings {
     /// There is no charge field within the nucleus." At `channeling = 1.0`
     /// a pole-on pair within the funnel mouth (r ≤ NUCLEON_PITCH) has its
     /// `c_q`/`stream` terms fully cancelled; two facing equators (the
-    /// molecular repel configuration) are unaffected (C≈0). Default 0.9 —
-    /// the `alpha_stays_bound` sweep winner: full cancellation (1.0) plus
-    /// any real ambient glue collapses the stack into the contact wall
-    /// (see `Couplings::default` doc); the 10% residual repulsion is the
-    /// cushion that keeps the bound stack off contact.
+    /// molecular repel configuration) are unaffected (C≈0). Default 0.85
+    /// (round 5, re-swept after the rest-entry seeding fix — see
+    /// `Couplings::default` doc) — the `alpha_stays_bound` sweep winner:
+    /// full cancellation (1.0) plus any real ambient glue collapses the
+    /// stack into the contact wall (see `Couplings::default` doc); the
+    /// 15% residual repulsion is the cushion that keeps the bound stack
+    /// off contact.
     pub channeling: f64,
     /// Nuclear ambient charge pressure (A13, session-31 round 3): the
     /// same-group replacement for `ambient_pressure` in the existing
@@ -790,9 +803,10 @@ pub struct Couplings {
     /// charge field is both the initial pressure and the subsequent
     /// glue," i.e. the field ambient to the fused nucleus pushes bodies
     /// into each other's charge shadows, the "glue" on top of channeling's
-    /// "loss of repulsion". Default 2.0 — the `alpha_stays_bound` sweep
-    /// winner (paired with `channeling = 0.9`); 0 ejects, ≥5 with full
-    /// channeling collapses (see `Couplings::default` doc).
+    /// "loss of repulsion". Default 2.0 (unchanged across round 3/4/5) —
+    /// the `alpha_stays_bound` sweep winner (paired with `channeling =
+    /// 0.85` as of round 5); 0 ejects, ≥5 with full channeling collapses
+    /// (see `Couplings::default` doc).
     pub nuclear_ambient: f64,
 }
 
@@ -838,10 +852,11 @@ impl Default for Couplings {
     /// - `ambient_pressure = 0.0` — the pairwise shadow term stays available
     ///   for environment effects, but the H₂ bond emerges from
     ///   gravity+intake attraction vs the stream cushion without it.
-    /// - `intra_nucleus_boost = 1.0`, `channeling = 0.9`,
-    ///   `nuclear_ambient = 5.0` — nuclear-binding-only terms (A13, session-
-    ///   31 round 3; RETUNED round 4), gated to non-skipped same-group
-    ///   pairs only; they do not touch the molecular defaults above.
+    /// - `intra_nucleus_boost = 1.0`, `channeling = 0.85`,
+    ///   `nuclear_ambient = 2.0` — nuclear-binding-only terms (A13, session-
+    ///   31 round 3; RETUNED round 4; RETUNED round 5), gated to
+    ///   non-skipped same-group pairs only; they do not touch the
+    ///   molecular defaults above.
     ///
     ///   Round 3 shipped `channeling = 0.9`, `nuclear_ambient = 2.0` (2.5%
     ///   quiet drift, best of 9 of 15 passing combos on the OLD
@@ -859,24 +874,33 @@ impl Default for Couplings {
     ///   round 3) × `nuclear_ambient` {2, 5, 10, 20} — plus a SECOND pass
     ///   dimension: of the 12/12 quiet passers (all ≤30% drift over 20k
     ///   steps), which also survive an external flyby + parked-neighbor
-    ///   perturbation (`nucleus_survives_flyby`'s scenario, full 15k+15k —
-    ///   an earlier attempt at a SHORT 8k+8k proxy was abandoned when it
-    ///   proved unreliable: the parked "swat" neutron is a SUSTAINED pull,
-    ///   and several combos that looked robust at 8k+8k only started
-    ///   destabilizing between step ~16k and ~27k, e.g. channeling=0.85/
-    ///   ambient=2.0 — the round-3-adjacent, most-tempting choice — reads
-    ///   1.8% drift at 8k+8k but 63.5% at the full duration; see
-    ///   `alpha_stays_bound`'s doc). Of the 5/12 combos clearing BOTH bars,
-    ///   `channeling=0.9, nuclear_ambient=5.0` has the best (lowest)
-    ///   worst-case margin — 14.9% quiet drift, 13.5% flyby drift — beating
-    ///   channeling=0.85/ambient=10.0 (16.6%/16.1%) and channeling=0.9/
-    ///   ambient=10.0 (18.5%/17.8%); channeling=0.95 at every ambient and
-    ///   ambient=20 at every channeling ejected on the flyby despite
-    ///   binding quietly, proof the two failure modes are genuinely
-    ///   different tests. `alpha_stays_bound` asserts these defaults are
-    ///   that sweep's chosen winner AND holds over a confirming 100k-step
-    ///   quiet run (the "Jenga" horizon); `nucleus_survives_flyby`
-    ///   re-validates the flyby/swat case directly.
+    ///   perturbation (`nucleus_survives_flyby`'s scenario, full 15k+15k).
+    ///   Round 4 picked `channeling=0.9, nuclear_ambient=5.0` (14.9% quiet /
+    ///   13.5% flyby margin) over the more-tempting `channeling=0.85,
+    ///   ambient=2.0` because at the time the latter read a SUSTAINED
+    ///   63.5% flyby drift at full duration (only 1.8% on a short 8k+8k
+    ///   proxy that later proved an unreliable window).
+    ///
+    ///   Round 5 (session-31 round 5, "Jenga" root-cause fix) found that
+    ///   63.5%-drift result was itself an artifact: `alpha_kinematic_state`
+    ///   seeded each alpha's `angular_velocity`/`velocity` with the
+    ///   cosmetic DISPLAY roll/carousel rate on top of the real group
+    ///   motion, injecting fictional spin energy whose slow decay
+    ///   (`ALPHA_SPIN_RELAX`, τ=2s) walked the equilibrium spacing and made
+    ///   the flyby result seed/timing-dependent. With that seeding fix
+    ///   (real group kinematics only — see the function's doc), the round-4
+    ///   3×4 sweep was re-run in full: `channeling=0.85, nuclear_ambient=2.0`
+    ///   now has by far the best worst-case margin — 1.5% quiet drift, 2.7%
+    ///   flyby drift — vs. the round-4 pick's 14.4%/17.2% and every other
+    ///   combo in the 9/12 quiet-and-flyby-robust set (0.95 at ambient 5/10
+    ///   still ejects on the flyby; 0.9/20 ejects too). `alpha_stays_bound`
+    ///   asserts these defaults are that sweep's chosen winner AND holds
+    ///   over a confirming 250k-step quiet run (past the ~160k-step
+    ///   undamped-breathing horizon the seeding fix and `ALPHA_TRANS_RELAX`
+    ///   jointly address); `nucleus_survives_flyby` re-validates the
+    ///   flyby/swat case directly; `alpha_transient_survives_all_seeds`
+    ///   re-validates across 8 distinct roll/carousel seed phases (the
+    ///   axis the round-4 "Jenga" report actually varied along).
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -889,8 +913,8 @@ impl Default for Couplings {
             corot: 0.5,
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
-            channeling: 0.9,
-            nuclear_ambient: 5.0,
+            channeling: 0.85,
+            nuclear_ambient: 2.0,
         }
     }
 }
@@ -1471,9 +1495,24 @@ impl AtomCore {
     /// `center_w = com + nucleus_orientation·(Car·rest_center)` and
     /// `alpha_orientation = nucleus_orientation·Car·R_a·Roll` — i.e. the
     /// alpha's own body frame factors cleanly out of the per-member
-    /// formula. Velocity/angular-velocity follow the same rigid-field
-    /// composition, evaluated at `center_w` (roll contributes zero
-    /// translational velocity there: `roll_w × (center_w − center_w) = 0`).
+    /// formula. Position/orientation are seeded from that FULL kinematic
+    /// pose (roll phase and carousel phase both included) — this is only
+    /// a snapshot of where things are, not how fast they're "really"
+    /// moving.
+    ///
+    /// Velocity/angular-velocity are seeded from the GROUP rigid-field
+    /// term ONLY (`g.velocity`, `g.angular_velocity` composed at
+    /// `center_w`) — deliberately dropping `roll_w` (per-alpha display
+    /// spin) and `car_w` (display carousel orbit rate). Those are wall-
+    /// clock READABILITY rates (see `ALPHA_ROLL_RATE`/carousel docs, A10
+    /// display-channel note above `advance_display`), not physical
+    /// momenta; injecting them as seeded angular/linear velocity pumps
+    /// fictional energy into the rigid-body integrator, which the
+    /// spin-relax damping (`ALPHA_SPIN_RELAX`, τ=2s) then bleeds off over
+    /// ~100k+ steps — a slow, seed-phase-dependent transient that walks
+    /// the equilibrium spacing and can shed an alpha (session-31 round-5
+    /// "Jenga" root cause: the seeded roll/carousel rate, not the genuine
+    /// channeling well at rest spacing, which is stable).
     fn alpha_kinematic_state(&self, gid: usize, ai: usize) -> (DVec3, DQuat, DVec3, DVec3) {
         let g = &self.groups[gid];
         let a = &g.alphas[ai];
@@ -1487,24 +1526,12 @@ impl AtomCore {
         let nucleus_orientation = g.orientation;
         let center_w = g.com + nucleus_orientation * (car * a.rest_center);
         let center_off = center_w - g.com;
-        let car_w = if a.orbits_core {
-            (nucleus_orientation * DVec3::Y) * g.carousel_rate
-        } else {
-            DVec3::ZERO
-        };
-        let axis_w = nucleus_orientation * (car * a.rest_axis);
-        let roll_w = axis_w * a.roll_rate;
 
-        let mut v = g.velocity + g.angular_velocity.cross(center_off);
-        if a.orbits_core {
-            v += car_w.cross(center_off);
-        }
-
-        let mut ang = g.angular_velocity;
-        if a.orbits_core {
-            ang += car_w;
-        }
-        ang += roll_w;
+        // Physical seed: group translation + group rotation carried out
+        // to this alpha's center. NO roll_w, NO car_w — those are the
+        // cosmetic display rates, not physics (see doc comment above).
+        let v = g.velocity + g.angular_velocity.cross(center_off);
+        let ang = g.angular_velocity;
 
         let orientation = (nucleus_orientation * car * r_a * roll).normalize();
         (center_w, orientation, v, ang)
@@ -1817,7 +1844,11 @@ impl AtomCore {
                 g_q: base_cq.g_q,
                 c_q: base_cq.c_q * atten,
                 ambient_pressure: base_cq.nuclear_ambient,
-                torque: base_cq.torque,
+                // Torque attenuated with the push — the gear-mesh torque
+                // comes from the partner's emission COLLIDING with this
+                // disc; a channeled pair routes it through instead (see
+                // the compute_forces copy of this block for the full why).
+                torque: base_cq.torque * atten,
                 vortex: base_cq.vortex,
                 drag: base_cq.drag,
                 intake: base_cq.intake,
@@ -2023,6 +2054,35 @@ impl AtomCore {
                         // stay free to turn here (§2.2); this only bleeds
                         // off numerical spin-up, not the emergent ω.
                         a.angular_velocity *= (-ALPHA_SPIN_RELAX * dt).exp();
+                    }
+                    // TRANSLATIONAL charge-field lock: damp each alpha's
+                    // velocity toward the nucleus's mass-weighted mean —
+                    // the same ambient lock that suppresses tumble
+                    // (nuclear.pdf: "The charge field then locks them into
+                    // these configurations") also dissipates RELATIVE
+                    // nucleon motion. Without it the compressed stack's
+                    // breathing mode has ZERO damping, and the
+                    // velocity-dependent pair terms (doppler, corotation)
+                    // slowly pump it until an alpha crosses the channeling
+                    // basin and ejects (observed horizon ~160k steps —
+                    // the user-reported "Jenga" collapse, session 31
+                    // round 5). Damping is RELATIVE, so whole-nucleus
+                    // translation is untouched.
+                    let (v_mean, m_tot) = {
+                        let g = &self.groups[gi];
+                        let mut p = DVec3::ZERO;
+                        let mut m = 0.0;
+                        for a in &g.alphas {
+                            p += a.velocity * a.mass;
+                            m += a.mass;
+                        }
+                        (p / m.max(1e-12), m)
+                    };
+                    if m_tot > 0.0 {
+                        let decay = (-ALPHA_TRANS_RELAX * dt).exp();
+                        for a in &mut self.groups[gi].alphas {
+                            a.velocity = v_mean + (a.velocity - v_mean) * decay;
+                        }
                     }
                 }
             }
@@ -2367,7 +2427,17 @@ impl AtomCore {
                         g_q: base_cq.g_q,
                         c_q: base_cq.c_q * atten,
                         ambient_pressure: base_cq.nuclear_ambient,
-                        torque: base_cq.torque,
+                        // Torque is attenuated with the push: the
+                        // "equator toward charge" gear-mesh torque comes
+                        // from the partner's emission COLLIDING with this
+                        // disc — a channeled pair routes that charge
+                        // through instead, and un-attenuated it slowly
+                        // TILTS stacked alphas out of their pole-aligned
+                        // plug until the channel degrades and repulsion
+                        // wins (session-31 round-5 second dissolution
+                        // mechanism, visible once ALPHA_TRANS_RELAX
+                        // removed the fast breathing pump).
+                        torque: base_cq.torque * atten,
                         vortex: base_cq.vortex,
                         drag: base_cq.drag,
                         intake: base_cq.intake,
@@ -5029,6 +5099,88 @@ mod tests {
         );
     }
 
+    /// TEMP diagnostic probe: reproduce the APP loop for carbon +
+    /// RigidAlpha (user report: dissolves within seconds in the app while
+    /// the contiguous-step harness holds 100k steps at 2.1%). Mimics
+    /// atom_mode.gd _process: step_n(substeps) + advance_display(dt) +
+    /// advance_clouds(dt) with VFX enabled, mode toggled after a few
+    /// seconds of RigidLock display time (as a user would).
+    #[test]
+    #[ignore]
+    fn probe_app_loop_carbon_rigidalpha() {
+        let dir = config_dir();
+        let mut core = AtomCore::new();
+        let p_csv = load_histogram_csv(&dir.join("histogram_proton.csv"));
+        let n_csv = load_histogram_csv(&dir.join("histogram_neutron.csv"));
+        let e_csv = load_histogram_csv(&dir.join("histogram_electron.csv"));
+        core.register_profile("proton", 1.0, 1.0, &p_csv);
+        core.register_profile("neutron", 1.0, 1.0, &n_csv);
+        core.register_profile("electron", 1.0 / 1836.0, 0.3, &e_csv);
+        core.spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon");
+        core.set_vfx_enabled(true);
+        core.running = true;
+
+        let alpha_centers = |core: &AtomCore| -> Vec<DVec3> {
+            let g = &core.groups[0];
+            g.alphas
+                .iter()
+                .map(|a| {
+                    let sum: DVec3 = a
+                        .members
+                        .iter()
+                        .map(|&k| core.particles[g.members[k]].position)
+                        .sum();
+                    sum / a.members.len() as f64
+                })
+                .collect()
+        };
+        let spacings = |core: &AtomCore| -> Vec<f64> {
+            let c = alpha_centers(core);
+            let mut d = Vec::new();
+            for i in 0..c.len() {
+                for j in (i + 1)..c.len() {
+                    d.push((c[i] - c[j]).length());
+                }
+            }
+            d
+        };
+
+        const DT_FRAME: f64 = 1.0 / 60.0;
+        // 3 s of RigidLock display first (user watches, then toggles).
+        for _ in 0..180 {
+            core.step_n(100);
+            core.advance_display(DT_FRAME);
+            core.advance_clouds(DT_FRAME);
+        }
+        core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        let d0 = spacings(&core);
+        println!("t=0s spacings: {d0:?}");
+        // 30 wall-seconds of app loop = 180k steps.
+        for sec in 1..=30 {
+            for _ in 0..60 {
+                core.step_n(100);
+                core.advance_display(DT_FRAME);
+                core.advance_clouds(DT_FRAME);
+            }
+            let d = spacings(&core);
+            let drift = d
+                .iter()
+                .zip(&d0)
+                .map(|(a, b)| ((a - b) / b).abs())
+                .fold(0.0f64, f64::max);
+            println!(
+                "t={sec:>2}s max_drift={:>7.1}% spacings={:?}",
+                drift * 100.0,
+                d.iter().map(|x| (x * 100.0).round() / 100.0).collect::<Vec<_>>()
+            );
+            if drift > 3.0 {
+                println!("DISSOLVED — reproduction successful");
+                break;
+            }
+        }
+    }
+
     /// TEMP session-31 diagnostic probe (run with `-- --ignored
     /// probe_carousel_twirl --nocapture`): reproduce the app frame loop
     /// on neon and measure each body's ACTUAL angular velocity,
@@ -5582,13 +5734,32 @@ mod tests {
     }
 
     /// Round-trip RigidLock → RigidAlpha → RigidLock: the excursion lets
-    /// real forces/torques move the alpha (its roll_rate becomes a genuine
-    /// physical angular_velocity in RigidAlpha, so even a lone,
-    /// force-free alpha visibly precesses); returning to RigidLock SNAPS
-    /// back to the kinematic pose (positions jump, documented, addendum
-    /// A10) and resumes the phase-driven contract — immobile under
-    /// `step()`, moves only via `advance_display` (same invariant as
-    /// `display_phases_are_wall_clock`).
+    /// real rigid-body integration move the alpha (a direct velocity
+    /// perturbation on the ALPHA, applied AFTER entering RigidAlpha,
+    /// translates it — see below for why this replaced a roll-ω probe);
+    /// returning to RigidLock SNAPS back to the kinematic pose (positions
+    /// jump, documented, addendum A10) and resumes the phase-driven
+    /// contract — immobile under `step()`, moves only via `advance_display`
+    /// (same invariant as `display_phases_are_wall_clock`).
+    ///
+    /// Perturbs `alphas[0].velocity` directly rather than spawning with a
+    /// nonzero group velocity, for two reasons: (1) session-31 round 5
+    /// found `alpha_kinematic_state` was seeding each alpha's
+    /// `angular_velocity`/`velocity` with the cosmetic DISPLAY roll/
+    /// carousel rate on top of real group motion — for a lone force-free
+    /// alpha (zero group velocity/angular_velocity, this test's original
+    /// setup) that fictional roll was the ONLY thing that moved it, which
+    /// is exactly the bug this fix removes: a symmetric alpha at its own
+    /// force balance with no real perturbation should NOT move under
+    /// RigidAlpha, and no longer does. (2) A nonzero SPAWN velocity sets
+    /// the CONTAINER-level `RigidGroup::velocity`/`com`, which `kick`/
+    /// `drift`'s `RigidLock` arm integrates too (`g.com += g.velocity *
+    /// dt` every step, regardless of mode) — RigidAlpha never zeroes or
+    /// even touches that container-level field (only per-alpha state), so
+    /// it would silently carry through the round-trip and break the
+    /// "RigidLock is immobile" check below. Perturbing the alpha's own
+    /// `velocity` (populated only by `alpha_kinematic_state`/`kick`'s
+    /// RigidAlpha arm, never read by RigidLock) avoids that leak.
     #[test]
     fn rigid_lock_round_trip_resumes_kinematics() {
         let dir = config_dir();
@@ -5609,6 +5780,11 @@ mod tests {
         let kinematic_pose: Vec<DVec3> = core.particles.iter().map(|p| p.position).collect();
 
         core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+        // Direct perturbation of the ALPHA's own velocity (not the
+        // container) — a real, non-fictional nudge that should carry the
+        // alpha under rigid-body integration without leaking into the
+        // container-level state RigidLock reads on re-entry.
+        core.groups[0].alphas[0].velocity = DVec3::new(0.05, 0.0, 0.0);
         core.step_n(500);
         core.advance_display(0.3);
 
@@ -5618,7 +5794,7 @@ mod tests {
                 .iter()
                 .zip(&drifted)
                 .any(|(a, b)| (*a - *b).length() > 1e-6),
-            "RigidAlpha should let the alpha actually move under its own roll ω"
+            "RigidAlpha should let the alpha actually translate under a real velocity perturbation"
         );
 
         core.set_nucleus_dynamics(NucleusDynamics::RigidLock);

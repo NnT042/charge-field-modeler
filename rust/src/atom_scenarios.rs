@@ -917,8 +917,8 @@ mod tests {
     /// must clear BOTH bars — picked by the largest margin (lowest
     /// worst-case max-drift across quiet AND flyby), ties broken toward
     /// mid-range ambient, away from the collapse-adjacent high end the
-    /// quiet table's NONFIN/eject rows expose. A final 100k-step QUIET run
-    /// at the chosen defaults confirms
+    /// quiet table's NONFIN/eject rows expose. A final 250k-step QUIET run
+    /// at the chosen defaults confirms (past the ~160k-step undamped-breathing horizon)
     /// the "Jenga" horizon (the user watched for minutes before the late
     /// collapse; the 20k-step sweep alone wouldn't necessarily have caught
     /// a failure that only shows up that late).
@@ -1251,13 +1251,17 @@ mod tests {
             def_result.2 * 100.0
         );
 
-        // Final confirmation (work item 3): a 100k-step QUIET run at the
+        // Final confirmation (work item 3): a 250k-step QUIET run at the
         // chosen defaults — the "Jenga" horizon the user watched for
         // minutes before the spontaneous late collapse. No external
         // perturbation; this purely re-checks binding over a much longer
         // horizon than the 20k-step sweep, since the user's report was a
         // LATE failure a short sweep wouldn't necessarily catch.
-        const CONFIRM_STEPS: usize = 100_000;
+        // 250k: past the ~160k-step pumping horizon where the UNDAMPED
+        // breathing mode ejected an alpha (session-31 round 5 — the 100k
+        // confirm sat comfortably below the horizon and false-passed;
+        // ALPHA_TRANS_RELAX is the fix, this is the regression net).
+        const CONFIRM_STEPS: usize = 250_000;
         const CONFIRM_SAMPLE: usize = 200;
         let mut core = standard_core();
         core.couplings.channeling = def.channeling;
@@ -1286,7 +1290,7 @@ mod tests {
             confirm_finite &= core.particles.iter().all(|p| p.position.is_finite());
         }
         println!(
-            "\n100k-step quiet confirmation at defaults (channeling={} ambient={}): \
+            "\n250k-step quiet confirmation at defaults (channeling={} ambient={}): \
              max_drift={:.1}% finite={}",
             def.channeling,
             def.nuclear_ambient,
@@ -1295,13 +1299,225 @@ mod tests {
         );
         assert!(
             confirm_finite,
-            "non-finite state over the 100k-step ('Jenga horizon') confirmation run"
+            "non-finite state over the 250k-step ('Jenga horizon') confirmation run"
         );
         assert!(
             confirm_max_drift <= 0.30,
-            "carbon nucleus did not survive the 100k-step ('Jenga horizon') confirmation run \
+            "carbon nucleus did not survive the 250k-step ('Jenga horizon') confirmation run \
              at chosen defaults: max drift {:.1}% > 30%",
             confirm_max_drift * 100.0
+        );
+    }
+
+    // ── Multi-seed transient stability (session-31 round 5, work item 2)
+    // ────────────────────────────────────────────────────────────────
+
+    /// Burn `k` throwaway "alpha" preset spawns (each consumes one
+    /// `roll_phase` draw + one `carousel_phase` draw from `core.rng` —
+    /// see `spawn_preset`) so the REAL spawn that follows lands on a
+    /// different random roll/carousel phase set. `clear_particles` does
+    /// NOT reset the rng, so this is the cheapest way to walk through
+    /// distinct seed states without threading a seed parameter through
+    /// `AtomCore::new`.
+    fn burn_seed_offset(core: &mut AtomCore, k: usize) {
+        for _ in 0..k {
+            core.spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("throwaway alpha for seed offset");
+            core.clear_particles();
+        }
+    }
+
+    /// Re-drive one failing seed and print: the drift timeline, each
+    /// alpha's axis tilt (`orientation * Y` dotted with world `Y` — 1.0 =
+    /// still pole-aligned with the stack axis, drifting below that means
+    /// the torque-driven tilt mechanism, not just translation, is in
+    /// play), the channeling factor for the worst-drifting pair's closest
+    /// member pair, and the full `pair_force_breakdown` at the sample the
+    /// drift limit is crossed (A13 honesty-clause style diagnostics, same
+    /// pattern as `print_flyby_diagnostics`).
+    fn print_transient_failure_diagnostics(
+        k: usize,
+        steps: usize,
+        sample_every: usize,
+        drift_limit: f64,
+    ) {
+        let mut core = standard_core();
+        burn_seed_offset(&mut core, k);
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+
+        let n_alphas = core.groups[gid].alphas.len();
+        let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+        let pairs: Vec<(usize, usize)> = (0..n_alphas)
+            .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+            .collect();
+        let d0: Vec<f64> = pairs
+            .iter()
+            .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+            .collect();
+        let members_of =
+            |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].members.clone();
+        let closest_pair = |core: &AtomCore, ai: usize, aj: usize| -> (usize, usize) {
+            let (mi, mj) = (members_of(core, ai), members_of(core, aj));
+            let mut best_pair = (
+                core.groups[gid].members[mi[0]],
+                core.groups[gid].members[mj[0]],
+            );
+            let mut best_r = f64::MAX;
+            for &ki in &mi {
+                for &kj in &mj {
+                    let pi = core.groups[gid].members[ki];
+                    let pj = core.groups[gid].members[kj];
+                    let r = core.pair_distance(pi, pj);
+                    if r < best_r {
+                        best_r = r;
+                        best_pair = (pi, pj);
+                    }
+                }
+            }
+            best_pair
+        };
+
+        println!(
+            "\n-- transient failure diagnostics (seed k={k}) --\n\
+             {:>8} {:>8} {:>28} {:>10}",
+            "step", "drift%", "axis.Y per alpha", "channel"
+        );
+        for s in 0..(steps / sample_every) {
+            core.step_n(sample_every);
+            let mut worst_idx = 0usize;
+            let mut worst_drift = 0.0f64;
+            for (idx, &(a, b)) in pairs.iter().enumerate() {
+                let d = (com(&core, a) - com(&core, b)).length();
+                let drift = ((d - d0[idx]) / d0[idx]).abs();
+                if drift > worst_drift {
+                    worst_drift = drift;
+                    worst_idx = idx;
+                }
+            }
+            let (wa, wb) = pairs[worst_idx];
+            let (pi, pj) = closest_pair(&core, wa, wb);
+            let fb = core.pair_force_breakdown(pi, pj);
+            let tilts: Vec<f64> = (0..n_alphas)
+                .map(|ai| (core.groups[gid].alphas[ai].orientation * DVec3::Y).dot(DVec3::Y))
+                .collect();
+            println!(
+                "{:>8} {:>7.1}% {:>28} {:>10.4}",
+                (s + 1) * sample_every,
+                worst_drift * 100.0,
+                format!("{tilts:.3?}"),
+                fb[1],
+            );
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            if !finite || worst_drift > drift_limit {
+                println!(
+                    "  ^ seed k={k} crossed +/-{:.0}% at step {} (worst pair {wa}-{wb}, \
+                     r={:.4} channel={:.4} f_grav={:.3} f_charge={:.3} f_ambient={:.3} \
+                     f_intake={:.3} f_stream={:.3} f_contact={:.3}, finite={finite})",
+                    drift_limit * 100.0,
+                    (s + 1) * sample_every,
+                    fb[0], fb[1], fb[2], fb[3], fb[4], fb[5], fb[6], fb[7],
+                );
+                break;
+            }
+        }
+    }
+
+    /// Root-cause regression test (session-31 round 5 — "which alpha
+    /// detaches, or whether any does, depends on the random initial roll
+    /// phases"): the ~160k-step "Jenga" transient walks the equilibrium
+    /// spacing 3.75 → 3.29 → ~3.71 as the SEEDED alpha spin decays
+    /// (`ALPHA_SPIN_RELAX`, τ=2s); which pair crosses the channeling basin
+    /// during that migration is a matter of seed-phase luck, so a single
+    /// fixed-seed run (as `alpha_stays_bound`'s 250k confirm uses) cannot
+    /// certify the fix. `alpha_kinematic_state`'s rest-entry seeding fix
+    /// (dropping the display roll/carousel rate from the seeded
+    /// velocity/angular_velocity — see its doc comment) removes the
+    /// fictional injected spin that drove the migration; this drives 8
+    /// distinct roll/carousel phase draws (`burn_seed_offset`, k=0..8)
+    /// through 150k steps each (the dissolve probe's migration window
+    /// closes by ~100k, so 150k covers the whole transient with margin
+    /// well short of the 250k-step "Jenga" horizon, keeping 8 seeds
+    /// affordable) and requires every inter-alpha spacing to stay within
+    /// +/-35% for EVERY seed — not just the one `alpha_stays_bound`
+    /// happens to draw.
+    #[test]
+    fn alpha_transient_survives_all_seeds() {
+        const STEPS: usize = 150_000;
+        const SAMPLE_EVERY: usize = 2_000;
+        const DRIFT_LIMIT: f64 = 0.35;
+
+        println!("\n-- multi-seed transient stability (RigidAlpha carbon, {STEPS} steps/seed) --");
+        println!("{:>4} {:>10} {:>8}", "seed", "max_drift", "finite");
+
+        let mut failures: Vec<(usize, f64)> = Vec::new();
+        for k in 0..8usize {
+            let mut core = standard_core();
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            assert_eq!(n_alphas, 3, "carbon should have 3 alphas");
+
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+
+            let mut max_drift = 0.0f64;
+            let mut finite = true;
+            'outer: for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    max_drift = max_drift.max(((d - d0[idx]) / d0[idx]).abs());
+                }
+                finite = core.particles.iter().all(|p| p.position.is_finite());
+                if !finite || max_drift > DRIFT_LIMIT {
+                    break 'outer;
+                }
+            }
+
+            println!("{k:>4} {:>9.1}% {finite:>8}", max_drift * 100.0);
+            if !finite || max_drift > DRIFT_LIMIT {
+                failures.push((k, max_drift));
+            }
+        }
+
+        if !failures.is_empty() {
+            println!(
+                "\n{} of 8 seed(s) failed: {:?}",
+                failures.len(),
+                failures
+                    .iter()
+                    .map(|&(k, d)| format!("k={k} drift={:.1}%", d * 100.0))
+                    .collect::<Vec<_>>()
+            );
+            // HONESTY CLAUSE (A13): print full diagnostics for every
+            // failing seed rather than just the first, since different
+            // seeds may fail via different pairs/mechanisms.
+            for &(k, _) in &failures {
+                print_transient_failure_diagnostics(k, STEPS, SAMPLE_EVERY, DRIFT_LIMIT);
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "alpha transient did not survive all 8 seed phases within +/-{:.0}%: {:?} — \
+             see per-seed diagnostics above",
+            DRIFT_LIMIT * 100.0,
+            failures
+                .iter()
+                .map(|&(k, d)| format!("k={k} drift={:.1}%", d * 100.0))
+                .collect::<Vec<_>>()
         );
     }
 
