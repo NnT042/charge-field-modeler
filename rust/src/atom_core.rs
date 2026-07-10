@@ -1126,6 +1126,10 @@ pub struct AtomCore {
     /// the calibration sweep and the debug panel can vary them.
     pub flow_tension: f64,
     pub flow_align: f64,
+    /// Phase C1 ambient-confinement pressure (session 32 — see
+    /// `apply_ambient_confinement`). Ships 0.0 (off) until the
+    /// calibration re-earns the battery at a nonzero value.
+    pub ambient_confine: f64,
 }
 
 impl Default for AtomCore {
@@ -1185,6 +1189,7 @@ impl AtomCore {
             step_count: 0,
             flow_tension: crate::charge_flow::DEFAULT_FLOW_TENSION,
             flow_align: crate::charge_flow::DEFAULT_FLOW_ALIGN,
+            ambient_confine: crate::charge_flow::DEFAULT_AMBIENT_CONFINE,
         }
     }
 
@@ -3040,6 +3045,11 @@ impl AtomCore {
             p.force_accum += self.ambient_gravity * m;
             p.force_accum += self.ambient_charge * m;
         }
+
+        // Ambient surface confinement (session-32 Phase C1 — see
+        // charge_flow::apply_ambient_confinement). No-op while
+        // `ambient_confine` is 0 or in RigidLock.
+        self.apply_ambient_confinement();
     }
 
     // ── Rendering buffers (pure data, converted by the Godot wrapper) ──
@@ -3925,7 +3935,7 @@ impl AtomCore {
     /// top of the frozen orientation — continuous, equal to the frozen
     /// frame while undeformed, and valid in every mode (same
     /// particle-anchored principle as `build_group_alpha_rings`).
-    fn live_group_frame(&self, gi: usize) -> (DVec3, DQuat) {
+    pub(crate) fn live_group_frame(&self, gi: usize) -> (DVec3, DQuat) {
         let g = &self.groups[gi];
         if self.dynamics == NucleusDynamics::RigidLock || g.members.len() < 2 {
             return (g.com, g.orientation);

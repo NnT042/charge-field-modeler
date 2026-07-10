@@ -15,7 +15,7 @@
 
 use glam::DVec3;
 
-use crate::atom_core::{AtomCore, CHANNEL_TAIL, NUCLEON_PITCH};
+use crate::atom_core::{AtomCore, NucleusDynamics, CHANNEL_TAIL, NUCLEON_PITCH};
 
 /// Free-field recycling baseline of one proton (natural units of
 /// charge/sec — everything else is expressed relative to this).
@@ -280,7 +280,74 @@ impl AtomCore {
     }
 }
 
+/// Phase C1 default: ambient-confinement pressure. 0.0 = OFF — the
+/// constant ships only after `report_confinement_calibration` finds a
+/// value that binds the FreeNucleon alpha AND re-earns the full
+/// RigidAlpha battery (the surface push also compresses stacks).
+pub const DEFAULT_AMBIENT_CONFINE: f64 = 0.0;
+
 impl AtomCore {
+    /// Phase C1 (session 32, docs/THROUGH_CHARGE_DESIGN.md): ambient
+    /// confinement — the external charge field presses on the SURFACE of
+    /// a composite (haf.pdf: a stack "will be getting hit by charge from
+    /// the sides"; strong.html: "there is no charge field within the
+    /// nucleus", so interior members feel nothing). For every member of
+    /// every group (in the force-simulated modes), push INWARD along the
+    /// outward direction from the group's live center, scaled by the
+    /// member's EXPOSURE — how unblocked its outward view is by
+    /// farther-out members. A buried member is shielded; a member
+    /// drifting out of the cluster becomes exposed and gets pressed back
+    /// in. External-field force: no internal reaction pair (the momentum
+    /// comes from the ambient field), and a symmetric composite feels no
+    /// net force.
+    ///
+    /// This is deliberately NOT pairwise shadow glue (`nuclear_ambient`):
+    /// pairwise glue scales with every interior pair and over-compresses
+    /// the stack long before it can hold a surface; surface pressure
+    /// confines without touching interior balance.
+    pub(crate) fn apply_ambient_confinement(&mut self) {
+        let k = self.ambient_confine;
+        if k.abs() < 1e-12 || self.dynamics == NucleusDynamics::RigidLock {
+            return;
+        }
+        for gi in 0..self.groups.len() {
+            let members: Vec<usize> = self.groups[gi].members.clone();
+            if members.len() < 2 {
+                continue;
+            }
+            let (com, _) = self.live_group_frame(gi);
+            for &i in &members {
+                let out_vec = self.particles[i].position - com;
+                let s = out_vec.length();
+                if s < 1e-9 {
+                    continue; // dead center — fully buried
+                }
+                let u = out_vec / s;
+                // Blocking: members beyond i along u shadow its outward
+                // view; solid-angle proxy (r_j/d)² times cos² alignment
+                // of the blocker with the outward direction.
+                let mut blocked = 0.0f64;
+                for &j in &members {
+                    if j == i {
+                        continue;
+                    }
+                    let d_vec = self.particles[j].position - self.particles[i].position;
+                    let along = d_vec.dot(u);
+                    if along <= 0.0 {
+                        continue;
+                    }
+                    let d2 = d_vec.length_squared().max(1e-9);
+                    let rj = self.profiles[self.particles[j].profile_id].radius;
+                    let cos2 = (along * along) / d2;
+                    blocked += (rj * rj / d2).min(1.0) * cos2;
+                }
+                let exposure = 1.0 / (1.0 + blocked);
+                let mi = self.profiles[self.particles[i].profile_id].mass;
+                self.particles[i].force_accum -= u * (k * exposure * mi);
+            }
+        }
+    }
+
     /// Phase B: stream tension + channel-alignment stiffness for one
     /// pair, evaluated at CURRENT geometry with flow amplitudes (and
     /// port-demand normalizers) from the last solver sweep. Returns
@@ -646,6 +713,84 @@ mod tests {
                     dists.join(" "),
                 );
             }
+        }
+    }
+
+    /// Session-32 Phase C1 calibration: ambient-confinement pressure
+    /// swept against the three regimes it must serve simultaneously —
+    /// FreeNucleon lone alpha (cohesion: the arch needs a surface push),
+    /// RigidAlpha tri_alpha (the earned binding tables must not be
+    /// over-compressed), and RigidAlpha plugged carbon (plug retention,
+    /// report_carbon_stability's 218-409% baseline). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_confinement_calibration --nocapture`
+    #[test]
+    #[ignore]
+    fn report_confinement_calibration() {
+        println!(
+            "\n{:>8} | {:>12} {:>10} | {:>12} | {:>12}",
+            "confine", "free_drift", "free_KE", "tri_drift", "carbon_drift"
+        );
+        for &confine in &[0.0, 0.25, 0.5, 1.0, 2.0, 4.0] {
+            // FreeNucleon lone alpha, 30k steps.
+            let free = {
+                let mut core = standard_core();
+                core.ambient_confine = confine;
+                let gid = core
+                    .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("alpha preset");
+                core.set_nucleus_dynamics(NucleusDynamics::FreeNucleon);
+                let members = core.groups[gid].members.clone();
+                let d0 = pair_dists(&core, &members);
+                core.running = true;
+                core.step_n(30_000);
+                let d1 = pair_dists(&core, &members);
+                let drift = d0
+                    .iter()
+                    .zip(&d1)
+                    .map(|(a, b)| (a - b).abs() / a.max(1e-9))
+                    .fold(0.0f64, f64::max);
+                (drift, core.total_kinetic_energy())
+            };
+
+            // RigidAlpha drift over 30k steps for a preset's alpha units.
+            let rigid_drift = |preset: &str, confine: f64| -> f64 {
+                let mut core = standard_core();
+                core.ambient_confine = confine;
+                let gid = core
+                    .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("preset");
+                core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+                core.running = true;
+                let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let n_alphas = core.groups[gid].alphas.len();
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                let mut worst = 0.0f64;
+                for _ in 0..15 {
+                    core.step_n(2_000);
+                    for (idx, &(a, b)) in pairs.iter().enumerate() {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                    }
+                }
+                worst
+            };
+            let tri = rigid_drift("tri_alpha", confine);
+            let carbon = rigid_drift("carbon", confine);
+
+            println!(
+                "{confine:>8.2} | {:>11.1}% {:>10.4} | {:>11.1}% | {:>11.1}%",
+                free.0 * 100.0,
+                free.1,
+                tri * 100.0,
+                carbon * 100.0,
+            );
         }
     }
 
