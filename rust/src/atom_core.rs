@@ -386,6 +386,18 @@ fn plug_neutron(y: f64, z: f64) -> AlphaSpec {
 /// Half-gap between the members of a proton+neutron pair sharing a polar
 /// hole ("two baryons in the hole fill the hole much better" — atmo2.pdf).
 /// Same nestling scale as the alpha's neutron posts (±POST_R off-axis).
+///
+/// Session-33 finding (report_plug_retention anatomy): the pair rest
+/// distance (1.6) is NOT a force equilibrium — net inward pull ≈ 1.4
+/// (nuclear-ambient shadow + gravity + intake vs a small stream cushion;
+/// charge repulsion is exactly zero pole-on) with nothing opposing it
+/// until the disc-aware contact wall at r ≈ 0.7. The collapse-bounce on
+/// the contact spring is a KE pump. Experiments narrowing the gap to
+/// 0.35 (spawn at contact) and saturating the close-range ambient made
+/// 300k retention WORSE, not better (see `AtomCore::plug_pair_gap` /
+/// `ambient_sat_r` — runtime knobs for the factored matrix sweep,
+/// report_plug_matrix), so the baseline stays until a cell of that
+/// matrix earns a change.
 const PLUG_PAIR_GAP: f64 = 0.8;
 
 /// Radius of the carousel level: distance from the stack axis to a
@@ -454,7 +466,11 @@ const ALPHA_PITCH: f64 = 3.75;
 /// (rest frame + orbits_core + members), consumed by `spawn_preset`.
 /// Preset compositions are unchanged from the flat-constituent era —
 /// only the grouping into alpha units changed (session-31).
-fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
+fn preset_alphas(
+    name: &str,
+    anatomy: PostAnatomy,
+    plug_gap: f64,
+) -> Option<Vec<AlphaSpec>> {
     // A symmetric stack of `n` core alphas about the origin, ALPHA_PITCH
     // apart — the axial spine the element presets build on.
     let stack = |n: usize| -> Vec<AlphaSpec> {
@@ -486,10 +502,10 @@ fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
             // End proton of the 2-stack sits at ALPHA_PITCH/2 + 1.3;
             // the plug pair parks one funnel mouth (2.6) beyond it.
             let y = ALPHA_PITCH / 2.0 + 3.9;
-            a.push(plug_proton(-y, -PLUG_PAIR_GAP));
-            a.push(plug_neutron(-y, PLUG_PAIR_GAP));
-            a.push(plug_proton(y, -PLUG_PAIR_GAP));
-            a.push(plug_neutron(y, PLUG_PAIR_GAP));
+            a.push(plug_proton(-y, -plug_gap));
+            a.push(plug_neutron(-y, plug_gap));
+            a.push(plug_proton(y, -plug_gap));
+            a.push(plug_neutron(y, plug_gap));
             Some(a)
         }
         // The bare three-alpha stack — NOT an element (session-32): kept
@@ -497,7 +513,18 @@ fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
         // every binding regression showed up in) and as haf.pdf's
         // negative exemplar: a stack with no polar plug fans "will be
         // channeling weakly... relying only on ambient field potential".
+        // Per haf.pdf bare 1-3 stacks ARE viable weak channelers
+        // (helium is Mathis's own example) — what they must NOT drive is
+        // the choice of global defaults (session-33 harness note).
         "tri_alpha" => Some(stack(3)),
+        // The bare FOUR-alpha stack — haf.pdf's free negative
+        // prediction: "Once you stack four alphas, the external charge
+        // overwhelms the charge being channeled, and the nucleus can't
+        // hold together." The model SHOULD dissolve this once
+        // side-charge (Phase C ambient surface effects) is real;
+        // report_quad_alpha tracks whether it does (session 33: it does
+        // NOT yet — the side-charge term is what's missing).
+        "quad_alpha" => Some(stack(4)),
         // Nitrogen: three-alpha core + 7th proton plugged in the south
         // pole (edge-on, disc feeding the hole) and the balancing
         // neutron in the north (ammon.pdf), pole-down per graphene.pdf.
@@ -520,10 +547,10 @@ fn preset_alphas(name: &str, anatomy: PostAnatomy) -> Option<Vec<AlphaSpec>> {
             // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
             // funnel mouth (2.6) beyond it.
             let y = ALPHA_PITCH + 3.9;
-            a.push(plug_proton(-y, -PLUG_PAIR_GAP));
-            a.push(plug_neutron(-y, PLUG_PAIR_GAP));
-            a.push(plug_proton(y, -PLUG_PAIR_GAP));
-            a.push(plug_neutron(y, PLUG_PAIR_GAP));
+            a.push(plug_proton(-y, -plug_gap));
+            a.push(plug_neutron(-y, plug_gap));
+            a.push(plug_proton(y, -plug_gap));
+            a.push(plug_neutron(y, plug_gap));
             Some(a)
         }
         // Neon: THE first carousel configuration (nuclear.pdf) — one
@@ -599,6 +626,13 @@ pub struct AlphaUnit {
     pub velocity: DVec3,
     pub orientation: DQuat,
     pub angular_velocity: DVec3,
+    /// Gyroscopic precession rate (session 33, wig.pdf): when
+    /// `AtomCore::gyro_spin` > 0, the transverse component of this
+    /// alpha's torque produces this orientation DRIFT instead of
+    /// accumulating transverse angular momentum — recomputed fresh every
+    /// `kick`, applied in `drift`, never integrated ("think of a
+    /// spinning wheel, which resists being pushed sideways").
+    pub precession: DVec3,
     pub mass: f64,
     pub inertia: f64,
 
@@ -781,6 +815,12 @@ pub const GROUP_SPIN_RELAX: f64 = 20.0;
 /// to be able to turn here"). This only bleeds off numerical spin-up, not
 /// the emergent ω.
 pub const ALPHA_SPIN_RELAX: f64 = 0.5;
+
+/// Session-33 gyroscopic spin stiffness default — ships OFF (0.0,
+/// classical torque response) until `report_gyro_sweep` earns a value
+/// against plugged-carbon retention AND the tri_alpha battery. See
+/// `AtomCore::gyro_spin` for the mechanism (wig.pdf).
+pub const DEFAULT_GYRO_SPIN: f64 = 0.0;
 
 /// Translational charge-field lock on RigidAlpha nuclei (1/s): damps each
 /// alpha's velocity toward the nucleus's mass-weighted mean velocity —
@@ -1141,6 +1181,35 @@ pub struct AtomCore {
     /// `apply_ambient_confinement`). Ships 0.0 (off) until the
     /// calibration re-earns the battery at a nonzero value.
     pub ambient_confine: f64,
+    /// Session-33 gyroscopic spin stiffness (wig.pdf: "The increased
+    /// angular momentum acts to prevent the protons from turning...
+    /// Think of a spinning wheel, which resists being pushed sideways").
+    /// Each alpha unit carries spin angular momentum `gyro_spin × mass`
+    /// along its own axis; in `kick` (RigidAlpha) the TRANSVERSE torque
+    /// component then produces gyroscopic PRECESSION (an instantaneous
+    /// orientation drift, `AlphaUnit::precession`) instead of
+    /// accumulating transverse angular momentum — which removes both the
+    /// near-zero-inertia overshoot of 1-nucleon plug alphas and the
+    /// torque-war energy pump (report_plug_torque_war/-energy_ablation).
+    /// Ships 0.0 (off — classical response) until calibrated.
+    pub gyro_spin: f64,
+    /// Session-33 plug-experiment knobs (report_plug_matrix): runtime
+    /// fields so the factored sweep can vary them without rebuilds; ALL
+    /// default to the earned baseline.
+    ///
+    /// Polar plug-pair half-gap at spawn (see PLUG_PAIR_GAP).
+    pub plug_pair_gap: f64,
+    /// Close-range saturation floor for the pairwise nuclear-ambient
+    /// shadow glue: its 1/r² is evaluated at max(r, this). 0.0 = off
+    /// (baseline); NUCLEON_PITCH = saturate inside the funnel mouth
+    /// (far-field argument — the shadow glue overestimates once the
+    /// pair excludes ambient photons from its own gap).
+    pub ambient_sat_r: f64,
+    /// Flow-align receiver torque target: false = line to the emitter
+    /// (baseline), true = the emitter's pole-port STREAM direction
+    /// (deut.pdf "align to that charge stream" — removes the ~17°
+    /// frustration of the off-axis plug pair; see flow_tension_pair).
+    pub align_to_stream: bool,
 }
 
 impl Default for AtomCore {
@@ -1201,6 +1270,10 @@ impl AtomCore {
             flow_tension: crate::charge_flow::DEFAULT_FLOW_TENSION,
             flow_align: crate::charge_flow::DEFAULT_FLOW_ALIGN,
             ambient_confine: crate::charge_flow::DEFAULT_AMBIENT_CONFINE,
+            gyro_spin: DEFAULT_GYRO_SPIN,
+            plug_pair_gap: PLUG_PAIR_GAP,
+            ambient_sat_r: 0.0,
+            align_to_stream: false,
         }
     }
 
@@ -1289,7 +1362,7 @@ impl AtomCore {
         vel: DVec3,
         axis: DVec3,
     ) -> Option<usize> {
-        let alpha_specs = preset_alphas(name, self.post_anatomy)?;
+        let alpha_specs = preset_alphas(name, self.post_anatomy, self.plug_pair_gap)?;
         let orientation = orientation_from_pole(axis);
         let gid = self.groups.len();
 
@@ -1356,6 +1429,7 @@ impl AtomCore {
                 velocity: DVec3::ZERO,
                 orientation: orientation_from_pole(spec.rest_axis),
                 angular_velocity: DVec3::ZERO,
+                precession: DVec3::ZERO,
                 mass: a_mass,
                 inertia: a_inertia.max(1e-9),
                 ring_disc_r: 0.0,
@@ -2109,7 +2183,9 @@ impl AtomCore {
         let occlusion = self.compute_occlusion();
         let occ = occlusion[i * n + j];
         let shadow = (1.0 - emission_i) * (1.0 - emission_j);
-        let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / r2s;
+        // Optional close-range saturation — lockstep with compute_forces.
+        let r_amb = r.max(self.ambient_sat_r);
+        let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / (r_amb * r_amb);
 
         let ai2 = absorption_i * absorption_i;
         let f_intake_on_j = cq.intake * pi_prof.mass * pj_prof.mass * ai2 * (1.0 - occ) / r2s;
@@ -2167,6 +2243,7 @@ impl AtomCore {
             0.0
         };
 
+
         [
             r,
             channel,
@@ -2178,6 +2255,66 @@ impl AtomCore {
             f_contact,
             f_tension,
         ]
+    }
+
+    /// Diagnostic twin of `pair_force_breakdown` for the TORQUE channel
+    /// (session-33 plug torque-war investigation): the two orientation
+    /// authorities acting on a same-group pair, mirrored exactly from
+    /// `compute_forces`. Returns
+    /// `[charge_tau_i, charge_tau_j, flow_tau_i, flow_tau_j]` — the
+    /// "equator toward charge" gear-mesh torque (attenuated by the
+    /// channeling factor) and the flow-align torque (from
+    /// `flow_tension_pair`) on each particle. Read-only.
+    pub fn pair_torque_breakdown(&self, i: usize, j: usize) -> [DVec3; 4] {
+        let gi = self.particles[i].group;
+        let gj = self.particles[j].group;
+        let same_group = gi.is_some() && gi == gj;
+        let base_cq = self.couplings;
+
+        let d_vec = self.particles[j].position - self.particles[i].position;
+        let r = d_vec.length().max(SOFTENING);
+        let r4s = (r * r) * (r * r);
+        let d_hat = d_vec / r;
+
+        let pi_prof = &self.profiles[self.particles[i].profile_id];
+        let pj_prof = &self.profiles[self.particles[j].profile_id];
+        let pole_i = self.particles[i].pole_axis();
+        let pole_j = self.particles[j].pole_axis();
+        let cos_theta_i = pole_i.dot(d_hat);
+        let cos_theta_j = pole_j.dot(-d_hat);
+
+        let (torque_coupling, c_q) = if same_group {
+            let channel =
+                channeling_factor(base_cq.channeling, cos_theta_i, cos_theta_j, r);
+            let atten = (1.0 - channel) * base_cq.intra_nucleus_boost;
+            (base_cq.torque * atten, base_cq.c_q * atten)
+        } else {
+            (base_cq.torque, base_cq.c_q)
+        };
+
+        let emission_i = pi_prof.emission.sample(cos_theta_i);
+        let emission_j = pj_prof.emission.sample(cos_theta_j);
+        let absorption_j = pj_prof.absorption.sample(cos_theta_j);
+        let absorption_i = pi_prof.absorption.sample(cos_theta_i);
+        let v_rel = self.particles[j].velocity - self.particles[i].velocity;
+        let doppler = (1.0 - base_cq.drag * v_rel.dot(d_hat)).clamp(0.2, 5.0);
+        let mass_prod = pi_prof.mass * pj_prof.mass;
+        let f_charge_on_j = c_q * mass_prod * emission_i * absorption_j / r4s * doppler;
+        let f_charge_on_i = c_q * mass_prod * emission_j * absorption_i / r4s * doppler;
+
+        let charge_tau_j = pole_j.cross(-d_hat)
+            * (-2.0 * pole_j.dot(-d_hat) * f_charge_on_j * torque_coupling);
+        let charge_tau_i = pole_i.cross(d_hat)
+            * (-2.0 * pole_i.dot(d_hat) * f_charge_on_i * torque_coupling);
+
+        let (flow_tau_i, flow_tau_j) = if same_group {
+            let (_, ti, tj) = self.flow_tension_pair(i, j, d_hat, r);
+            (ti, tj)
+        } else {
+            (DVec3::ZERO, DVec3::ZERO)
+        };
+
+        [charge_tau_i, charge_tau_j, flow_tau_i, flow_tau_j]
     }
 
     /// Contact distance (sum of render-clamped radii) for a particle pair.
@@ -2310,7 +2447,28 @@ impl AtomCore {
                         };
                         let a = &mut self.groups[gi].alphas[ai];
                         a.velocity += f / mass * dt;
-                        a.angular_velocity += tau / inertia * dt;
+                        if self.gyro_spin > 1e-12 {
+                            // Gyroscopic response (session 33, wig.pdf):
+                            // the alpha carries spin angular momentum
+                            // S = gyro_spin·mass along its own axis, so a
+                            // TRANSVERSE torque precesses the axis
+                            // (Ω = â × τ⊥ / S, from τ = Ω × Sâ) instead of
+                            // accelerating a tilt; only the AXIAL (roll)
+                            // component integrates classically. Precession
+                            // is recomputed fresh each kick — it is a
+                            // response to the PRESENT torque, not a stored
+                            // momentum, which is exactly why it cannot be
+                            // pumped into an oscillation.
+                            let axis = a.orientation * DVec3::Y;
+                            let tau_par = axis * tau.dot(axis);
+                            let tau_perp = tau - tau_par;
+                            let s = self.gyro_spin * mass;
+                            a.angular_velocity += tau_par / inertia * dt;
+                            a.precession = axis.cross(tau_perp) / s;
+                        } else {
+                            a.angular_velocity += tau / inertia * dt;
+                            a.precession = DVec3::ZERO;
+                        }
                         // Weak per-alpha damping — well below the nucleus
                         // lock's GROUP_SPIN_RELAX (20.0): the carousel must
                         // stay free to turn here (§2.2); this only bleeds
@@ -2409,7 +2567,10 @@ impl AtomCore {
                     for ai in 0..n_alphas {
                         let a = &mut self.groups[gi].alphas[ai];
                         a.com += a.velocity * dt;
-                        let w = a.angular_velocity;
+                        // Gyroscopic precession (session 33) rides on top
+                        // of the integrated angular velocity — a drift,
+                        // not a momentum (see kick / AlphaUnit).
+                        let w = a.angular_velocity + a.precession;
                         let w_len = w.length();
                         if w_len > 1e-12 {
                             let rot = DQuat::from_axis_angle(w / w_len, w_len * dt);
@@ -2796,8 +2957,16 @@ impl AtomCore {
 
                 // Ambient pressure: pushes particles into charge shadows.
                 // A stoppered channel has no shadow minimum (diatom.pdf).
+                // Optional close-range saturation (session-33 experiment,
+                // `ambient_sat_r` — 0.0 = off): the shadow glue is a
+                // far-field approximation, and un-saturated its 1/r² digs
+                // a ~7-unit well between the pole-on carbon plug partners
+                // (shadow ≈ 1, zero charge repulsion) with nothing but
+                // the contact spring at the bottom (report_plug_retention).
                 let shadow = (1.0 - emission_i) * (1.0 - emission_j);
-                let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / r2s;
+                let r_amb = r.max(self.ambient_sat_r);
+                let f_ambient =
+                    cq.ambient_pressure * shadow * (1.0 - occ) / (r_amb * r_amb);
 
                 // Polar intake: the proton recycles charge through its poles,
                 // creating a focused inward flow.  A(θ)² sharpens the profile

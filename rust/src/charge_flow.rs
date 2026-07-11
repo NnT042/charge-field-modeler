@@ -183,7 +183,15 @@ impl AtomCore {
 
                 for p in 0..2usize {
                     // Receiving pole faces outward along ±pole_j; it
-                    // captures flow arriving INTO that face.
+                    // captures flow arriving INTO that face. Capture is
+                    // LINE-OF-SIGHT geometry (is the receiver in the
+                    // stream's path, facing the oncoming flow) — the
+                    // session-33 align-to-stream experiment moved this
+                    // gate to the emitter's pole direction and broke the
+                    // whole network (bodies merely anti-parallel to an
+                    // emitter registered as plugging it from anywhere in
+                    // range); only the restoring TORQUE targets the
+                    // stream direction (see flow_tension_pair).
                     let face = if p == 1 { pole_j } else { -pole_j };
                     let recv = (-d_hat).dot(face).max(0.0).powi(2);
                     if recv < 1e-6 {
@@ -421,18 +429,33 @@ impl AtomCore {
                     let share = 1.0 / fe.demand[q].max(1.0);
                     let flow = fall * emit * recv * out * share;
                     f_on_j -= d_hat * (k_t * flow);
-                    // Alignment: receiver face toward the arrival line,
-                    // emitter exit toward the departure line.
+                    // Alignment: emitter exit toward the departure line;
+                    // receiver target selectable (session-33 experiment,
+                    // `AtomCore::align_to_stream`): baseline pulls the
+                    // face toward the ARRIVAL LINE; the stream variant
+                    // pulls it toward the emitter's pole-port STREAM
+                    // direction (deut.pdf: a captured nucleon "will then
+                    // align to that charge stream") — the line target is
+                    // ~17° frustrated at the off-axis plug-pair rest pose
+                    // (report_plug_torque_war). Capture magnitude stays
+                    // line-of-sight in both variants.
                     let k_link = k_a * fall * out * share;
-                    tau[tau_v_idx] +=
-                        (face.cross(-dir)) * (2.0 * k_link * emit * c_recv);
+                    if self.align_to_stream {
+                        let c_stream = (-out_dir).dot(face).max(0.0);
+                        tau[tau_v_idx] += (face.cross(-out_dir))
+                            * (2.0 * k_link * emit * c_stream);
+                    } else {
+                        tau[tau_v_idx] +=
+                            (face.cross(-dir)) * (2.0 * k_link * emit * c_recv);
+                    }
                     tau[tau_e_idx] +=
                         (out_dir.cross(dir)) * (2.0 * k_link * recv * c_emit);
                 }
 
                 // Disc (lateral) port of the emitter: sin² gate — the
                 // restoring torque keeps the disc PLANE containing the
-                // line to the receiver.
+                // line to the receiver; the receiver faces the line
+                // (a lateral stream really does travel along the line).
                 let out = fe.lateral;
                 if out > 1e-12 {
                     let c_disc = pole_e.dot(dir);

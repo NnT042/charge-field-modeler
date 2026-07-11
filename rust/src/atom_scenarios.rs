@@ -2480,6 +2480,377 @@ mod tests {
         }
     }
 
+    /// Session-33 torque-war diagnostic: the two orientation authorities
+    /// on each carbon plug — the "equator toward charge" gear-mesh torque
+    /// and the flow-align torque — summed over all same-group partners,
+    /// tracked with the plug's pole orientation and its alpha's angular
+    /// velocity. The energy-pump ablation showed retention is best with
+    /// the charge torque OFF and much worse with flow-align off; this
+    /// report shows whether they actually fight (opposed directions,
+    /// comparable magnitudes) and at what orientation the war breaks out.
+    /// Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_torque_war --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_torque_war() {
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        core.running = true;
+
+        let plug_alphas: Vec<usize> = (0..core.groups[gid].alphas.len())
+            .filter(|&ai| core.groups[gid].alphas[ai].members.len() == 1)
+            .collect();
+        let group_members: Vec<usize> = core.groups[gid].members.clone();
+        // Rest pole per plug, captured at spawn (world frame).
+        let rest_pole: Vec<DVec3> = plug_alphas
+            .iter()
+            .map(|&ai| {
+                let m = core.groups[gid].alphas[ai].members[0];
+                core.particles[m].pole_axis()
+            })
+            .collect();
+        let label = |core: &AtomCore, ai: usize| -> String {
+            let m = core.groups[gid].alphas[ai].members[0];
+            let name = &core.profiles[core.particles[m].profile_id].name;
+            let side = if core.groups[gid].alphas[ai].com.y < 0.0 { "-" } else { "+" };
+            format!("{}{side}", &name[..1].to_uppercase())
+        };
+        let labels: Vec<String> =
+            plug_alphas.iter().map(|&ai| label(&core, ai)).collect();
+
+        println!(
+            "\nper plug: tilt°(pole vs rest) |tau_charge| |tau_flow| cos(charge,flow) |w|"
+        );
+        println!(
+            "{:>7} {}",
+            "step",
+            labels
+                .iter()
+                .map(|l| format!("{l:>38}"))
+                .collect::<String>()
+        );
+        for s in 0..15 {
+            core.step_n(if s == 0 { 200 } else { 20_000 });
+            let row: String = plug_alphas
+                .iter()
+                .enumerate()
+                .map(|(pi, &ai)| {
+                    let m = core.groups[gid].alphas[ai].members[0];
+                    let pole = core.particles[m].pole_axis();
+                    let tilt = pole.dot(rest_pole[pi]).clamp(-1.0, 1.0).acos().to_degrees();
+                    let mut tau_c = DVec3::ZERO;
+                    let mut tau_f = DVec3::ZERO;
+                    for &other in &group_members {
+                        if other == m {
+                            continue;
+                        }
+                        let tb = core.pair_torque_breakdown(m, other);
+                        tau_c += tb[0];
+                        tau_f += tb[2];
+                    }
+                    let cosang = if tau_c.length() > 1e-12 && tau_f.length() > 1e-12 {
+                        tau_c.normalize().dot(tau_f.normalize())
+                    } else {
+                        0.0
+                    };
+                    let w = core.groups[gid].alphas[ai].angular_velocity.length();
+                    format!(
+                        "{:>38}",
+                        format!(
+                            "{tilt:>5.1}° {:.4} {:.4} {cosang:+.2} {w:.3}",
+                            tau_c.length(),
+                            tau_f.length(),
+                        )
+                    )
+                })
+                .collect();
+            println!(
+                "{:>7} {row}",
+                if s == 0 { 200 } else { s * 20_000 },
+            );
+        }
+    }
+
+    /// Session-33 gyroscopic-stiffness sweep (wig.pdf mechanism, see
+    /// `AtomCore::gyro_spin`): plugged-carbon retention and tri_alpha
+    /// quiet drift vs the spin angular momentum knob. gyro=0 is the
+    /// classical baseline (must reproduce report_carbon_stability).
+    /// Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_gyro_sweep --nocapture`
+    #[test]
+    #[ignore]
+    fn report_gyro_sweep() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        let drift_run = |preset: &str, gyro: f64, k: usize| -> (f64, f64, bool) {
+            let mut core = standard_core();
+            core.gyro_spin = gyro;
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+            let mut worst = 0.0f64;
+            core.running = true;
+            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                }
+            }
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            (worst, core.total_kinetic_energy(), finite)
+        };
+
+        println!(
+            "\n{:>8} | {:>44} | {:>44}",
+            "gyro", "carbon worst drift (k=0..3)", "tri_alpha worst drift (k=0..3)"
+        );
+        for &gyro in &[0.0, 0.5, 2.0, 8.0, 32.0, 128.0] {
+            let fmt = |preset: &str| -> String {
+                (0..4)
+                    .map(|k| {
+                        let (w, ke, finite) = drift_run(preset, gyro, k);
+                        format!(
+                            "{:>5.0}%{}(KE {ke:.0})",
+                            w * 100.0,
+                            if finite { "" } else { "!" }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!(
+                "{gyro:>8.1} | {:>44} | {:>44}",
+                fmt("carbon"),
+                fmt("tri_alpha")
+            );
+        }
+    }
+
+    /// Session-33 factored plug-experiment matrix: the three candidate
+    /// mechanisms (plug-pair gap, close-range ambient saturation,
+    /// align-to-stream torque target) swept ORTHOGONALLY against
+    /// plugged-carbon retention, 4 seeds each — after serially stacking
+    /// them one-at-a-time made carbon worse than the committed baseline
+    /// (the whirl-saga lesson: attribute before adopting). gyro_spin is
+    /// excluded (its sweep already rejected it). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_matrix --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_matrix() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        println!(
+            "\n{:>5} {:>6} {:>7} | {:>52}",
+            "gap", "satur", "stream", "carbon worst drift / end KE (k=0..3)"
+        );
+        for &gap in &[0.8, 0.35] {
+            for &sat in &[0.0, crate::atom_core::NUCLEON_PITCH] {
+                for &stream in &[false, true] {
+                    let cols: Vec<String> = (0..4)
+                        .map(|k| {
+                            let mut core = standard_core();
+                            core.plug_pair_gap = gap;
+                            core.ambient_sat_r = sat;
+                            core.align_to_stream = stream;
+                            burn_seed_offset(&mut core, k);
+                            let gid = core
+                                .spawn_preset(
+                                    "carbon",
+                                    DVec3::ZERO,
+                                    DVec3::ZERO,
+                                    DVec3::Y,
+                                )
+                                .expect("carbon preset");
+                            core.set_nucleus_dynamics(
+                                crate::atom_core::NucleusDynamics::RigidAlpha,
+                            );
+                            let n_alphas = core.groups[gid].alphas.len();
+                            let com = |core: &AtomCore, ai: usize| {
+                                core.groups[gid].alphas[ai].com
+                            };
+                            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                                .flat_map(|a| {
+                                    ((a + 1)..n_alphas).map(move |b| (a, b))
+                                })
+                                .collect();
+                            let d0: Vec<f64> = pairs
+                                .iter()
+                                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                                .collect();
+                            let mut worst = 0.0f64;
+                            core.running = true;
+                            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                                core.step_n(SAMPLE_EVERY);
+                                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                                    let d =
+                                        (com(&core, a) - com(&core, b)).length();
+                                    worst =
+                                        worst.max(((d - d0[idx]) / d0[idx]).abs());
+                                }
+                            }
+                            format!(
+                                "{:>5.0}%/{:<6.0}",
+                                worst * 100.0,
+                                core.total_kinetic_energy()
+                            )
+                        })
+                        .collect();
+                    println!(
+                        "{gap:>5.2} {sat:>6.2} {:>7} | {:>52}",
+                        stream,
+                        cols.join(" ")
+                    );
+                }
+            }
+        }
+    }
+
+    /// Session-33 follow-up to report_plug_matrix: its best cell
+    /// (plug_pair_gap=0.35, no ambient saturation, line torque target)
+    /// kills the pair collapse-bounce KE pump (end KE 5-24 vs 17-578)
+    /// but the cooled plugs still slide off the sockets (137-466%) —
+    /// the socket tension (~0.16) can't beat the plug proton's ~0.85
+    /// outward charge push. Sweep Phase C1 ambient confinement on top:
+    /// the old "not confinement-fixable" verdict (best ~109% @ 0.5)
+    /// predates both the tension sign fix and the pump kill. tri_alpha
+    /// swept alongside — confinement also compresses the bare stack and
+    /// must not wreck it. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_confine --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_confine() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        let run = |preset: &str, confine: f64, k: usize| -> (f64, f64) {
+            let mut core = standard_core();
+            core.plug_pair_gap = 0.35;
+            core.ambient_confine = confine;
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+            let mut worst = 0.0f64;
+            core.running = true;
+            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                }
+            }
+            (worst, core.total_kinetic_energy())
+        };
+
+        println!(
+            "\n{:>8} | {:>52} | {:>52}",
+            "confine",
+            "carbon (gap 0.35) worst drift / KE (k=0..3)",
+            "tri_alpha worst drift / KE (k=0..3)"
+        );
+        for &confine in &[0.0, 0.25, 0.5, 1.0, 2.0, 4.0] {
+            let fmt = |preset: &str| -> String {
+                (0..4)
+                    .map(|k| {
+                        let (w, ke) = run(preset, confine, k);
+                        format!("{:>5.0}%/{:<6.0}", w * 100.0, ke)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!(
+                "{confine:>8.2} | {:>52} | {:>52}",
+                fmt("carbon"),
+                fmt("tri_alpha")
+            );
+        }
+    }
+
+    /// Session-33 negative control (haf.pdf free prediction): a bare
+    /// FOUR-alpha stack "can't hold together" — external side-charge
+    /// overwhelms the weak bare-stack channel. The current force model
+    /// has no side-charge term, so today this is a MEASUREMENT of the
+    /// gap, not a passing test: if quad_alpha holds as comfortably as
+    /// tri_alpha, the model is missing the mechanism that sets the
+    /// stack-height limit (expected to arrive with Phase C ambient
+    /// surface effects). When it dissolves for the RIGHT reason, this
+    /// becomes an asserting test. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_quad_alpha --nocapture`
+    #[test]
+    #[ignore]
+    fn report_quad_alpha() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+        for preset in ["tri_alpha", "quad_alpha"] {
+            for k in 0..4usize {
+                let mut core = standard_core();
+                burn_seed_offset(&mut core, k);
+                let gid = core
+                    .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("preset");
+                core.set_nucleus_dynamics(
+                    crate::atom_core::NucleusDynamics::RigidAlpha,
+                );
+                let n_alphas = core.groups[gid].alphas.len();
+                let com =
+                    |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                let mut worst = 0.0f64;
+                core.running = true;
+                for _ in 0..(STEPS / SAMPLE_EVERY) {
+                    core.step_n(SAMPLE_EVERY);
+                    for (idx, &(a, b)) in pairs.iter().enumerate() {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                    }
+                }
+                println!(
+                    "{preset:>10} k={k}: worst_drift={:>6.1}% KE={:.4} over {STEPS} steps",
+                    worst * 100.0,
+                    core.total_kinetic_energy(),
+                );
+            }
+        }
+    }
+
     // ── Flyby / swat robustness (session-31 round 4, work item 2/3)
     // ────────────────────────────────────────────────────────────────
 

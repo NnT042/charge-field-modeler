@@ -37,15 +37,49 @@ and failed (7/8, k=5 at 375k), and the post-fix sweep
 (`report_plug_tension_sweep`) shows tri_alpha stable 10–13% at ALL
 tensions 0.5–8 while plugged carbon fails at ALL of them (96–825%, KE
 pumping to ~4000) — plug retention is NOT a tension-magnitude problem.
-The remaining blocker is an energy pump specific to plug configurations
-(`report_plug_energy_ablation`): tri_alpha ends 300k runs at KE ≈ 0
-while carbon ends hot in EVERY single-term ablation; best retention at
-`couplings.torque = 0` (61%/125% vs baseline 116%/109%) and much worse
-at `flow_align = 0` (452–482%) → leading hypothesis: the charge
-"equator toward charge" torque and the flow-align torque fight over the
-plug proton's edge-on orientation, and the loser precesses forever,
-pumping energy through the 8-step-stale flow solve. That torque
-contract is the next work item, ahead of Phase C2.
+## Session-33 addendum 2: the plug-retention campaign (pm)
+
+The post-sign-fix energy pump was root-caused NOT to a torque war but
+to the plug PAIR: its rest distance (2×PLUG_PAIR_GAP = 1.6) is not a
+force equilibrium — net inward ≈ 1.4 (ambient shadow, gravity, intake;
+charge repulsion is exactly zero pole-on) with nothing opposing before
+the contact wall at r ≈ 0.7. The pair is dropped onto the stiffness-100
+contact spring: an undamped collapse-bounce oscillator. Spawning at
+contact (`plug_pair_gap = 0.35`) kills the pump (end KE 5–24 vs
+17–578).
+
+Mechanisms tried and REJECTED with data (all remain as off-by-default
+runtime knobs; reports named):
+- tension magnitude (`report_plug_tension_sweep`), gyroscopic spin
+  stiffness `gyro_spin` (`report_gyro_sweep` — diverges at small S,
+  hot at large S), align-to-stream torque target `align_to_stream`
+  (capture-gate version rerouted the network; torque-only version
+  interacts badly with the tight gap), close-range ambient saturation
+  `ambient_sat_r`, and Phase C1 `ambient_confine` on the pump-killed
+  cell (`report_plug_confine` — monotonically worse; the pre-fix "not
+  confinement-fixable" verdict stands).
+- Factored attribution matrix: `report_plug_matrix` (the serial
+  stacking of these "obviously right" fixes was worse than baseline —
+  interactions dominate).
+
+With the pump dead the plugs slide off QUIETLY: the socket's static
+intake force measures a useless ~0.016 regardless of how much flow the
+socket actually channels, while the plug proton feels ~0.85 outward
+charge push. Per phos.pdf an unfed socket "doesn't have much pull, or
+suction" — and ours is permanently unfed as far as the FORCE model is
+concerned. The missing piece is exactly Phase B item 2, designed above
+and never built: **throughput-scaled emission/intake** (scale the
+static force profiles by the live `FlowState::mult`). That is the next
+work item; then re-run the matrix best cell and the full re-earn chain,
+and reconsider `plug_pair_gap = 0.35` as default.
+
+Also landed: `quad_alpha` preset + `report_quad_alpha` (haf.pdf free
+prediction — a bare 4-stack "can't hold together"; currently documents
+that the model does NOT yet dissolve it, pending real side-charge), and
+the post-sign-fix radial-post retest (`report_post_anatomy`): Radial
+now BEATS Axial in every rigid harness (9.9%/10.5%/10.6% vs 15.9%) but
+still cannot self-hold in FreeNucleon (1023%) — the anatomy default
+stays Axial until the suction mechanism exists.
 
 Phase B outcome (session 32): stream tension + channel-alignment
 stiffness live on same-group pairs (`AtomCore::flow_tension = 1.0`,
