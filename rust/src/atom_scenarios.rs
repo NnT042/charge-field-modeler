@@ -3077,6 +3077,152 @@ mod tests {
         }
     }
 
+    /// Session-35 momentum + energy flux audit. The papers say charge is an
+    /// OPEN field — "the charge field, by itself, doesn't conserve energy"
+    /// (cc.pdf) — and its momentum "is always radially out from the center"
+    /// (pause.html). Our sim is CLOSED: it has no channel for charge to carry
+    /// momentum or energy out, so (a) the proton→neutron emission asymmetry
+    /// and the reaction-less vortex leave a NET force on an isolated nucleus
+    /// (the in-app carbon core drifts off-camera), and (b) the only
+    /// velocity-dependent term is a Doppler MULTIPLIER on the conservative
+    /// charge force that can INJECT energy, with no −k·v sink to remove it.
+    ///
+    /// This measures both, so the fix is chosen from numbers:
+    ///   PART A — with the uniform ambient globals zeroed (true isolation),
+    ///   Σ force_accum over the whole nucleus at the rest pose. For an
+    ///   isolated body this MUST be ≈0. Corot and flow-tension are applied as
+    ///   equal-and-opposite pairs, so ablating them must NOT change the sum
+    ///   (a built-in consistency check); only the un-paired vortex and the
+    ///   central charge/intake asymmetry can move it. Reports the residual
+    ///   vector after each ablation → attribution.
+    ///   PART B — a normal dynamics run (default app conditions: ambient on,
+    ///   plug_orient_lock off), sampling total KE, nucleus COM drift, and COM
+    ///   speed. Shows the pump climbing with no counterpart.
+    /// Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_momentum_energy_audit --nocapture`
+    #[test]
+    #[ignore]
+    fn report_momentum_energy_audit() {
+        // Whole-nucleus aggregates from the group's flat member list.
+        fn nucleus_members(core: &AtomCore, gid: usize) -> Vec<usize> {
+            core.groups[gid].members.clone()
+        }
+        fn net_force(core: &AtomCore, members: &[usize]) -> DVec3 {
+            members.iter().map(|&m| core.particles[m].force_accum).sum()
+        }
+        fn com(core: &AtomCore, members: &[usize]) -> DVec3 {
+            let mut num = DVec3::ZERO;
+            let mut den = 0.0;
+            for &m in members {
+                let mass = core.profiles[core.particles[m].profile_id].mass;
+                num += core.particles[m].position * mass;
+                den += mass;
+            }
+            num / den
+        }
+        fn com_vel(core: &AtomCore, members: &[usize]) -> DVec3 {
+            let mut num = DVec3::ZERO;
+            let mut den = 0.0;
+            for &m in members {
+                let mass = core.profiles[core.particles[m].profile_id].mass;
+                num += core.particles[m].velocity * mass;
+                den += mass;
+            }
+            num / den
+        }
+
+        // ---- PART A: static momentum-leak attribution (isolated) ----
+        // Zero the uniform ambient globals so Σforce is purely the internal
+        // pairwise budget — a uniform per-mass field is a real external
+        // force, not a leak, and would swamp the residual we care about.
+        println!("\n=== PART A: net force on isolated carbon at rest pose ===");
+        println!("(ambient globals zeroed; an isolated body MUST sum to ~0)");
+        type Ablate = fn(&mut AtomCore);
+        let ablations: &[(&str, Ablate)] = &[
+            ("full internal      ", |_c| {}),
+            ("vortex=0           ", |c| c.couplings.vortex = 0.0),
+            ("vortex=0 corot=0   ", |c| {
+                c.couplings.vortex = 0.0;
+                c.couplings.corot = 0.0;
+            }),
+            ("+tension=0 (=>resid)", |c| {
+                c.couplings.vortex = 0.0;
+                c.couplings.corot = 0.0;
+                c.flow_tension = 0.0;
+                c.flow_align = 0.0;
+            }),
+        ];
+        // `raw leak` = group_self_force (the un-paired intra-nucleus net
+        // force, BEFORE the session-35 mass-weighted cancellation).
+        // `net ΣF` = Σ force_accum over the members AFTER cancellation — must
+        // be ≈0 for the isolated body (verifies the fix).
+        println!(
+            "{:>21} | {:>10} | {:>10} | {:>28}",
+            "ablation", "raw leak", "net ΣF", "raw leak vector (x,y,z)"
+        );
+        for (label, ablate) in ablations {
+            let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            core.plug_pair_gap = 0.35;
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(
+                crate::atom_core::NucleusDynamics::RigidAlpha,
+            );
+            core.ambient_gravity = DVec3::ZERO;
+            core.ambient_charge = DVec3::ZERO;
+            ablate(&mut core);
+            for _ in 0..40 {
+                core.solve_charge_flow();
+            }
+            core.compute_forces();
+            let members = nucleus_members(&core, gid);
+            let raw = core.group_self_force[gid];
+            let net = net_force(&core, &members);
+            println!(
+                "{label} | {:>10.4} | {:>10.4} | ({:+9.4},{:+9.4},{:+9.4})",
+                raw.length(),
+                net.length(),
+                raw.x,
+                raw.y,
+                raw.z
+            );
+        }
+
+        // ---- PART B: dynamics KE + COM-drift trace (default app cond.) ----
+        println!("\n=== PART B: KE + COM drift over a normal run (defaults) ===");
+        println!(
+            "{:>10} | {:>12} | {:>12} | {:>12}",
+            "step", "total_KE", "COM_drift", "COM_speed"
+        );
+        const STEPS: usize = 120_000;
+        const SAMPLE_EVERY: usize = 10_000;
+        let mut core = standard_core();
+        apply_env_overrides(&mut core);
+        core.plug_pair_gap = 0.35;
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        let members = nucleus_members(&core, gid);
+        let com0 = com(&core, &members);
+        for s in 0..=STEPS {
+            if s % SAMPLE_EVERY == 0 {
+                let drift = (com(&core, &members) - com0).length();
+                let speed = com_vel(&core, &members).length();
+                println!(
+                    "{s:>10} | {:>12.3} | {:>12.4} | {:>12.6}",
+                    core.total_kinetic_energy(),
+                    drift,
+                    speed
+                );
+            }
+            core.step();
+        }
+    }
+
     /// Session-33 negative control (haf.pdf free prediction): a bare
     /// FOUR-alpha stack "can't hold together" — external side-charge
     /// overwhelms the weak bare-stack channel. The current force model

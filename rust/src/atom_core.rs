@@ -1216,6 +1216,15 @@ pub struct AtomCore {
     pub profiles: Vec<ParticleProfile>,
     pub particles: Vec<SimParticle>,
     pub groups: Vec<RigidGroup>,
+    /// Per-group scratch (indexed by group id): the net INTRA-group pairwise
+    /// force accumulated during `compute_forces`. An isolated nucleus cannot
+    /// self-propel — cc.pdf: the charge field is OPEN, and the momentum
+    /// imbalance from the proton→neutron emission asymmetry (and any other
+    /// un-paired internal term) is radiated away, isotropically on average,
+    /// so it must not translate the COM. `step()` cancels it mass-weighted
+    /// (translation only; internal torques/shape forces are preserved).
+    /// Sized to `groups.len()` each `compute_forces`; empty otherwise.
+    pub(crate) group_self_force: Vec<DVec3>,
     pub couplings: Couplings,
     /// Global nucleus dynamics mode (Part 2 sandbox toggle). See
     /// `NucleusDynamics`; default `RigidLock`.
@@ -1343,6 +1352,7 @@ impl AtomCore {
             profiles: Vec::new(),
             particles: Vec::new(),
             groups: Vec::new(),
+            group_self_force: Vec::new(),
             couplings: Couplings::default(),
             dynamics: NucleusDynamics::RigidLock,
             ambient_gravity: DVec3::ZERO,
@@ -2894,6 +2904,11 @@ impl AtomCore {
             p.force_accum = DVec3::ZERO;
             p.torque_accum = DVec3::ZERO;
         }
+        // Reset the per-group intra-nucleus self-force accumulator (see the
+        // field doc). Each non-skipped same-group pair adds its net applied
+        // force here; `step()` cancels it so the nucleus can't self-propel.
+        self.group_self_force.clear();
+        self.group_self_force.resize(self.groups.len(), DVec3::ZERO);
 
         let base_cq = self.couplings;
         let dynamics = self.dynamics;
@@ -2930,6 +2945,15 @@ impl AtomCore {
                 if skip {
                     continue;
                 }
+
+                // Snapshot both members' force so we can attribute THIS
+                // pair's net applied force to the group (intra-group pairs
+                // only — a bound nucleus must not self-propel; see
+                // `group_self_force`). Paired terms (corot, tension, contact)
+                // net to zero here automatically; only the un-paired central
+                // charge/intake asymmetry and vortex contribute.
+                let f_snap_i = self.particles[i].force_accum;
+                let f_snap_j = self.particles[j].force_accum;
 
                 let d_vec = self.particles[j].position - self.particles[i].position;
                 let r2 = d_vec.length_squared();
@@ -3384,6 +3408,16 @@ impl AtomCore {
 
                 self.particles[j].torque_accum += torque_j;
                 self.particles[i].torque_accum += torque_i;
+
+                // Attribute this pair's net force injection to the group.
+                // Non-zero only for the un-paired internal terms; `step()`
+                // removes the accumulated total mass-weighted (translation
+                // only). `same_group` ⇒ both members share group `gi`.
+                if same_group {
+                    let dp = (self.particles[i].force_accum - f_snap_i)
+                        + (self.particles[j].force_accum - f_snap_j);
+                    self.group_self_force[gi.unwrap()] += dp;
+                }
             }
         }
 
@@ -3398,6 +3432,34 @@ impl AtomCore {
         // charge_flow::apply_ambient_confinement). No-op while
         // `ambient_confine` is 0 or in RigidLock.
         self.apply_ambient_confinement();
+
+        // Cancel each nucleus's intra-group self-propulsion (session-35; see
+        // `group_self_force`). The proton→neutron emission asymmetry (audit:
+        // ~1.98 units along carbon's plug axis, un-cancelled across the two
+        // like-oriented plug pairs) and the reaction-less vortex leave a net
+        // force on an ISOLATED nucleus — physically impossible; cc.pdf says
+        // the open charge field radiates that momentum away, isotropically on
+        // average, so it cannot translate the COM. Distribute −self_force
+        // mass-weighted across the members: a uniform per-mass acceleration
+        // has zero torque about the COM, so this removes ONLY the common-mode
+        // drift and preserves every internal (inter-alpha carousel, shape)
+        // force. No-op in RigidLock (same-group pairs are skipped, so
+        // `self_force` is zero) and for pairs of identical particles (their
+        // emission is symmetric). Ambient GLOBALS (gravity/charge) are added
+        // above and are NOT touched — a real external field still moves the
+        // nucleus.
+        for gi in 0..self.groups.len() {
+            let f = self.group_self_force[gi];
+            let gmass = self.groups[gi].mass;
+            if f.length_squared() < 1e-24 || gmass <= 0.0 {
+                continue;
+            }
+            let members = self.groups[gi].members.clone();
+            for m in members {
+                let pm = self.profiles[self.particles[m].profile_id].mass;
+                self.particles[m].force_accum -= f * (pm / gmass);
+            }
+        }
     }
 
     // ── Rendering buffers (pure data, converted by the Godot wrapper) ──
