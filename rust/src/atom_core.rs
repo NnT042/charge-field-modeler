@@ -1069,6 +1069,22 @@ impl Default for Couplings {
     ///   passes the gate 8/8, every seed converging to the same cold
     ///   compressed attractor (spacings 3.24/6.48, KE ≈ 5.6e-4,
     ///   perfect axis alignment, channel at max).
+    ///
+    ///   Session 34 (flow-network NO-STARVE fix, charge_flow.rs pass 2)
+    ///   RETUNED `nuclear_ambient` 10.0 → 5.0 — back to the session-32
+    ///   value. The starved network had been systematically
+    ///   under-delivering stream glue (carbon ran at mult 0.53-0.80;
+    ///   tension measured half its intended strength at the plug
+    ///   sockets), and ambient 10.0 was compensating for exactly that
+    ///   deficit. With flows floored at free-field ambient (deut.pdf
+    ///   leaky hose; graphene.pdf "fans"), the full 5-combo 1M re-gate
+    ///   found: (0.85, 5.0) 8/8 all-cold (spacings 3.34/6.68,
+    ///   KE ≈ 5e-4) AND best surviving short-horizon margins
+    ///   (13.7%/12.5%) → WINNER; (0.85, 10.0) also 8/8 all-cold but
+    ///   worse margins (16.8%/15.5%); (0.9, 5.0) 2/8 collapse;
+    ///   (0.9, 2.0) 2/8 collapse; (0.85, 2.0) bounded but 3/8 heat
+    ///   monotonically to KE ≈ 128 by 1M (the pre-collapse whirl
+    ///   signature) — all three vetoed with v2 evidence.
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -1082,7 +1098,7 @@ impl Default for Couplings {
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
             channeling: 0.85,
-            nuclear_ambient: 10.0,
+            nuclear_ambient: 5.0,
         }
     }
 }
@@ -1210,6 +1226,21 @@ pub struct AtomCore {
     /// (deut.pdf "align to that charge stream" — removes the ~17°
     /// frustration of the off-axis plug pair; see flow_tension_pair).
     pub align_to_stream: bool,
+    /// Phase B.2 (session 34): throughput-scaled suction gain — the
+    /// intake pull and channeling force from a same-group body scale by
+    /// `1 + gain·(mult − 1)` of its live `FlowState::mult`
+    /// (charge_flow::DEFAULT_FLOW_SUCTION; phos.pdf socket suction).
+    pub flow_suction: f64,
+    /// Phase B.2: same form on the charge push — a fed emitter pushes
+    /// harder (charge_flow::DEFAULT_FLOW_EMIT_SCALE).
+    pub flow_emit_scale: f64,
+    /// Flow-solver cadence in physics steps (session-34 knob, seeded
+    /// from charge_flow::FLOW_SOLVE_EVERY). The Phase B forces read
+    /// flow amplitudes up to this many steps stale; the lag makes them
+    /// slightly non-conservative, and the no-starve network's larger
+    /// amplitudes raised the stakes — 1 = solve every step (the
+    /// lag-free reference for the energy-pump ablation).
+    pub flow_solve_every: usize,
 }
 
 impl Default for AtomCore {
@@ -1274,6 +1305,9 @@ impl AtomCore {
             plug_pair_gap: PLUG_PAIR_GAP,
             ambient_sat_r: 0.0,
             align_to_stream: false,
+            flow_suction: crate::charge_flow::DEFAULT_FLOW_SUCTION,
+            flow_emit_scale: crate::charge_flow::DEFAULT_FLOW_EMIT_SCALE,
+            flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
         }
     }
 
@@ -2175,9 +2209,21 @@ impl AtomCore {
         let v_radial = v_rel.dot(d_hat);
         let doppler = (1.0 - cq.drag * v_radial).clamp(0.2, 5.0);
 
+        // Phase B.2 throughput scaling — lockstep with compute_forces.
+        let (suction_i, epush_i) = if same_group {
+            let mult_i = self.particles[i].flow.mult;
+            (
+                (1.0 + self.flow_suction * (mult_i - 1.0)).max(0.0),
+                (1.0 + self.flow_emit_scale * (mult_i - 1.0)).max(0.0),
+            )
+        } else {
+            (1.0, 1.0)
+        };
+
         let f_grav = cq.g_q * pi_prof.mass * pj_prof.mass / r2s;
         let mass_prod = pi_prof.mass * pj_prof.mass;
-        let f_charge_on_j = cq.c_q * mass_prod * emission_i * absorption_j / r4s * doppler;
+        let f_charge_on_j =
+            cq.c_q * mass_prod * emission_i * absorption_j / r4s * doppler * epush_i;
 
         let n = self.particles.len();
         let occlusion = self.compute_occlusion();
@@ -2188,7 +2234,8 @@ impl AtomCore {
         let f_ambient = cq.ambient_pressure * shadow * (1.0 - occ) / (r_amb * r_amb);
 
         let ai2 = absorption_i * absorption_i;
-        let f_intake_on_j = cq.intake * pi_prof.mass * pj_prof.mass * ai2 * (1.0 - occ) / r2s;
+        let f_intake_on_j =
+            cq.intake * pi_prof.mass * pj_prof.mass * ai2 * suction_i * (1.0 - occ) / r2s;
 
         let aj2 = absorption_j * absorption_j;
         let ei2 = emission_i * emission_i;
@@ -2299,8 +2346,19 @@ impl AtomCore {
         let v_rel = self.particles[j].velocity - self.particles[i].velocity;
         let doppler = (1.0 - base_cq.drag * v_rel.dot(d_hat)).clamp(0.2, 5.0);
         let mass_prod = pi_prof.mass * pj_prof.mass;
-        let f_charge_on_j = c_q * mass_prod * emission_i * absorption_j / r4s * doppler;
-        let f_charge_on_i = c_q * mass_prod * emission_j * absorption_i / r4s * doppler;
+        // Phase B.2 throughput scaling — lockstep with compute_forces.
+        let (epush_i, epush_j) = if same_group {
+            (
+                (1.0 + self.flow_emit_scale * (self.particles[i].flow.mult - 1.0)).max(0.0),
+                (1.0 + self.flow_emit_scale * (self.particles[j].flow.mult - 1.0)).max(0.0),
+            )
+        } else {
+            (1.0, 1.0)
+        };
+        let f_charge_on_j =
+            c_q * mass_prod * emission_i * absorption_j / r4s * doppler * epush_i;
+        let f_charge_on_i =
+            c_q * mass_prod * emission_j * absorption_i / r4s * doppler * epush_j;
 
         let charge_tau_j = pole_j.cross(-d_hat)
             * (-2.0 * pole_j.dot(-d_hat) * f_charge_on_j * torque_coupling);
@@ -2347,7 +2405,7 @@ impl AtomCore {
         // instantaneous physically, and the stale window (4 ms sim time)
         // is far below any mechanical timescale here.
         self.step_count = self.step_count.wrapping_add(1);
-        if self.step_count % crate::charge_flow::FLOW_SOLVE_EVERY as u64 == 0 {
+        if self.step_count % self.flow_solve_every.max(1) as u64 == 0 {
             self.solve_charge_flow();
         }
 
@@ -2894,6 +2952,31 @@ impl AtomCore {
                     base_cq
                 };
 
+                // Phase B.2 (session 34, docs/THROUGH_CHARGE_DESIGN.md):
+                // throughput-scaled force profiles. The static
+                // emission/absorption tables describe a FREE-FIELD
+                // particle; a body channeling flow above baseline sucks
+                // and pushes harder in proportion (phos.pdf: an unfed
+                // socket "doesn't have much pull, or suction"). Factor
+                // `1 + gain·(mult − 1)` per body: exactly 1 for a free
+                // particle (mult = 1 by construction) at any gain, so
+                // the locked molecular tables only move where a live
+                // network exists. Same-group gated like the rest of
+                // Phase B; Phase C extends output effects to third
+                // parties (auger.pdf).
+                let (suction_i, suction_j, epush_i, epush_j) = if same_group {
+                    let mult_i = self.particles[i].flow.mult;
+                    let mult_j = self.particles[j].flow.mult;
+                    (
+                        (1.0 + self.flow_suction * (mult_i - 1.0)).max(0.0),
+                        (1.0 + self.flow_suction * (mult_j - 1.0)).max(0.0),
+                        (1.0 + self.flow_emit_scale * (mult_i - 1.0)).max(0.0),
+                        (1.0 + self.flow_emit_scale * (mult_j - 1.0)).max(0.0),
+                    )
+                } else {
+                    (1.0, 1.0, 1.0, 1.0)
+                };
+
                 let emission_i = pi_prof.emission.sample(cos_theta_i);
                 let emission_j = pj_prof.emission.sample(cos_theta_j);
                 let absorption_j = pj_prof.absorption.sample(cos_theta_j);
@@ -2912,11 +2995,12 @@ impl AtomCore {
                 // Charge: C_q * m_emitter * m_receiver * E(θ) * R(θ) / r⁴ × doppler
                 // Receiver mass models cross-section: electron intercepts 1/1836
                 // the photons a proton would (Mathis's Dalton).
+                // × epush (Phase B.2): a fed emitter pushes harder.
                 let mass_prod = pi_prof.mass * pj_prof.mass;
                 let f_charge_on_j =
-                    cq.c_q * mass_prod * emission_i * absorption_j / r4s * doppler;
+                    cq.c_q * mass_prod * emission_i * absorption_j / r4s * doppler * epush_i;
                 let f_charge_on_i =
-                    cq.c_q * mass_prod * emission_j * absorption_i / r4s * doppler;
+                    cq.c_q * mass_prod * emission_j * absorption_i / r4s * doppler * epush_j;
 
                 // Meridional emission-pressure gradient (transverse confinement).
                 // The radial charge push above is the r-component of a photon
@@ -2930,13 +3014,15 @@ impl AtomCore {
                 // θ̂ = (d̂·cosθ − pole_nearest)/sinθ, singular only on-axis
                 // where dE/dθ = 0 anyway.
                 {
-                    // i's emission gradient acting on j
+                    // i's emission gradient acting on j (× epush_i with
+                    // the radial push it is the θ-component of)
                     let pole_eff_i = pole_i * cos_theta_i.signum();
                     let sin_i = (1.0 - cos_theta_i * cos_theta_i).max(0.0).sqrt();
                     if sin_i > 1e-6 {
                         let theta_hat = (d_hat * cos_theta_i.abs() - pole_eff_i) / sin_i;
                         let de = pi_prof.emission.d_dtheta(cos_theta_i);
-                        let f_conf = -cq.c_q * mass_prod * absorption_j * de / (3.0 * r4s);
+                        let f_conf =
+                            -cq.c_q * mass_prod * absorption_j * de * epush_i / (3.0 * r4s);
                         self.particles[j].force_accum += theta_hat * f_conf;
                         self.particles[i].force_accum -= theta_hat * f_conf;
                     }
@@ -2946,7 +3032,8 @@ impl AtomCore {
                     if sin_j > 1e-6 {
                         let theta_hat = (-d_hat * cos_theta_j.abs() - pole_eff_j) / sin_j;
                         let de = pj_prof.emission.d_dtheta(cos_theta_j);
-                        let f_conf = -cq.c_q * mass_prod * absorption_i * de / (3.0 * r4s);
+                        let f_conf =
+                            -cq.c_q * mass_prod * absorption_i * de * epush_j / (3.0 * r4s);
                         self.particles[i].force_accum += theta_hat * f_conf;
                         self.particles[j].force_accum -= theta_hat * f_conf;
                     }
@@ -2976,10 +3063,14 @@ impl AtomCore {
                 let aj2 = absorption_j * absorption_j;
 
                 // Radial intake: pulls toward the emitter, 1/r² (flow sink).
-                let f_intake_on_j =
-                    cq.intake * pi_prof.mass * pj_prof.mass * ai2 * (1.0 - occ) / r2s;
-                let f_intake_on_i =
-                    cq.intake * pj_prof.mass * pi_prof.mass * aj2 * (1.0 - occ) / r2s;
+                // × suction (Phase B.2): a FED funnel sucks harder than
+                // its static absorption profile — the plug-retention
+                // mechanism (phos.pdf; the static term measures ~0.016
+                // at a carbon socket regardless of live flow).
+                let f_intake_on_j = cq.intake * pi_prof.mass * pj_prof.mass
+                    * ai2 * suction_i * (1.0 - occ) / r2s;
+                let f_intake_on_i = cq.intake * pj_prof.mass * pi_prof.mass
+                    * aj2 * suction_j * (1.0 - occ) / r2s;
 
                 // Stream-collision cushion: opposing charge streams meet
                 // head-on between the pair. Two symmetric channels:
@@ -3030,8 +3121,10 @@ impl AtomCore {
                     let lat_dist_i = lateral_i.length();
                     if lat_dist_i > 1e-9 {
                         let toward_axis = -lateral_i / lat_dist_i;
+                        // × suction: the same live vortex as the radial
+                        // intake term (Phase B.2).
                         let f_chan = cq.intake * pi_prof.mass
-                            * pj_prof.mass * ai2 * lat_dist_i / (r * r2s);
+                            * pj_prof.mass * ai2 * suction_i * lat_dist_i / (r * r2s);
                         self.particles[j].force_accum += toward_axis * f_chan;
                     }
                     // Channel i toward j's pole axis
@@ -3042,7 +3135,7 @@ impl AtomCore {
                     if lat_dist_j > 1e-9 {
                         let toward_axis = -lateral_j / lat_dist_j;
                         let f_chan = cq.intake * pj_prof.mass
-                            * pi_prof.mass * aj2 * lat_dist_j / (r * r2s);
+                            * pi_prof.mass * aj2 * suction_j * lat_dist_j / (r * r2s);
                         self.particles[i].force_accum += toward_axis * f_chan;
                     }
 

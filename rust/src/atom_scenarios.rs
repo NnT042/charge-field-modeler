@@ -1170,27 +1170,33 @@ mod tests {
         // must never ship on them alone. Each entry carries its gate
         // evidence; re-run the gate to challenge an entry.
         //
-        // - (0.9, 2.0): won the Phase-B sweep at 7.8%/7.8%, then 4 of 8
-        //   seeds collapsed at 475k-825k steps (session 32, flow tension
-        //   1.0/0.5 active — the PRE-sign-fix tension; see below).
-        //   Same slow-escape shape the whirl fix addressed, at a
-        //   different point in coupling space.
-        // - (0.85, 2.0): won this chooser after the session-33 tension
-        //   SIGN FIX (5.7%/9.4%), then seeds k=2/k=5 collapsed at
-        //   325k/575k steps (fixed tension 1.0/0.5). Low ambient keeps
-        //   losing the long game regardless of tension era.
-        // - (0.85, 5.0): the session-32 default. With the FIXED tension
-        //   sign it drops to 7/8 (k=0 collapse at 700k) — the corrected
-        //   symmetric tension (which no longer self-cancels) shifted the
-        //   attractor. Superseded by (0.85, 10.0): 8/8, all seeds on the
-        //   same cold compressed attractor (session 33).
-        // - (0.95, 2.0): the post-(0.85,5.0)-veto chooser pick
-        //   (14.5%/14.2%) — 4/8 seeds collapse at 250k-600k (fixed
-        //   tension). Third low-ambient combo to win short-horizon and
-        //   lose the 1M gate: the pattern is now clearly AMBIENT-driven,
-        //   not channeling-driven.
+        // SESSION-34 RE-DERIVATION: the flow-network NO-STARVE fix
+        // (charge_flow.rs pass 2) changed every live flow amplitude and
+        // therefore the tension/align forces, so ALL pre-v2 gate
+        // evidence was retired and the five contenders were re-gated
+        // under the new network. Results (8 seeds × 1M each):
+        //   (0.85,  5.0) 8/8 all-cold [3.34/6.68, KE 5e-4] → UN-VETOED,
+        //                and as best surviving margin (13.7%/12.5%) it
+        //                is the shipped default again (as in session 32).
+        //   (0.85, 10.0) 8/8 all-cold [3.24/6.47] — clean runner-up,
+        //                not vetoed (worse margins, never wins).
+        //
+        // Standing vetoes (network-v2 evidence unless noted):
+        // - (0.9, 5.0): the naive post-fix chooser winner — seeds k=0/k=4
+        //   collapse at 800k/350k.
+        // - (0.9, 2.0): seeds collapse 2/8 (also failed 4/8 in the
+        //   session-32 starved-network era — consistently bad).
+        // - (0.85, 2.0): no collapse by 1M, but 3/8 seeds heat
+        //   MONOTONICALLY to KE ≈ 128 (vs 4e-4 cold) with growing tilt —
+        //   the pre-collapse whirl signature; vetoed for failing to
+        //   reach a stable attractor. Low ambient keeps losing the long
+        //   game in every era.
+        // - (0.95, 2.0): STARVED-NETWORK evidence only (4/8 collapse,
+        //   session 33) — not re-gated under v2 because it cannot win
+        //   this chooser anyway (15.0% quiet loses to 13.7%); re-gate it
+        //   before ever un-vetoing.
         const LONG_HORIZON_VETO: &[(f64, f64)] =
-            &[(0.9, 2.0), (0.85, 2.0), (0.85, 5.0), (0.95, 2.0)];
+            &[(0.9, 5.0), (0.9, 2.0), (0.85, 2.0), (0.95, 2.0)];
 
         // Choose defaults = the combo with the largest margin against BOTH
         // failure modes (lowest worst-case max-drift across quiet AND
@@ -1578,7 +1584,8 @@ mod tests {
     /// CANDIDATE default can be driven through the 1M gate without
     /// editing `Couplings::default` before it has earned the change
     /// (session-32 LONG_HORIZON_VETO discipline). Recognized:
-    /// CFM_CHAN, CFM_AMB, CFM_TENSION, CFM_ALIGN.
+    /// CFM_CHAN, CFM_AMB, CFM_TENSION, CFM_ALIGN, CFM_SUCTION,
+    /// CFM_EMITSCALE, CFM_GAP.
     fn apply_env_overrides(core: &mut AtomCore) {
         let get = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<f64>().ok());
         if let Some(v) = get("CFM_CHAN") {
@@ -1592,6 +1599,18 @@ mod tests {
         }
         if let Some(v) = get("CFM_ALIGN") {
             core.flow_align = v;
+        }
+        if let Some(v) = get("CFM_SUCTION") {
+            core.flow_suction = v;
+        }
+        if let Some(v) = get("CFM_EMITSCALE") {
+            core.flow_emit_scale = v;
+        }
+        if let Some(v) = get("CFM_GAP") {
+            core.plug_pair_gap = v;
+        }
+        if let Some(v) = get("CFM_FLOWEVERY") {
+            core.flow_solve_every = (v as usize).max(1);
         }
     }
 
@@ -2015,6 +2034,7 @@ mod tests {
             // concluded boost=1.0).
             {
                 let mut core = standard_core();
+                apply_env_overrides(&mut core);
                 core.post_anatomy = anatomy;
                 let gid = core
                     .spawn_preset("alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
@@ -2041,6 +2061,7 @@ mod tests {
             // (b) RigidAlpha carbon quiet run, 100k steps.
             {
                 let mut core = standard_core();
+                apply_env_overrides(&mut core);
                 core.post_anatomy = anatomy;
                 let gid = core
                     .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
@@ -2103,6 +2124,7 @@ mod tests {
                 print!("Transient seeds (200k steps): ");
                 for k in 0..4usize {
                     let mut core = standard_core();
+                    apply_env_overrides(&mut core);
                     core.post_anatomy = anatomy;
                     burn_seed_offset(&mut core, k);
                     let gid = core
@@ -2216,6 +2238,15 @@ mod tests {
     fn report_plug_retention() {
         // ── Rest-pose force anatomy ──
         let mut core = standard_core();
+        apply_env_overrides(&mut core);
+        println!(
+            "knobs: gap={} suction={} emit_scale={} tension={} align={}",
+            core.plug_pair_gap,
+            core.flow_suction,
+            core.flow_emit_scale,
+            core.flow_tension,
+            core.flow_align,
+        );
         let gid = core
             .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
             .expect("carbon preset");
@@ -2290,6 +2321,7 @@ mod tests {
         // cases in report_carbon_stability) ──
         for k in [0usize, 2] {
             let mut core = standard_core();
+            apply_env_overrides(&mut core);
             burn_seed_offset(&mut core, k);
             let gid = core
                 .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
@@ -2347,6 +2379,8 @@ mod tests {
 
         let drift_run = |preset: &str, tension: f64, k: usize| -> (f64, f64, bool) {
             let mut core = standard_core();
+            apply_env_overrides(&mut core); // honors CFM_GAP for the
+                                            // post-pump-kill retest
             core.flow_tension = tension;
             core.flow_align = tension * 0.5;
             burn_seed_offset(&mut core, k);
@@ -2433,6 +2467,14 @@ mod tests {
                 c.couplings.vortex = 0.0;
                 c.couplings.corot = 0.0;
             }),
+            // Session-34: flow-solver staleness as an injector — the
+            // Phase B forces read amplitudes up to 8 steps old, and the
+            // no-starve network roughly doubled those amplitudes.
+            ("solve_every=1", |c| c.flow_solve_every = 1),
+            ("solve_every=1 vortex=0", |c| {
+                c.flow_solve_every = 1;
+                c.couplings.vortex = 0.0;
+            }),
         ];
 
         println!(
@@ -2443,6 +2485,7 @@ mod tests {
             let mut cols = Vec::new();
             for k in 0..2usize {
                 let mut core = standard_core();
+                apply_env_overrides(&mut core); // CFM_GAP etc.
                 ablate(&mut core);
                 burn_seed_offset(&mut core, k);
                 let gid = core
@@ -2794,6 +2837,86 @@ mod tests {
                 fmt("carbon"),
                 fmt("tri_alpha")
             );
+        }
+    }
+
+    /// Session-34 Phase B.2: throughput-scaled suction sweep — the
+    /// plug-retention missing piece (phos.pdf: a FED socket has
+    /// suction; the static intake term measures ~0.016 at the carbon
+    /// socket regardless of live flow). flow_suction scales the intake
+    /// pull + channeling force by each body's live FlowState::mult;
+    /// flow_emit_scale does the same to the charge push ("a fed funnel
+    /// pushes harder" — expected to oppose retention, swept alongside
+    /// so the matrix attributes both). Runs at the report_plug_matrix
+    /// best cell (plug_pair_gap=0.35 — pump dead, plugs slide off
+    /// quietly at 137-466%). tri_alpha swept as the do-no-harm control.
+    /// Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_suction_sweep --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_suction_sweep() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        let run = |preset: &str, suction: f64, emit: f64, k: usize| -> (f64, f64) {
+            let mut core = standard_core();
+            core.plug_pair_gap = 0.35;
+            core.flow_suction = suction;
+            core.flow_emit_scale = emit;
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+            let mut worst = 0.0f64;
+            core.running = true;
+            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                }
+            }
+            (worst, core.total_kinetic_energy())
+        };
+
+        println!(
+            "\n{:>8} {:>5} | {:>52} | {:>52}",
+            "suction",
+            "emit",
+            "carbon (gap 0.35) worst drift / KE (k=0..3)",
+            "tri_alpha worst drift / KE (k=0..3)"
+        );
+        for &suction in &[0.0, 1.0, 2.0, 4.0, 8.0] {
+            for &emit in &[0.0, 1.0] {
+                if suction == 0.0 && emit != 0.0 {
+                    continue;
+                }
+                let fmt = |preset: &str| -> String {
+                    (0..4)
+                        .map(|k| {
+                            let (w, ke) = run(preset, suction, emit, k);
+                            format!("{:>5.0}%/{:<6.0}", w * 100.0, ke)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                println!(
+                    "{suction:>8.1} {emit:>5.1} | {:>52} | {:>52}",
+                    fmt("carbon"),
+                    fmt("tri_alpha")
+                );
+            }
         }
     }
 

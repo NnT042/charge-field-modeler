@@ -56,6 +56,22 @@ pub const DEFAULT_FLOW_TENSION: f64 = 1.0;
 /// analysis proved velocity damping cannot provide, and the deut.pdf
 /// post-regulator mechanism. Runtime field `AtomCore::flow_align`.
 pub const DEFAULT_FLOW_ALIGN: f64 = 0.5;
+/// Phase B.2 default (session 34): throughput-scaled SUCTION gain. The
+/// intake pull and channeling force from a body scale by
+/// `1 + gain·(mult − 1)` of its LIVE `FlowState::mult` — a fed socket
+/// sucks harder than its static absorption profile says, an unfed one
+/// sucks less (phos.pdf: an unfed socket "doesn't have much pull, or
+/// suction"). A free particle has mult = 1 by construction, so the
+/// scaling is exactly transparent outside a live network at ANY gain.
+/// 0.0 = off until the plug-retention sweep + full battery earn a
+/// value. Runtime field `AtomCore::flow_suction`.
+pub const DEFAULT_FLOW_SUCTION: f64 = 0.0;
+/// Phase B.2 default: throughput-scaled EMISSION gain, same form on the
+/// charge push (design doc: "a fed funnel pushes harder than a starved
+/// one"). Factored from suction so the retention matrix can attribute
+/// the two effects separately. Runtime field
+/// `AtomCore::flow_emit_scale`.
+pub const DEFAULT_FLOW_EMIT_SCALE: f64 = 0.0;
 
 /// Live charge-flow state of one particle. Pole index convention:
 /// 0 = south (−pole_axis), 1 = north (+pole_axis).
@@ -223,17 +239,10 @@ impl AtomCore {
             }
         }
 
-        // Pass 2: intakes = ambient (reduced where a pole is plugged)
+        // Pass 2: intakes = ambient (displaced where a pole is plugged)
         // + normalized captured streams from last sweep's outputs.
         let prev: Vec<FlowState> = self.particles.iter().map(|p| p.flow).collect();
-        let mut intake = vec![[0.0f64; 2]; n];
-        for j in 0..n {
-            let (baseline, _, _) = self.flow_params(self.particles[j].profile_id);
-            for p in 0..2usize {
-                let plugged = pole_capture[j][p].min(1.0);
-                intake[j][p] = 0.5 * baseline * (1.0 - plugged);
-            }
-        }
+        let mut delivered = vec![[0.0f64; 2]; n];
         for e in &edges {
             let out = match e.port {
                 2 => prev[e.i].lateral,
@@ -245,7 +254,41 @@ impl AtomCore {
             // Output-side normalization: the port's captures share its
             // actual output, never exceeding it.
             let share = e.g / port_demand[e.i][e.port].max(1.0);
-            intake[e.j][e.p] += out * share;
+            delivered[e.j][e.p] += out * share;
+        }
+        let mut intake = vec![[0.0f64; 2]; n];
+        for j in 0..n {
+            let (baseline, _, _) = self.flow_params(self.particles[j].profile_id);
+            let ambient = 0.5 * baseline;
+            for p in 0..2usize {
+                // Session-34 no-starve rule: ambient is displaced only to
+                // the extent the captured stream actually REPLACES it —
+                // deut.pdf's leaky hose ("like a hose that hasn't been
+                // screwed in all the way ... some charge will dissipate
+                // laterally" — and, symmetrically, ambient keeps seeping
+                // IN through an incomplete plug). The original rule
+                // debited the full geometric capture demand while
+                // crediting only the (competition-shared, cos²-gated)
+                // delivered stream, which systematically STARVED every
+                // plugged body: carbon ran at mult 0.53-0.80 everywhere
+                // (total intake 7.3 vs 10.0 free), inverting
+                // graphene.pdf's picture of polar plugs as "fans,
+                // increasing the charge streams coming in" — and made
+                // mult-scaled suction (Phase B.2) self-defeating, since
+                // it zeroed the starved plug pair's own vortex glue.
+                // With displacement capped at delivered/ambient, a
+                // pole's intake never drops below its free-field
+                // ambient: plugging can feed, never starve. (Stoppering
+                // — diatom.pdf's electron drying up a vortex — is a
+                // separate occlusion effect, not modeled in flow v1.)
+                let plugged = pole_capture[j][p].min(1.0);
+                let displaced = if ambient > 1e-12 {
+                    plugged.min(delivered[j][p] / ambient)
+                } else {
+                    plugged
+                };
+                intake[j][p] = ambient * (1.0 - displaced) + delivered[j][p];
+            }
         }
 
         // Pass 3: conservation, routing, multipliers.
