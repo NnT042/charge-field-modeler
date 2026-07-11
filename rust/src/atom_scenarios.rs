@@ -3318,6 +3318,91 @@ mod tests {
         }
     }
 
+    /// Session-35 element FORCE MAP — the "forces coming in and out of a
+    /// particular element" (user's Phase-2 aim: lay oxygen in open space,
+    /// have it form O₂ on its own). Probe the force a lone test proton (the
+    /// universal plug) feels at a grid of positions around a RigidLock,
+    /// N-S-aligned nucleus. The radial force sign IS the map: NEGATIVE =
+    /// pulled IN (a polar intake socket — where a partner atom plugs in and
+    /// bonds); POSITIVE = pushed OUT (equatorial emission disc — the
+    /// standoff/repel). The probe faces the socket (pole toward center),
+    /// like an approaching plug. RigidLock so the source is a clean, stable
+    /// rigid field; the probe↔nucleus pairs are INTER-group, so un-skipped
+    /// and fully real — this is exactly the chemistry force, not a faked
+    /// motion. Ambient globals zeroed to isolate the element's own field.
+    /// Run: `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_element_field_map --nocapture`
+    #[test]
+    #[ignore]
+    fn report_element_field_map() {
+        use crate::atom_core::NucleusDynamics;
+        let thetas_deg: &[f64] = &[0.0, 15.0, 30.0, 45.0, 60.0, 90.0];
+        let radii: &[f64] = &[3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 7.0, 8.0, 10.0];
+        for element in ["carbon", "oxygen"] {
+            let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            core.plug_pair_gap = 0.35;
+            core.ambient_gravity = DVec3::ZERO;
+            core.ambient_charge = DVec3::ZERO;
+            core.spawn_preset(element, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(NucleusDynamics::RigidLock);
+            for _ in 0..40 {
+                core.solve_charge_flow();
+            }
+            let p_id = core.profile_id_by_name("proton").unwrap();
+            let probe = core
+                .spawn_particle_ex(
+                    p_id,
+                    DVec3::new(0.0, 6.0, 0.0),
+                    DVec3::ZERO,
+                    -DVec3::Y,
+                    0.0,
+                )
+                .expect("probe");
+            println!(
+                "\n== {element}: radial force on a test proton  (− = intake/bond site, + = emit/repel) ==\n\
+                 {:>11} | {}",
+                "θ from pole",
+                radii
+                    .iter()
+                    .map(|r| format!("{:>8}", format!("r={r:.1}")))
+                    .collect::<String>()
+            );
+            for &th_deg in thetas_deg {
+                let th = th_deg.to_radians();
+                // +Y = pole axis, +X = equator.
+                let dir = DVec3::new(th.sin(), th.cos(), 0.0);
+                let row: String = radii
+                    .iter()
+                    .map(|&r| {
+                        let pos = dir * r;
+                        // Distance to nearest nucleus body: inside contact
+                        // range the hard-sphere spring dominates and the
+                        // number is meaningless — mark it buried instead.
+                        let min_d = core
+                            .particles
+                            .iter()
+                            .take(core.particles.len() - 1) // exclude the probe
+                            .map(|p| (p.position - pos).length())
+                            .fold(f64::INFINITY, f64::min);
+                        if min_d < 2.4 {
+                            return format!("{:>8}", "·buried");
+                        }
+                        core.particles[probe].position = pos;
+                        core.particles[probe].orientation =
+                            glam::DQuat::from_rotation_arc(DVec3::Y, -dir);
+                        core.particles[probe].velocity = DVec3::ZERO;
+                        core.compute_forces();
+                        let f_r = core.particles[probe].force_accum.dot(dir);
+                        format!("{f_r:>8.2}")
+                    })
+                    .collect();
+                println!("{th_deg:>10.0}° | {row}");
+            }
+        }
+    }
+
     /// Session-33 negative control (haf.pdf free prediction): a bare
     /// FOUR-alpha stack "can't hold together" — external side-charge
     /// overwhelms the weak bare-stack channel. The current force model
