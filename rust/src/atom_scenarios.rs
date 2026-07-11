@@ -1172,9 +1172,25 @@ mod tests {
         //
         // - (0.9, 2.0): won the Phase-B sweep at 7.8%/7.8%, then 4 of 8
         //   seeds collapsed at 475k-825k steps (session 32, flow tension
-        //   1.0/0.5 active). Same slow-escape shape the whirl fix
-        //   addressed, at a different point in coupling space.
-        const LONG_HORIZON_VETO: &[(f64, f64)] = &[(0.9, 2.0)];
+        //   1.0/0.5 active — the PRE-sign-fix tension; see below).
+        //   Same slow-escape shape the whirl fix addressed, at a
+        //   different point in coupling space.
+        // - (0.85, 2.0): won this chooser after the session-33 tension
+        //   SIGN FIX (5.7%/9.4%), then seeds k=2/k=5 collapsed at
+        //   325k/575k steps (fixed tension 1.0/0.5). Low ambient keeps
+        //   losing the long game regardless of tension era.
+        // - (0.85, 5.0): the session-32 default. With the FIXED tension
+        //   sign it drops to 7/8 (k=0 collapse at 700k) — the corrected
+        //   symmetric tension (which no longer self-cancels) shifted the
+        //   attractor. Superseded by (0.85, 10.0): 8/8, all seeds on the
+        //   same cold compressed attractor (session 33).
+        // - (0.95, 2.0): the post-(0.85,5.0)-veto chooser pick
+        //   (14.5%/14.2%) — 4/8 seeds collapse at 250k-600k (fixed
+        //   tension). Third low-ambient combo to win short-horizon and
+        //   lose the 1M gate: the pattern is now clearly AMBIENT-driven,
+        //   not channeling-driven.
+        const LONG_HORIZON_VETO: &[(f64, f64)] =
+            &[(0.9, 2.0), (0.85, 2.0), (0.85, 5.0), (0.95, 2.0)];
 
         // Choose defaults = the combo with the largest margin against BOTH
         // failure modes (lowest worst-case max-drift across quiet AND
@@ -1558,6 +1574,27 @@ mod tests {
     /// Report only — no assertions. Run:
     /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
     ///  report_long_horizon_drift --nocapture`
+    /// Optional env overrides for the ignored long-run reports, so a
+    /// CANDIDATE default can be driven through the 1M gate without
+    /// editing `Couplings::default` before it has earned the change
+    /// (session-32 LONG_HORIZON_VETO discipline). Recognized:
+    /// CFM_CHAN, CFM_AMB, CFM_TENSION, CFM_ALIGN.
+    fn apply_env_overrides(core: &mut AtomCore) {
+        let get = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<f64>().ok());
+        if let Some(v) = get("CFM_CHAN") {
+            core.couplings.channeling = v;
+        }
+        if let Some(v) = get("CFM_AMB") {
+            core.couplings.nuclear_ambient = v;
+        }
+        if let Some(v) = get("CFM_TENSION") {
+            core.flow_tension = v;
+        }
+        if let Some(v) = get("CFM_ALIGN") {
+            core.flow_align = v;
+        }
+    }
+
     #[test]
     #[ignore]
     fn report_long_horizon_drift() {
@@ -1566,6 +1603,16 @@ mod tests {
 
         for k in 0..8usize {
             let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            if k == 0 {
+                println!(
+                    "couplings: channeling={} nuclear_ambient={} flow_tension={} flow_align={}",
+                    core.couplings.channeling,
+                    core.couplings.nuclear_ambient,
+                    core.flow_tension,
+                    core.flow_align,
+                );
+            }
             burn_seed_offset(&mut core, k);
             let gid = core
                 .spawn_preset("tri_alpha", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
@@ -2153,6 +2200,283 @@ mod tests {
                 kind(worst_pair.0),
                 kind(worst_pair.1),
             );
+        }
+    }
+
+    /// Session-32 plug-retention diagnostic: WHERE does the plugged
+    /// carbon go, and WHAT force ejects it? Per-alpha COM trajectories
+    /// (cylindrical about the group COM) plus rest-pose pair force
+    /// breakdowns for every plug↔socket-proton, plug↔plug-partner and
+    /// core↔core pair — the same anatomy view that found the post
+    /// interpenetration bug in Phase B. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_retention --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_retention() {
+        // ── Rest-pose force anatomy ──
+        let mut core = standard_core();
+        let gid = core
+            .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+            .expect("carbon preset");
+        core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+        core.running = true;
+        core.step_n(200);
+
+        let alphas = &core.groups[gid].alphas;
+        let label = |core: &AtomCore, ai: usize| -> String {
+            let a = &core.groups[gid].alphas[ai];
+            if a.members.len() == 4 {
+                format!("core{ai}")
+            } else {
+                let name = &core.profiles[core.particles[a.members[0]].profile_id].name;
+                let side = if a.com.y < 0.0 { "-" } else { "+" };
+                format!("plug{}{side}", &name[..1].to_uppercase())
+            }
+        };
+        // Pairs of interest: each plug particle vs its nearest core
+        // proton (the socket), vs its partner plug, and core end protons
+        // vs each other.
+        let mut pairs: Vec<(usize, usize, String)> = Vec::new();
+        let core_protons: Vec<usize> = alphas
+            .iter()
+            .filter(|a| a.members.len() == 4)
+            .flat_map(|a| a.members.clone())
+            .filter(|&m| core.profiles[core.particles[m].profile_id].name == "proton")
+            .collect();
+        let plug_alphas: Vec<usize> = (0..alphas.len())
+            .filter(|&ai| alphas[ai].members.len() == 1)
+            .collect();
+        for &ai in &plug_alphas {
+            let m = core.groups[gid].alphas[ai].members[0];
+            let socket = core_protons
+                .iter()
+                .copied()
+                .min_by(|&a, &b| {
+                    core.pair_distance(m, a)
+                        .partial_cmp(&core.pair_distance(m, b))
+                        .unwrap()
+                })
+                .unwrap();
+            pairs.push((m, socket, format!("{}↔socket", label(&core, ai))));
+            for &aj in &plug_alphas {
+                if aj > ai {
+                    let mj = core.groups[gid].alphas[aj].members[0];
+                    if core.pair_distance(m, mj) < 3.0 {
+                        pairs.push((
+                            m,
+                            mj,
+                            format!("{}↔{}", label(&core, ai), label(&core, aj)),
+                        ));
+                    }
+                }
+            }
+        }
+
+        println!(
+            "\n-- carbon rest-pose pair anatomy (RigidAlpha, t≈200 steps) --\n\
+             {:>18} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>9}",
+            "pair", "r", "channel", "grav", "charge", "ambient", "intake", "stream", "contact", "tension"
+        );
+        for (i, j, name) in &pairs {
+            let fb = core.pair_force_breakdown(*i, *j);
+            println!(
+                "{name:>18} {:>6.3} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>+9.4}",
+                fb[0], fb[1], fb[2], fb[3], fb[4], fb[5], fb[6], fb[7], fb[8],
+            );
+        }
+
+        // ── Trajectories: seeds 0 and 2 (plug-plug and core-core worst
+        // cases in report_carbon_stability) ──
+        for k in [0usize, 2] {
+            let mut core = standard_core();
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            core.running = true;
+            let n_alphas = core.groups[gid].alphas.len();
+            let labels: Vec<String> =
+                (0..n_alphas).map(|ai| label(&core, ai)).collect();
+            println!(
+                "\n== seed k={k} per-alpha (lat, y) about group COM ==\n{:>6} {:>10} {}",
+                "step",
+                "KE",
+                labels
+                    .iter()
+                    .map(|l| format!("{l:>14}"))
+                    .collect::<String>(),
+            );
+            for s in 0..15 {
+                core.step_n(20_000);
+                let com: DVec3 = (0..n_alphas)
+                    .map(|ai| core.groups[gid].alphas[ai].com)
+                    .sum::<DVec3>()
+                    / n_alphas as f64;
+                let row: String = (0..n_alphas)
+                    .map(|ai| {
+                        let d = core.groups[gid].alphas[ai].com - com;
+                        format!(
+                            "{:>14}",
+                            format!("({:.2},{:+.2})", (d.x * d.x + d.z * d.z).sqrt(), d.y)
+                        )
+                    })
+                    .collect();
+                println!(
+                    "{:>6} {:>10.4} {row}",
+                    (s + 1) * 20_000,
+                    core.total_kinetic_energy(),
+                );
+            }
+        }
+    }
+
+    /// Session-32 post-sign-fix calibration: flow_tension (align =
+    /// tension/2, the earned ratio) swept against plugged-carbon
+    /// retention (4 seeds × 300k) AND tri_alpha quiet drift — the fixed
+    /// sign doubles tension on symmetric links instead of cancelling it,
+    /// so the old tension=1.0 default must be re-earned, not assumed. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_tension_sweep --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_tension_sweep() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        let drift_run = |preset: &str, tension: f64, k: usize| -> (f64, f64, bool) {
+            let mut core = standard_core();
+            core.flow_tension = tension;
+            core.flow_align = tension * 0.5;
+            burn_seed_offset(&mut core, k);
+            let gid = core
+                .spawn_preset(preset, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            let n_alphas = core.groups[gid].alphas.len();
+            let com = |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+            let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                .collect();
+            let d0: Vec<f64> = pairs
+                .iter()
+                .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                .collect();
+            let mut worst = 0.0f64;
+            core.running = true;
+            for _ in 0..(STEPS / SAMPLE_EVERY) {
+                core.step_n(SAMPLE_EVERY);
+                for (idx, &(a, b)) in pairs.iter().enumerate() {
+                    let d = (com(&core, a) - com(&core, b)).length();
+                    worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                }
+            }
+            let finite = core.particles.iter().all(|p| p.position.is_finite());
+            (worst, core.total_kinetic_energy(), finite)
+        };
+
+        println!(
+            "\n{:>8} | {:>40} | {:>40}",
+            "tension", "carbon worst drift (k=0..3)", "tri_alpha worst drift (k=0..3)"
+        );
+        for &tension in &[0.5, 1.0, 2.0, 4.0, 8.0] {
+            let fmt = |preset: &str| -> String {
+                (0..4)
+                    .map(|k| {
+                        let (w, ke, finite) = drift_run(preset, tension, k);
+                        format!(
+                            "{:>6.0}%{}(KE {ke:.0})",
+                            w * 100.0,
+                            if finite { "" } else { "!" }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!("{tension:>8.1} | {:>40} | {:>40}", fmt("carbon"), fmt("tri_alpha"));
+        }
+    }
+
+    /// Session-32 energy-pump ablation: the plugged carbon gains KE
+    /// unboundedly (up to ~4000 over 300k) at EVERY flow_tension while
+    /// tri_alpha stays cold at every one — some force term injects
+    /// energy only in plug configurations. Toggle the suspects one at a
+    /// time and watch end-state KE + worst drift. Known-suspect notes:
+    /// vortex has no reaction force (Opus audit); the flow solver is 8
+    /// steps stale, making tension slightly non-conservative; align
+    /// torques act on near-zero-inertia 1-nucleon plug alphas. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_energy_ablation --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_energy_ablation() {
+        const STEPS: usize = 300_000;
+        const SAMPLE_EVERY: usize = 10_000;
+
+        type Ablate = fn(&mut AtomCore);
+        let cases: &[(&str, Ablate)] = &[
+            ("baseline", |_c| {}),
+            ("align=0", |c| c.flow_align = 0.0),
+            ("tension=0 align=0", |c| {
+                c.flow_tension = 0.0;
+                c.flow_align = 0.0;
+            }),
+            ("vortex=0", |c| c.couplings.vortex = 0.0),
+            ("corot=0", |c| c.couplings.corot = 0.0),
+            ("torque=0", |c| c.couplings.torque = 0.0),
+            ("vortex=0 align=0", |c| {
+                c.couplings.vortex = 0.0;
+                c.flow_align = 0.0;
+            }),
+            ("vortex=0 corot=0", |c| {
+                c.couplings.vortex = 0.0;
+                c.couplings.corot = 0.0;
+            }),
+        ];
+
+        println!(
+            "\n{:>20} | {:>26} | {:>26}",
+            "ablation", "k=0 drift / KE", "k=1 drift / KE"
+        );
+        for (name, ablate) in cases {
+            let mut cols = Vec::new();
+            for k in 0..2usize {
+                let mut core = standard_core();
+                ablate(&mut core);
+                burn_seed_offset(&mut core, k);
+                let gid = core
+                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("carbon preset");
+                core.set_nucleus_dynamics(
+                    crate::atom_core::NucleusDynamics::RigidAlpha,
+                );
+                let n_alphas = core.groups[gid].alphas.len();
+                let com =
+                    |core: &AtomCore, ai: usize| core.groups[gid].alphas[ai].com;
+                let pairs: Vec<(usize, usize)> = (0..n_alphas)
+                    .flat_map(|a| ((a + 1)..n_alphas).map(move |b| (a, b)))
+                    .collect();
+                let d0: Vec<f64> = pairs
+                    .iter()
+                    .map(|&(a, b)| (com(&core, a) - com(&core, b)).length())
+                    .collect();
+                let mut worst = 0.0f64;
+                core.running = true;
+                for _ in 0..(STEPS / SAMPLE_EVERY) {
+                    core.step_n(SAMPLE_EVERY);
+                    for (idx, &(a, b)) in pairs.iter().enumerate() {
+                        let d = (com(&core, a) - com(&core, b)).length();
+                        worst = worst.max(((d - d0[idx]) / d0[idx]).abs());
+                    }
+                }
+                cols.push(format!(
+                    "{:>7.0}% / {:>10.1}",
+                    worst * 100.0,
+                    core.total_kinetic_energy()
+                ));
+            }
+            println!("{name:>20} | {:>26} | {:>26}", cols[0], cols[1]);
         }
     }
 

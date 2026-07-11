@@ -1014,10 +1014,21 @@ impl Default for Couplings {
     ///   to `channeling=0.9, nuclear_ambient=2.0` (7.8%/7.8%) — but that
     ///   combo FAILED the 8-seed × 1M-step long-horizon gate (4/8 seeds
     ///   collapse at 475k-825k), so it is on the sweep chooser's
-    ///   LONG_HORIZON_VETO list and the defaults stay at the
+    ///   LONG_HORIZON_VETO list and the defaults stayed at the then
     ///   gate-surviving `channeling=0.85, nuclear_ambient=5.0`
     ///   (12.3%/11.9% with tension). Lesson encoded in the chooser:
     ///   short-horizon margins alone must never ship a default.
+    ///
+    ///   Session 33 (tension SIGN FIX, THROUGH_CHARGE_DESIGN.md
+    ///   addendum) RETUNED `nuclear_ambient` 5.0 → 10.0. Fixing the
+    ///   inverted j-emits tension branch reshaped the long-horizon
+    ///   landscape: the post-fix chooser winner (0.85, 2.0) failed the
+    ///   1M gate (2/8), and the old (0.85, 5.0) default now fails it
+    ///   too (1/8, k=0 collapse at 700k) — both vetoed. (0.85, 10.0)
+    ///   is the next-best robust combo (16.5% quiet / 15.9% flyby) and
+    ///   passes the gate 8/8, every seed converging to the same cold
+    ///   compressed attractor (spacings 3.24/6.48, KE ≈ 5.6e-4,
+    ///   perfect axis alignment, channel at max).
     fn default() -> Self {
         Self {
             g_q: 1.0,
@@ -1031,7 +1042,7 @@ impl Default for Couplings {
             stream: 24.5,
             intra_nucleus_boost: INTRA_NUCLEUS_BOOST,
             channeling: 0.85,
-            nuclear_ambient: 5.0,
+            nuclear_ambient: 10.0,
         }
     }
 }

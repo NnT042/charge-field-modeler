@@ -3,6 +3,50 @@
 **Status: Phases A and B implemented. Phase C is design-locked but not
 built.**
 
+## Session-32 addendum: Phase B tension SIGN BUG (found and fixed)
+
+The original `flow_tension_pair` signed the two stream directions
+asymmetrically: links where the pair's `j` end was the EMITTER pushed
+the pair APART instead of pulling it together. Consequences, all
+verified by `report_plug_retention` before/after:
+
+- Symmetric links (core alpha ↔ core alpha, both feeding each other)
+  partially SELF-CANCELLED — the earlier tension sweeps looked monotone
+  but measured roughly half the intended glue, and the "tension supplies
+  part of the glue" Phase-B outcome understated the fixed-sign strength.
+- Asymmetric links were live wrong: the plugged-carbon socket stream
+  BLEW THE PLUG NEUTRON OFF (`plugN↔socket` signed tension +0.12
+  repulsive at rest; −0.27 attractive after the fix). This was the
+  dominant plug-retention killer — electron.pdf's "charge wind" glue
+  was acting as a leaf-blower.
+- Post-fix: plugs hug the stack axis in RigidAlpha trajectories; carbon
+  worst-drift halved (218–409% → 109–127% on 3 of 4 seeds).
+
+Re-earn outcome (fixed sign): three successive chooser winners FAILED
+the 8-seed × 1M gate — (0.85, 2.0) 2/8-fail (325k/575k), the shipped
+(0.85, 5.0) 1/8-fail (700k; its pre-fix 8/8 was earned against the
+buggy force), and (0.95, 2.0) 4/8-fail (250k–600k). All three joined
+`LONG_HORIZON_VETO`; the failure pattern is ambient-driven (every
+low-ambient combo wins short-horizon and loses the long game). **New
+defaults: channeling=0.85, nuclear_ambient=10.0** — 16.5% quiet /
+15.9% flyby in the chooser, and 8/8 × 1M with every seed converging to
+the same cold compressed attractor (spacings 3.24/6.48, KE ≈ 5.6e-4,
+perfect alignment).
+`flow_tension` stays 1.0 / `flow_align` 0.5: tension=2.0 was also gated
+and failed (7/8, k=5 at 375k), and the post-fix sweep
+(`report_plug_tension_sweep`) shows tri_alpha stable 10–13% at ALL
+tensions 0.5–8 while plugged carbon fails at ALL of them (96–825%, KE
+pumping to ~4000) — plug retention is NOT a tension-magnitude problem.
+The remaining blocker is an energy pump specific to plug configurations
+(`report_plug_energy_ablation`): tri_alpha ends 300k runs at KE ≈ 0
+while carbon ends hot in EVERY single-term ablation; best retention at
+`couplings.torque = 0` (61%/125% vs baseline 116%/109%) and much worse
+at `flow_align = 0` (452–482%) → leading hypothesis: the charge
+"equator toward charge" torque and the flow-align torque fight over the
+plug proton's edge-on orientation, and the loser precesses forever,
+pumping energy through the 8-step-stale flow solve. That torque
+contract is the next work item, ahead of Phase C2.
+
 Phase B outcome (session 32): stream tension + channel-alignment
 stiffness live on same-group pairs (`AtomCore::flow_tension = 1.0`,
 `flow_align = 0.5`; `flow_tension_pair` in charge_flow.rs, hooked into

@@ -383,9 +383,15 @@ impl AtomCore {
         let mut f_on_j = DVec3::ZERO;
         let mut tau = [DVec3::ZERO, DVec3::ZERO]; // [on i, on j]
 
-        // (emitter, receiver, d̂ from emitter to receiver, sign of the
-        // tension force on j along d_hat)
-        for &(e, v, dir, sign_j) in &[(i, j, d_hat, -1.0), (j, i, -d_hat, 1.0)] {
+        // (emitter, receiver, d̂ from emitter to receiver). Tension on j
+        // is ALWAYS −d_hat (toward i), whichever end emits — a stream
+        // pulls both of its ends together. The original Phase B code
+        // signed the j-emits branch +d_hat, turning every link where j
+        // is the emitter into REPULSION; that inverted force was the
+        // plug-retention killer (report_plug_retention, session 32: the
+        // socket's out-pole stream blew the plug neutron off instead of
+        // gluing it — electron.pdf's "charge wind" acts as a glue).
+        for &(e, v, dir) in &[(i, j, d_hat), (j, i, -d_hat)] {
             let pole_e = self.particles[e].pole_axis();
             let pole_v = self.particles[v].pole_axis();
             let fe = &self.particles[e].flow;
@@ -414,7 +420,7 @@ impl AtomCore {
                     let emit = c_emit * c_emit;
                     let share = 1.0 / fe.demand[q].max(1.0);
                     let flow = fall * emit * recv * out * share;
-                    f_on_j += d_hat * (sign_j * k_t * flow);
+                    f_on_j -= d_hat * (k_t * flow);
                     // Alignment: receiver face toward the arrival line,
                     // emitter exit toward the departure line.
                     let k_link = k_a * fall * out * share;
@@ -434,7 +440,7 @@ impl AtomCore {
                     if emit > 1e-6 {
                         let share = 1.0 / fe.demand[2].max(1.0);
                         let flow = fall * emit * recv * out * share;
-                        f_on_j += d_hat * (sign_j * k_t * flow);
+                        f_on_j -= d_hat * (k_t * flow);
                         let k_link = k_a * fall * out * share;
                         tau[tau_v_idx] +=
                             (face.cross(-dir)) * (2.0 * k_link * emit * c_recv);
