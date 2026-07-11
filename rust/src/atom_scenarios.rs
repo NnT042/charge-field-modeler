@@ -1630,6 +1630,9 @@ mod tests {
         if let Some(v) = get("CFM_PLUGLOCK") {
             core.plug_orient_lock = v > 0.5;
         }
+        if let Some(v) = get("CFM_AMBALIGN") {
+            core.ambient_align = v;
+        }
     }
 
     #[test]
@@ -3220,6 +3223,98 @@ mod tests {
                 );
             }
             core.step();
+        }
+    }
+
+    /// Session-35 "upright + stable" probe. User feedback on the in-app
+    /// carbon: the nucleus is "hooked to a mad gyroscope and refuses to
+    /// align with the ambient field". The papers say a nucleus turns to
+    /// "stand straight up, to align to E" (dielec.pdf) in a DIRECTIONAL
+    /// ambient field (pasta.pdf: Earth's field "is pointing straight up
+    /// everywhere"). This measures whether `apply_ambient_alignment` gives
+    /// the tumbling nucleus that orientation reference, and how RigidAlpha
+    /// (free alphas, emergent carousel) compares with RigidLock (rigid
+    /// fused body — uf4.pdf: "alphas can't be broken and rearranged").
+    ///
+    /// Ambient field tilted 45° off the spawn axis so alignment has real
+    /// work to do. Columns: KE (churn), upright = |n̂·â| (1 = principal
+    /// axis parallel to the field), spread = max |alpha_com − group_com|
+    /// (shape: a rigid nucleus holds it, a churning one grows it). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_upright --nocapture`
+    #[test]
+    #[ignore]
+    fn report_upright() {
+        use crate::atom_core::NucleusDynamics;
+        // Principal (long) axis of a member cloud about its mean position.
+        fn principal_axis(core: &AtomCore, members: &[usize], seed: DVec3) -> DVec3 {
+            let mut c = DVec3::ZERO;
+            for &m in members {
+                c += core.particles[m].position;
+            }
+            c /= members.len() as f64;
+            let offs: Vec<DVec3> =
+                members.iter().map(|&m| core.particles[m].position - c).collect();
+            let mut n = seed;
+            for _ in 0..12 {
+                let mut v = DVec3::ZERO;
+                for o in &offs {
+                    v += *o * o.dot(n);
+                }
+                let vl = v.length();
+                if vl < 1e-12 {
+                    break;
+                }
+                n = v / vl;
+            }
+            n
+        }
+
+        let amb_dir = DVec3::new(0.0, 1.0, 1.0).normalize(); // 45° off +Y spawn
+        for (mode_name, mode) in
+            [("RigidAlpha", NucleusDynamics::RigidAlpha), ("RigidLock", NucleusDynamics::RigidLock)]
+        {
+            for &align in &[0.0, 20.0, 80.0] {
+                let mut core = standard_core();
+                apply_env_overrides(&mut core);
+                core.plug_pair_gap = 0.35;
+                core.ambient_charge_dir = amb_dir;
+                core.ambient_align = align;
+                let gid = core
+                    .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("carbon preset");
+                core.set_nucleus_dynamics(mode);
+                let members = core.groups[gid].members.clone();
+                core.running = true;
+                println!(
+                    "\n== {mode_name}  ambient_align={align}  (field 45° off spawn axis) ==\n\
+                     {:>7} | {:>9} | {:>7} | {:>7}",
+                    "step", "KE", "upright", "spread"
+                );
+                let mut n_hat = principal_axis(&core, &members, amb_dir);
+                for s in 0..=200_000 {
+                    if s % 20_000 == 0 {
+                        n_hat = principal_axis(&core, &members, n_hat);
+                        let upright = n_hat.dot(amb_dir).abs();
+                        let mut c = DVec3::ZERO;
+                        for &m in &members {
+                            c += core.particles[m].position;
+                        }
+                        c /= members.len() as f64;
+                        let spread = members
+                            .iter()
+                            .map(|&m| (core.particles[m].position - c).length())
+                            .fold(0.0f64, f64::max);
+                        println!(
+                            "{s:>7} | {:>9.3} | {:>7.3} | {:>7.3}",
+                            core.total_kinetic_energy(),
+                            upright,
+                            spread
+                        );
+                    }
+                    core.step();
+                }
+            }
         }
     }
 

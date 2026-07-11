@@ -399,6 +399,84 @@ impl AtomCore {
         }
     }
 
+    /// Session-35 directional-ambient alignment torque. The ambient bath is
+    /// not isotropic — on Earth it "is pointing straight up everywhere"
+    /// (pasta.pdf) — and a nucleus "align[s] their intake vortices to
+    /// incoming charge ... turn[s] to stand straight up, to align to E"
+    /// (dielec.pdf; raman.pdf). We rotate each nucleus so its principal
+    /// (pole-to-pole intake) axis lines up with `ambient_charge_dir`. This
+    /// is what gives an otherwise free-tumbling nucleus an orientation
+    /// reference (the "mad gyroscope with nothing to align to").
+    ///
+    /// Applied as a zero-net-force COUPLE across the group's members
+    /// (`F_i = c·(τ̂×off_i)`, `Σr×F = τ`, `ΣF = 0`), so it injects pure
+    /// rigid-body torque and works in every mode: RigidAlpha alphas /
+    /// FreeNucleon nucleons feel the member forces directly; RigidLock
+    /// aggregates them into the group frame. Like confinement it is an
+    /// EXTERNAL-field force with no internal reaction pair (the momentum
+    /// comes from the ambient field), and an already-aligned nucleus feels
+    /// nothing. Settles (rather than oscillates) via the existing angular
+    /// damping (GROUP_SPIN_RELAX / ALPHA_SPIN_RELAX + tumble damping).
+    /// No-op when the field is isotropic (dir≈0) or the strength is 0.
+    pub(crate) fn apply_ambient_alignment(&mut self) {
+        let k = self.ambient_align;
+        let dir_len = self.ambient_charge_dir.length();
+        if k.abs() < 1e-12 || dir_len < 1e-9 {
+            return;
+        }
+        let a_hat = self.ambient_charge_dir / dir_len;
+        for gi in 0..self.groups.len() {
+            let members: Vec<usize> = self.groups[gi].members.clone();
+            if members.len() < 2 {
+                continue;
+            }
+            let (com, _) = self.live_group_frame(gi);
+            let offs: Vec<DVec3> = members
+                .iter()
+                .map(|&i| self.particles[i].position - com)
+                .collect();
+            // Principal (long) axis of the member cloud = the pole-to-pole
+            // channel. Power-iterate the covariance Σ oᵢ(oᵢ·n) from a_hat so
+            // it converges to the nearest principal direction (the stack
+            // axis dominates for an elongated nucleus).
+            let mut n = a_hat;
+            for _ in 0..8 {
+                let mut v = DVec3::ZERO;
+                for o in &offs {
+                    v += *o * o.dot(n);
+                }
+                let vl = v.length();
+                if vl < 1e-12 {
+                    break;
+                }
+                n = v / vl;
+            }
+            // Align to the nearer polarity (the channel is bidirectional).
+            let target = if n.dot(a_hat) < 0.0 { -a_hat } else { a_hat };
+            // Restoring torque n → target: axis n×target, magnitude k·sin(err).
+            let tau = n.cross(target) * k;
+            let tau_len = tau.length();
+            if tau_len < 1e-12 {
+                continue; // already aligned
+            }
+            let tau_hat = tau / tau_len;
+            // Couple normalizer c = τ / Σ|off_perp|².
+            let mut denom = 0.0;
+            for o in &offs {
+                let perp = *o - tau_hat * o.dot(tau_hat);
+                denom += perp.length_squared();
+            }
+            if denom < 1e-9 {
+                continue;
+            }
+            let c = tau_len / denom;
+            for (idx, &i) in members.iter().enumerate() {
+                let f = tau_hat.cross(offs[idx]) * c;
+                self.particles[i].force_accum += f;
+            }
+        }
+    }
+
     /// Phase B: stream tension + channel-alignment stiffness for one
     /// pair, evaluated at CURRENT geometry with flow amplitudes (and
     /// port-demand normalizers) from the last solver sweep. Returns

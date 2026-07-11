@@ -1263,6 +1263,18 @@ pub struct AtomCore {
     /// `apply_ambient_confinement`). Ships 0.0 (off) until the
     /// calibration re-earns the battery at a nonzero value.
     pub ambient_confine: f64,
+    /// Session-35 directional ambient charge field. The ambient bath is not
+    /// isotropic — on Earth it "is pointing straight up everywhere"
+    /// (pasta.pdf); nuclei "align their intake vortices to incoming charge"
+    /// and "turn to stand straight up, to align to E" (dielec.pdf;
+    /// raman.pdf: proper orientation is "inline with it"). `ambient_align`
+    /// is the aligning-torque strength; `ambient_charge_dir` is the field
+    /// AXIS (normalized on use; the pole-to-pole channel is bidirectional,
+    /// so a nucleus aligns to ±dir, whichever is nearer). Both ship 0 (the
+    /// isotropic, no-preferred-orientation status quo) until calibrated —
+    /// see `apply_ambient_alignment`.
+    pub ambient_align: f64,
+    pub ambient_charge_dir: DVec3,
     /// Session-33 gyroscopic spin stiffness (wig.pdf: "The increased
     /// angular momentum acts to prevent the protons from turning...
     /// Think of a spinning wheel, which resists being pushed sideways").
@@ -1354,6 +1366,8 @@ impl AtomCore {
             groups: Vec::new(),
             group_self_force: Vec::new(),
             couplings: Couplings::default(),
+            ambient_align: 0.0,
+            ambient_charge_dir: DVec3::ZERO,
             dynamics: NucleusDynamics::RigidLock,
             ambient_gravity: DVec3::ZERO,
             ambient_charge: DVec3::ZERO,
@@ -3432,6 +3446,13 @@ impl AtomCore {
         // charge_flow::apply_ambient_confinement). No-op while
         // `ambient_confine` is 0 or in RigidLock.
         self.apply_ambient_confinement();
+
+        // Directional-ambient alignment torque (session-35 — see
+        // charge_flow::apply_ambient_alignment). Rotates each nucleus's
+        // principal axis toward `ambient_charge_dir`; no-op while
+        // `ambient_align` is 0 or the field is isotropic. Zero net force, so
+        // it does not feed the self-force accumulator below.
+        self.apply_ambient_alignment();
 
         // Cancel each nucleus's intra-group self-propulsion (session-35; see
         // `group_self_force`). The proton→neutron emission asymmetry (audit:
