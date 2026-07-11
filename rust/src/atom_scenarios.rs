@@ -630,30 +630,32 @@ mod tests {
             assert_eq!(members.len(), expected, "{name} constituent count");
 
             // Polar plug geometry (session-29), rewritten in AlphaUnit
-            // terms (session-31 addendum A7): plug alphas are single-
-            // member, orbits_core == true; plug PROTONS sit edge-on to
-            // the stack (rest_axis·Y ≈ 0, disc feeds the hole), plug
-            // NEUTRONS keep their pole on the stack axis (rest_axis ≈
-            // +Y, graphene.pdf: neutrons channel pole-to-pole); oxygen's
-            // plugs come as side-by-side proton+neutron pairs.
-            let profile_name_of = |core: &AtomCore, gid: usize, ai: usize| -> String {
-                let g = &core.groups[gid];
-                let k = g.alphas[ai].members[0];
-                core.profiles[core.particles[g.members[k]].profile_id]
-                    .name
-                    .clone()
+            // terms (session-31 addendum A7) and FUSED-pair terms
+            // (session 34, see plug_pair): LONE plugs (nitrogen) are
+            // single-member alphas — protons edge-on (rest_axis·Y ≈ 0,
+            // disc feeds the hole), neutrons pole-on-axis; PAIRED plugs
+            // (carbon, oxygen) are one 2-member fused alpha per pole —
+            // proton pole toward its partner, neutron pole on the stack
+            // axis, side by side at the same height. All ride the
+            // carousel.
+            let member_particle =
+                |core: &AtomCore, gid: usize, ai: usize, k: usize| -> usize {
+                    core.groups[gid].members[core.groups[gid].alphas[ai].members[k]]
+                };
+            let profile_name_of = |core: &AtomCore, pid: usize| -> String {
+                core.profiles[core.particles[pid].profile_id].name.clone()
             };
-            let plug_alphas: Vec<usize> = core.groups[gid]
-                .alphas
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.members.len() == 1)
-                .map(|(i, _)| i)
+            let lone_plugs: Vec<usize> = (0..core.groups[gid].alphas.len())
+                .filter(|&ai| core.groups[gid].alphas[ai].members.len() == 1)
                 .collect();
-            for &ai in &plug_alphas {
+            let pair_plugs: Vec<usize> = (0..core.groups[gid].alphas.len())
+                .filter(|&ai| core.groups[gid].alphas[ai].members.len() == 2)
+                .collect();
+            for &ai in &lone_plugs {
                 let a = &core.groups[gid].alphas[ai];
                 assert!(a.orbits_core, "plug alpha should ride the carousel");
-                match profile_name_of(&core, gid, ai).as_str() {
+                let m = member_particle(&core, gid, ai, 0);
+                match profile_name_of(&core, m).as_str() {
                     "proton" => assert!(
                         a.rest_axis.dot(DVec3::Y).abs() < 1e-9,
                         "plug proton must be edge-on to the stack"
@@ -665,41 +667,54 @@ mod tests {
                     other => panic!("unexpected plug profile {other}"),
                 }
             }
+            for &ai in &pair_plugs {
+                assert!(
+                    core.groups[gid].alphas[ai].orbits_core,
+                    "plug pair should ride the carousel"
+                );
+                let (m0, m1) = (
+                    member_particle(&core, gid, ai, 0),
+                    member_particle(&core, gid, ai, 1),
+                );
+                let (mp, mn) = if profile_name_of(&core, m0) == "proton" {
+                    (m0, m1)
+                } else {
+                    (m1, m0)
+                };
+                assert_eq!(profile_name_of(&core, mp), "proton");
+                assert_eq!(profile_name_of(&core, mn), "neutron");
+                let pp = core.particles[mp].position;
+                let pn = core.particles[mn].position;
+                assert!(
+                    (pp.y - pn.y).abs() < 1e-9,
+                    "pair must sit at the same height (side by side)"
+                );
+                assert!(
+                    (pp - pn).length() > 0.5,
+                    "pair members must sit beside each other, not overlap"
+                );
+                let to_partner = (pn - pp).normalize();
+                assert!(
+                    core.particles[mp].pole_axis().dot(to_partner) > 0.99,
+                    "plug proton pole should point at its fused neutron"
+                );
+                assert!(
+                    core.particles[mn].pole_axis().dot(DVec3::Y).abs() > 1.0 - 1e-9,
+                    "plug neutron pole must stay on the stack axis"
+                );
+            }
             match name {
-                "nitrogen" => assert_eq!(plug_alphas.len(), 2, "nitrogen has 2 plug alphas"),
+                "nitrogen" => {
+                    assert_eq!(lone_plugs.len(), 2, "nitrogen has 2 lone plugs");
+                    assert!(pair_plugs.is_empty());
+                }
+                "carbon" => {
+                    assert_eq!(pair_plugs.len(), 2, "carbon has 2 fused plug pairs");
+                    assert!(lone_plugs.is_empty());
+                }
                 "oxygen" => {
-                    assert_eq!(plug_alphas.len(), 4, "oxygen has 4 plug alphas");
-                    let mut by_y: Vec<(f64, usize)> = plug_alphas
-                        .iter()
-                        .map(|&ai| (core.groups[gid].alphas[ai].rest_center.y, ai))
-                        .collect();
-                    by_y.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-                    for pair in by_y.chunks(2) {
-                        let (ya, ai_a) = pair[0];
-                        let (yb, ai_b) = pair[1];
-                        assert!(
-                            (ya - yb).abs() < 1e-9,
-                            "pair must sit at the same height (side by side)"
-                        );
-                        let (proton_ai, neutron_ai) =
-                            if profile_name_of(&core, gid, ai_a) == "proton" {
-                                (ai_a, ai_b)
-                            } else {
-                                (ai_b, ai_a)
-                            };
-                        let g = &core.groups[gid];
-                        let ca = g.alphas[proton_ai].rest_center;
-                        let cb = g.alphas[neutron_ai].rest_center;
-                        assert!(
-                            (ca - cb).length() > 0.5,
-                            "pair members must sit beside each other, not overlap"
-                        );
-                        let to_partner = (cb - ca).normalize();
-                        assert!(
-                            g.alphas[proton_ai].rest_axis.dot(to_partner) > 0.99,
-                            "plug proton rest_axis should point at its paired neutron"
-                        );
-                    }
+                    assert_eq!(pair_plugs.len(), 2, "oxygen has 2 fused plug pairs");
+                    assert!(lone_plugs.is_empty());
                 }
                 _ => {}
             }
@@ -1612,6 +1627,9 @@ mod tests {
         if let Some(v) = get("CFM_FLOWEVERY") {
             core.flow_solve_every = (v as usize).max(1);
         }
+        if let Some(v) = get("CFM_PLUGLOCK") {
+            core.plug_orient_lock = v > 0.5;
+        }
     }
 
     #[test]
@@ -2260,14 +2278,15 @@ mod tests {
             if a.members.len() == 4 {
                 format!("core{ai}")
             } else {
-                let name = &core.profiles[core.particles[a.members[0]].profile_id].name;
                 let side = if a.com.y < 0.0 { "-" } else { "+" };
-                format!("plug{}{side}", &name[..1].to_uppercase())
+                format!("pair{side}")
             }
         };
-        // Pairs of interest: each plug particle vs its nearest core
-        // proton (the socket), vs its partner plug, and core end protons
-        // vs each other.
+        // Pairs of interest (session-34 fused pairs): each plug-pair
+        // MEMBER vs its nearest core proton (the socket), plus the
+        // intra-pair row — which compute_forces now SKIPS as pre-fused
+        // in RigidAlpha; the breakdown still evaluates it, showing what
+        // fusion is suppressing.
         let mut pairs: Vec<(usize, usize, String)> = Vec::new();
         let core_protons: Vec<usize> = alphas
             .iter()
@@ -2276,32 +2295,34 @@ mod tests {
             .filter(|&m| core.profiles[core.particles[m].profile_id].name == "proton")
             .collect();
         let plug_alphas: Vec<usize> = (0..alphas.len())
-            .filter(|&ai| alphas[ai].members.len() == 1)
+            .filter(|&ai| alphas[ai].members.len() == 2)
             .collect();
         for &ai in &plug_alphas {
-            let m = core.groups[gid].alphas[ai].members[0];
-            let socket = core_protons
-                .iter()
-                .copied()
-                .min_by(|&a, &b| {
-                    core.pair_distance(m, a)
-                        .partial_cmp(&core.pair_distance(m, b))
-                        .unwrap()
-                })
-                .unwrap();
-            pairs.push((m, socket, format!("{}↔socket", label(&core, ai))));
-            for &aj in &plug_alphas {
-                if aj > ai {
-                    let mj = core.groups[gid].alphas[aj].members[0];
-                    if core.pair_distance(m, mj) < 3.0 {
-                        pairs.push((
-                            m,
-                            mj,
-                            format!("{}↔{}", label(&core, ai), label(&core, aj)),
-                        ));
-                    }
-                }
+            let members = core.groups[gid].alphas[ai].members.clone();
+            for &m in &members {
+                let initial = core.profiles[core.particles[m].profile_id].name
+                    [..1]
+                    .to_uppercase();
+                let socket = core_protons
+                    .iter()
+                    .copied()
+                    .min_by(|&a, &b| {
+                        core.pair_distance(m, a)
+                            .partial_cmp(&core.pair_distance(m, b))
+                            .unwrap()
+                    })
+                    .unwrap();
+                pairs.push((
+                    m,
+                    socket,
+                    format!("{}.{initial}↔socket", label(&core, ai)),
+                ));
             }
+            pairs.push((
+                members[0],
+                members[1],
+                format!("{} intra(SKIPPED)", label(&core, ai)),
+            ));
         }
 
         println!(
@@ -2475,6 +2496,23 @@ mod tests {
                 c.flow_solve_every = 1;
                 c.couplings.vortex = 0.0;
             }),
+            // Session-34 round 2: the first matrix left KE elevated in
+            // EVERY row — the never-ablated velocity-dependent suspect
+            // is the doppler factor (asymmetric clamp 0.2..5.0
+            // rectifies pair oscillation into net heating; the plug
+            // pair at r≈0.9 is the perfect rectifier). intake included
+            // for completeness.
+            ("drag=0", |c| c.couplings.drag = 0.0),
+            ("drag=0 vortex=0 corot=0", |c| {
+                c.couplings.drag = 0.0;
+                c.couplings.vortex = 0.0;
+                c.couplings.corot = 0.0;
+            }),
+            ("intake=0", |c| c.couplings.intake = 0.0),
+            ("drag=0 torque=0", |c| {
+                c.couplings.drag = 0.0;
+                c.couplings.torque = 0.0;
+            }),
         ];
 
         println!(
@@ -2544,8 +2582,10 @@ mod tests {
         core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
         core.running = true;
 
+        // Session-34 fused pairs: the plug is one 2-member alpha; track
+        // its proton member (members[0]) as the orientation probe.
         let plug_alphas: Vec<usize> = (0..core.groups[gid].alphas.len())
-            .filter(|&ai| core.groups[gid].alphas[ai].members.len() == 1)
+            .filter(|&ai| core.groups[gid].alphas[ai].members.len() == 2)
             .collect();
         let group_members: Vec<usize> = core.groups[gid].members.clone();
         // Rest pole per plug, captured at spawn (world frame).
@@ -2916,6 +2956,123 @@ mod tests {
                     fmt("carbon"),
                     fmt("tri_alpha")
                 );
+            }
+        }
+    }
+
+    /// Session-34 static well scan: does the carbon plug pair sit in a
+    /// POTENTIAL WELL at all? The full energy-pump ablation matrix
+    /// (report_plug_energy_ablation) showed no single-term injector and
+    /// no retaining cell — if the static force landscape is monotone
+    /// outward, retention is impossible regardless of dynamics quality
+    /// and the campaign must move to missing physics instead of pump
+    /// hunting. Displaces the +y plug pair rigidly (axially +
+    /// laterally), converges the flow network at each geometry, and
+    /// prints the net force component along the displacement (negative
+    /// = restoring). Swept over (suction, tension) knob combos. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_plug_well --nocapture`
+    #[test]
+    #[ignore]
+    fn report_plug_well() {
+        let deltas: &[f64] = &[
+            -2.4, -2.0, -1.6, -1.2, -0.8, -0.4, -0.2, 0.0, 0.15, 0.3, 0.5,
+            0.8, 1.2, 1.6, 2.4, 3.2,
+        ];
+        println!(
+            "\n{:>8} {:>8} {:>5} | {}",
+            "suction",
+            "tension",
+            "axis",
+            deltas
+                .iter()
+                .map(|d| format!("{d:>8.2}"))
+                .collect::<String>()
+        );
+        for &(suction, tension) in &[
+            (0.0, 1.0),
+            (4.0, 1.0),
+            (8.0, 1.0),
+            (0.0, 4.0),
+            (0.0, 8.0),
+            (4.0, 4.0),
+            (8.0, 8.0),
+        ] {
+            let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            core.plug_pair_gap = 0.35;
+            core.flow_suction = suction;
+            core.flow_tension = tension;
+            core.flow_align = tension * 0.5;
+            let gid = core
+                .spawn_preset("carbon", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("carbon preset");
+            core.set_nucleus_dynamics(crate::atom_core::NucleusDynamics::RigidAlpha);
+            // Converge the flow network at the rest geometry without
+            // moving anything.
+            for _ in 0..40 {
+                core.solve_charge_flow();
+            }
+            let pos0: Vec<DVec3> =
+                core.particles.iter().map(|p| p.position).collect();
+            // The +y plug pair: members of 1-nucleon alphas with com.y > 0.
+            // Session-34 fused pair: the +y plug is ONE 2-member alpha.
+            let plug_members: Vec<usize> = (0..core.groups[gid].alphas.len())
+                .filter(|&ai| {
+                    core.groups[gid].alphas[ai].members.len() == 2
+                        && core.groups[gid].alphas[ai].com.y > 0.0
+                })
+                .flat_map(|ai| core.groups[gid].alphas[ai].members.clone())
+                .collect();
+            assert_eq!(plug_members.len(), 2, "expected p+n plug pair on +y");
+
+            // Per-member force vectors at the rest pose (δ=0) — the
+            // lateral scan found a huge displacement-flat force that
+            // must be identified, not guessed at.
+            if suction == 0.0 && tension == 1.0 {
+                for (i, p) in core.particles.iter_mut().enumerate() {
+                    p.position = pos0[i];
+                    p.velocity = DVec3::ZERO;
+                }
+                for _ in 0..40 {
+                    core.solve_charge_flow();
+                }
+                core.compute_forces();
+                for &m in &plug_members {
+                    let p = &core.particles[m];
+                    println!(
+                        "  rest member {m} ({}) pos=({:+.2},{:+.2},{:+.2}) pole=({:+.2},{:+.2},{:+.2}) F=({:+.3},{:+.3},{:+.3})",
+                        core.profiles[p.profile_id].name,
+                        p.position.x, p.position.y, p.position.z,
+                        p.pole_axis().x, p.pole_axis().y, p.pole_axis().z,
+                        p.force_accum.x, p.force_accum.y, p.force_accum.z,
+                    );
+                }
+            }
+
+            for (axis, dir) in [("axial", DVec3::Y), ("later", DVec3::X)] {
+                let row: String = deltas
+                    .iter()
+                    .map(|&delta| {
+                        for (i, p) in core.particles.iter_mut().enumerate() {
+                            p.position = pos0[i];
+                            p.velocity = DVec3::ZERO;
+                        }
+                        for &m in &plug_members {
+                            core.particles[m].position += dir * delta;
+                        }
+                        for _ in 0..40 {
+                            core.solve_charge_flow();
+                        }
+                        core.compute_forces();
+                        let f: f64 = plug_members
+                            .iter()
+                            .map(|&m| core.particles[m].force_accum.dot(dir))
+                            .sum();
+                        format!("{f:>8.3}")
+                    })
+                    .collect();
+                println!("{suction:>8.1} {tension:>8.1} {axis:>5} | {row}");
             }
         }
     }

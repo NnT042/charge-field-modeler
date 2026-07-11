@@ -1,7 +1,99 @@
 # Through-Charge Flow Model — Design (Session 32)
 
-**Status: Phases A and B implemented. Phase C is design-locked but not
-built.**
+**Status: Phases A and B implemented (B.2 as off-default knobs).
+Phase C is design-locked but not built.**
+
+## Session-34 addendum: Phase B.2, the starved network, and the no-starve fix
+
+Phase B.2 (throughput-scaled forces) landed as two factored runtime
+knobs, both shipping 0.0: `flow_suction` scales the intake pull +
+channeling force by the acting body's live `FlowState::mult`
+(`1 + gain·(mult−1)`, clamped ≥ 0 — phos.pdf: an unfed socket "doesn't
+have much pull, or suction"; diatom.pdf: a stoppered pole's vortex
+"mostly dries up"), and `flow_emit_scale` applies the same form to the
+charge push ("a fed funnel pushes harder"). A free particle has
+mult = 1 by construction, so both scalings are exactly transparent
+outside a live network. Env overrides for gate runs: CFM_SUCTION,
+CFM_EMITSCALE, CFM_GAP, CFM_FLOWEVERY.
+
+**The v1 suction sweep was a clean negative** (5 gains × 2 emit modes
+× 4 seeds × 300k, `report_plug_suction_sweep`): carbon retention did
+not improve at ANY gain, and the anatomy showed why — the network said
+the plug proton was STARVED (mult < 0.75), so at gain ≥ 4 the scaling
+zeroed the plug pair's own vortex glue (0.61 of the pull holding the
+plug neutron). Root cause in pass 2 of `solve_charge_flow`: ambient
+was displaced by the full GEOMETRIC capture demand while the pole was
+credited only the competition-shared, cos²-gated delivered stream —
+every plugged pole lost more than it gained. Carbon ran at mult
+0.53–0.80 everywhere (total intake 7.3 vs 10.0 for the same particles
+free): bound structures channeled LESS than free ones, inverting
+graphene.pdf's picture of polar plugs as "fans, increasing the charge
+streams coming in".
+
+**No-starve rule (the fix):** ambient displacement is capped at
+`delivered / ambient` — deut.pdf's leaky hose ("like a hose that
+hasn't been screwed in all the way"): an incomplete plug lets ambient
+keep seeping in. A pole's intake can never drop below its free-field
+ambient; plugging can feed, never starve. Carbon now runs mult ≥ 1.0
+everywhere (fed sockets 1.13, stack-end intake protons 1.33, plug
+neutrons at capacity with stress 0.44), and the stream tension —
+already throughput-scaled by construction — roughly DOUBLED at the
+plug sockets for free (plugP↔socket −0.16 → −0.30).
+
+**Re-earn:** the network change tripped `alpha_stays_bound` by design
+(all pre-v2 long-horizon evidence was earned against starved flows).
+All five contender combos were re-gated 8 seeds × 1M: **(0.85, 5.0) —
+the original session-32 default — passes 8/8 all-cold and has the best
+surviving short-horizon margins (13.7%/12.5%), so `nuclear_ambient`
+returned 10.0 → 5.0.** (0.85, 10.0) is a clean runner-up (8/8
+all-cold); (0.9, 5.0) and (0.9, 2.0) collapse 2/8; (0.85, 2.0) stays
+bounded but 3/8 seeds heat monotonically to KE ≈ 128 (the pre-collapse
+whirl signature). The coherent story: ambient 10.0 had been
+compensating for exactly the glue the starved network under-delivered.
+
+**The injector hunt** (`report_plug_energy_ablation`, full matrix
+including drag/intake/solve-cadence cases): NO single-term injector —
+doppler's asymmetric clamp (0.2–5.0) injects the most heat but is also
+the system's main damping (drag=0 collapses KE 382→37 while drift
+explodes to 2445–3212%). The pump framing was retired in favor of a
+STATIC question: does the plug configuration have a potential well at
+all? (`report_plug_well`, displacement scan of the pair with the flow
+network converged at each geometry.)
+
+**The hidden 150-unit blast (the real session-33/34 retention
+killer):** the pair spawned as two 1-nucleon alphas with the proton's
+pole aimed AT its partner. The neutron's real equatorial emission leak
+(~0.5) fired ~150 units of charge push down the proton's pole-on
+absorption maximum at contact range — invisible in every anatomy
+table, which prints only the force on the second body of each pair. No
+azimuth escapes it: at hole-sharing range (0.7–1.6) some equator
+always blasts some partner at 1/r⁴. Resolution per the papers:
+**FUSION** — a p+n in contact sharing a pole IS deuterium (deut.pdf),
+and fused units "can't be broken and rearranged" (uf4.pdf), the same
+pre-fusion rule that exempts every core alpha's members. `plug_pair()`
+now spawns carbon/oxygen plugs as ONE 2-member alpha each (same world
+anatomy, honest mass-2 inertia); nitrogen's lone plugs are unchanged.
+
+**The seat:** the old funnel-mouth spawn (2.6 beyond the end proton,
+inherited from stacked-alpha pitch) sits 1.2 units up a monotone-
+inward axial slope — the rigid pair FELL into the core and scattered
+it (the fall was always there; the intra-pair contact bounce used to
+disguise it). The extended well scan puts the true equilibrium ≈ 1.37
+beyond the end proton → `PLUG_SEAT = 1.4` (ammon.pdf "that seventh
+proton is in tight"; the graphene.pdf diagrams nest the plugs in the
+hole). At the seat the static landscape is stable in BOTH axes (axial
+stiffness ≈ 89/unit; lateral walls ±88 within 0.5 units).
+
+**Open (end of session 34):** translation is statically solved;
+dynamics still melt. The pair's free rigid-body rotation re-aims the
+±90-unit close-range force structure on every tip (KE pumps to
+400–1400; high tension binds the nucleus into a hot disordered droplet
+instead of ejecting). Probe knob `plug_orient_lock` (ships false,
+CFM_PLUGLOCK) slaves ≤2-member alpha orientation in RigidAlpha per
+graphene.pdf ("the proton and neutron ... stayed in line"). The
+deeper gap: the model has no energy sink beyond doppler/contact
+damping — transients cannot radiate away. A paper-based dissipation
+channel is the standing design question for the next session.
 
 ## Session-32 addendum: Phase B tension SIGN BUG (found and fixed)
 

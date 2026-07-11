@@ -337,12 +337,11 @@ fn sideways_alpha(y: f64, anatomy: PostAnatomy) -> AlphaSpec {
 /// to the stack axis, so its equatorial disc output feeds the stack's open
 /// polar channel (phos.pdf plug-and-socket; ammon.pdf: N = C-stack + proton
 /// in the south pole, neutron in the north; O = protons in both poles).
-/// `z` offsets the plug off-axis so a proton+neutron pair can share the
-/// polar hole side by side (0 for a lone plug); a paired proton points its
-/// pole AT its partner across the hole. Single-member alpha: its own rest
-/// axis IS the old world-frame pole, so `Roll` spins the plug disc about
-/// its own pole and the carousel `Car` rides it around the socket exactly
-/// as the old `carousel: true` flag did (session-29 user note).
+/// LONE plug only (nitrogen) — paired plugs are [`plug_pair`], one FUSED
+/// alpha. Single-member alpha: its own rest axis IS the old world-frame
+/// pole, so `Roll` spins the plug disc about its own pole and the carousel
+/// `Car` rides it around the socket exactly as the old `carousel: true`
+/// flag did (session-29 user note).
 fn plug_proton(y: f64, z: f64) -> AlphaSpec {
     let rest_axis = if z.abs() > 1e-9 {
         DVec3::new(0.0, 0.0, -z.signum()) // toward the paired plug
@@ -359,6 +358,50 @@ fn plug_proton(y: f64, z: f64) -> AlphaSpec {
             local_pole: DVec3::Y,
             spin_sign: 1.0,
         }],
+    }
+}
+
+/// Polar plug PAIR: a proton+neutron sharing a polar hole as ONE FUSED
+/// 2-member alpha (session 34). The session-32 model spawned the pair as
+/// two independent 1-nucleon alphas, and the static well scan
+/// (report_plug_well) found that configuration mechanically impossible:
+/// at hole-sharing range (0.7–1.6) some equator always blasts some
+/// partner at 1/r⁴ — with the pole-at-partner azimuth, the neutron's
+/// REAL equatorial emission leak (~0.5) fired ~150 units of charge push
+/// straight down the proton's pole-on absorption maximum, two orders of
+/// magnitude above all available glue (invisible in the anatomy tables,
+/// which only print the force on the second body of each pair). No
+/// azimuth escapes this: rotating the proton tangential just redirects
+/// the blast onto the neutron via the proton's full disc fan.
+///
+/// The papers resolve it as FUSION: a p+n in contact sharing a pole IS
+/// the deuterium configuration (deut.pdf), and fused units "can't be
+/// broken and rearranged" (uf4.pdf) — the same pre-fusion rule that
+/// already exempts every core alpha's members from mutual forces in
+/// RigidAlpha. graphene.pdf's carbon plugs "stayed in line" — they move
+/// as one. Geometry is unchanged from the paired singles (proton at
+/// −z with pole toward its partner, neutron at +z pole-on-axis); the
+/// pair also gets honest mass-2 inertia, retiring the near-zero-inertia
+/// torque overshoot of 1-nucleon plug alphas.
+fn plug_pair(y: f64, gap: f64) -> AlphaSpec {
+    AlphaSpec {
+        rest_axis: DVec3::Y,
+        rest_center: DVec3::new(0.0, y, 0.0),
+        orbits_core: true,
+        members: vec![
+            AlphaMemberSpec {
+                profile_name: "proton",
+                local_pos: DVec3::new(0.0, 0.0, -gap),
+                local_pole: DVec3::Z, // toward the paired neutron
+                spin_sign: 1.0,
+            },
+            AlphaMemberSpec {
+                profile_name: "neutron",
+                local_pos: DVec3::new(0.0, 0.0, gap),
+                local_pole: DVec3::Y, // pole-on-axis (graphene.pdf)
+                spin_sign: 1.0,
+            },
+        ],
     }
 }
 
@@ -399,6 +442,21 @@ fn plug_neutron(y: f64, z: f64) -> AlphaSpec {
 /// report_plug_matrix), so the baseline stays until a cell of that
 /// matrix earns a change.
 const PLUG_PAIR_GAP: f64 = 0.8;
+
+/// Axial seat of a FUSED plug pair beyond the end proton of its stack —
+/// the MEASURED axial force equilibrium of the pair against the socket
+/// (session 34, report_plug_well extended scan: net force crosses zero
+/// ≈1.37 beyond the end proton, i.e. δ ≈ −1.23 from the old 2.6
+/// funnel-mouth spawn; slope ≈ −89/unit, contact wall 0.3 further in).
+/// The pair spawns 1.4 out — a residual ~2.5 inward settles it the last
+/// ~0.03. The old funnel-mouth seat (2.6, inherited from stacked-alpha
+/// pitch) left the pair 1.2 units up a monotone-inward slope: it FELL,
+/// gained ~KE 10, and scattered the nucleus (the deep source of every
+/// "plug retention" failure once the pair itself was fused). Paper
+/// basis for the tight seat: ammon.pdf "that seventh proton is in
+/// tight, so it channels with less loss"; the graphene.pdf diagrams
+/// nest the plugs in the pole hole itself.
+const PLUG_SEAT: f64 = 1.4;
 
 /// Radius of the carousel level: distance from the stack axis to a
 /// carousel alpha's center. Sets the nearest carousel proton pole just
@@ -500,12 +558,12 @@ fn preset_alphas(
         "carbon" => {
             let mut a = stack(2);
             // End proton of the 2-stack sits at ALPHA_PITCH/2 + 1.3;
-            // the plug pair parks one funnel mouth (2.6) beyond it.
-            let y = ALPHA_PITCH / 2.0 + 3.9;
-            a.push(plug_proton(-y, -plug_gap));
-            a.push(plug_neutron(-y, plug_gap));
-            a.push(plug_proton(y, -plug_gap));
-            a.push(plug_neutron(y, plug_gap));
+            // the FUSED plug pair (session 34, see plug_pair) parks
+            // PLUG_SEAT beyond it — the measured force equilibrium
+            // (report_plug_well), not the stacked-alpha funnel mouth.
+            let y = ALPHA_PITCH / 2.0 + 1.3 + PLUG_SEAT;
+            a.push(plug_pair(-y, plug_gap));
+            a.push(plug_pair(y, plug_gap));
             Some(a)
         }
         // The bare three-alpha stack — NOT an element (session-32): kept
@@ -544,13 +602,12 @@ fn preset_alphas(
         // pole-down (channels axially).
         "oxygen" => {
             let mut a = stack(3);
-            // End proton sits at ALPHA_PITCH + 1.3; the plug parks one
-            // funnel mouth (2.6) beyond it.
-            let y = ALPHA_PITCH + 3.9;
-            a.push(plug_proton(-y, -plug_gap));
-            a.push(plug_neutron(-y, plug_gap));
-            a.push(plug_proton(y, -plug_gap));
-            a.push(plug_neutron(y, plug_gap));
+            // End proton sits at ALPHA_PITCH + 1.3; the FUSED plug pair
+            // parks PLUG_SEAT beyond it (measured equilibrium — see
+            // carbon above and report_plug_well).
+            let y = ALPHA_PITCH + 1.3 + PLUG_SEAT;
+            a.push(plug_pair(-y, plug_gap));
+            a.push(plug_pair(y, plug_gap));
             Some(a)
         }
         // Neon: THE first carousel configuration (nuclear.pdf) — one
@@ -1241,6 +1298,10 @@ pub struct AtomCore {
     /// amplitudes raised the stakes — 1 = solve every step (the
     /// lag-free reference for the energy-pump ablation).
     pub flow_solve_every: usize,
+    /// Session-34 experiment (ships false): slave plug-pair (≤2-member
+    /// alpha) orientation in RigidAlpha — graphene.pdf: the carbon
+    /// plugs "stayed in line". See the kick() block for the rationale.
+    pub plug_orient_lock: bool,
 }
 
 impl Default for AtomCore {
@@ -1308,6 +1369,7 @@ impl AtomCore {
             flow_suction: crate::charge_flow::DEFAULT_FLOW_SUCTION,
             flow_emit_scale: crate::charge_flow::DEFAULT_FLOW_EMIT_SCALE,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
+            plug_orient_lock: false,
         }
     }
 
@@ -2532,6 +2594,17 @@ impl AtomCore {
                         // stay free to turn here (§2.2); this only bleeds
                         // off numerical spin-up, not the emergent ω.
                         a.angular_velocity *= (-ALPHA_SPIN_RELAX * dt).exp();
+                        // Session-34 experiment (ships false): plug pairs
+                        // "stayed in line" (graphene.pdf) — a fused pair
+                        // plugged into a socket channel does not tumble
+                        // independently, so slave its orientation (the
+                        // static well scans are stable in BOTH axes at
+                        // the measured seat; free pair rotation is the
+                        // remaining chaos channel, report_plug_retention).
+                        if self.plug_orient_lock && a.members.len() <= 2 {
+                            a.angular_velocity = DVec3::ZERO;
+                            a.precession = DVec3::ZERO;
+                        }
                     }
                     // TRANSLATIONAL charge-field lock: damp each alpha's
                     // velocity toward the nucleus's mass-weighted mean —
@@ -2813,7 +2886,9 @@ impl AtomCore {
         out
     }
 
-    fn compute_forces(&mut self) {
+    // pub(crate) for the session-34 static well-scan diagnostic
+    // (report_plug_well) — sim stepping still owns the call sequence.
+    pub(crate) fn compute_forces(&mut self) {
         let n = self.particles.len();
         for p in &mut self.particles {
             p.force_accum = DVec3::ZERO;
@@ -5792,8 +5867,11 @@ mod tests {
             .expect("carbon");
         assert_eq!(
             core.groups[0].skin_segments.len(),
-            3,
-            "carbon (session-32 plugged shape) = core tube + two plug-pair ends"
+            1,
+            "carbon = ONE contiguous tube: the fused plug pairs seat at \
+             PLUG_SEAT (1.4, inside the 1.5 segment gap) — 'that seventh \
+             proton is in tight' (ammon.pdf); the session-32 three-segment \
+             reading encoded the old funnel-mouth standoff"
         );
 
         core.clear_particles();
