@@ -1642,6 +1642,9 @@ mod tests {
         if let Some(v) = get("CFM_BONDDAMP") {
             core.bond_damp = v;
         }
+        if let Some(v) = get("CFM_BONDALIGN") {
+            core.bond_align = v;
+        }
         // Directional ambient flow along −Y (charge travels downward), so a
         // nucleus's +Y pole faces upstream and becomes the intake socket.
         // Magnitude = bias strength (see solve_charge_flow). 0 = isotropic.
@@ -3503,13 +3506,16 @@ mod tests {
         // clean well there); sweep the new inter-group dissipation to see if
         // shedding the approach energy lets H settle instead of reflecting
         // off the pole wall. suction stays 0 (inert at the pole).
+        // (tension, damp, align). align scales the inter-group torque only;
+        // align=0 = force-only well (isolates whether the torque pump is the
+        // sole capture blocker). Row 1 is the torque-on reference.
         let combos = [
-            ("t2+d1 ", 2.0f64, 1.0f64),
-            ("t2+d8 ", 2.0, 8.0),
-            ("t2+d20", 2.0, 20.0),
-            ("t2+d40", 2.0, 40.0),
+            ("t2 d20 a1", 2.0f64, 20.0f64, 1.0f64),
+            ("t2 d8  a0", 2.0, 8.0, 0.0),
+            ("t2 d20 a0", 2.0, 20.0, 0.0),
+            ("t4 d20 a0", 4.0, 20.0, 0.0),
         ];
-        for (cname, bond_tension, bond_damp) in combos {
+        for (cname, bond_tension, bond_damp, bond_align) in combos {
             for (name, start) in approaches {
                 let mut core = standard_core();
                 apply_env_overrides(&mut core);
@@ -3517,6 +3523,7 @@ mod tests {
                 core.bond_suction = 0.0;
                 core.bond_tension = bond_tension;
                 core.bond_damp = bond_damp;
+                core.bond_align = bond_align;
                 // Default directional flow on for the diagnostic (charge
                 // down −Y → +Y pole is the intake/in-line socket) unless an
                 // env CFM_AMBFLOW already set it.
@@ -3541,7 +3548,7 @@ mod tests {
                 core.running = true;
                 let ocom = core.groups[gid].com;
                 println!(
-                    "\n== OH  {cname}  {name}  tension={bond_tension} damp={bond_damp} ==\n\
+                    "\n== OH  {cname}  {name}  t={bond_tension} d={bond_damp} a={bond_align} ==\n\
                      {:>7} | {:>7} | {:>6} | {:>7} | {:>7} | {:>6}",
                     "step", "O-H d", "lat", "azim°", "H_spin", "e_d"
                 );

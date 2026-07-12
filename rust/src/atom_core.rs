@@ -1357,6 +1357,14 @@ pub struct AtomCore {
     /// so it damps the APPROACH without decaying the bond. INTER-group only
     /// → the intra-nucleus carousel is untouched. Ships 0.
     pub bond_damp: f64,
+    /// Session-35 cont-2 diagnostic knob: scales the INTER-group tension
+    /// ALIGN TORQUE only (not the tension force). Ships 1.0 (no change to
+    /// the bond_tension behavior). report_oh_bond showed the inter-group
+    /// align torque pumps rotational energy (non-conservative at this dt) —
+    /// setting this to 0 isolates the tension FORCE well + bond_damp to
+    /// test whether the torque is the sole capture blocker. Same-group
+    /// torque is always unscaled.
+    pub bond_align: f64,
     /// Flow-solver cadence in physics steps (session-34 knob, seeded
     /// from charge_flow::FLOW_SOLVE_EVERY). The Phase B forces read
     /// flow amplitudes up to this many steps stale; the lag makes them
@@ -1440,6 +1448,7 @@ impl AtomCore {
             bond_suction: 0.0,
             bond_tension: 0.0,
             bond_damp: 0.0,
+            bond_align: 1.0,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
             plug_orient_lock: false,
         }
@@ -3419,8 +3428,16 @@ impl AtomCore {
                         self.flow_tension_pair(i, j, d_hat, r);
                     self.particles[j].force_accum += f_on_j * tension_scale;
                     self.particles[i].force_accum -= f_on_j * tension_scale;
-                    self.particles[i].torque_accum += tau_i * tension_scale;
-                    self.particles[j].torque_accum += tau_j * tension_scale;
+                    // Torque scaled additionally by bond_align for INTER-group
+                    // (diagnostic: 0 = force-only well, isolates the torque
+                    // pump). Same-group keeps the full torque.
+                    let torque_scale = if same_group {
+                        tension_scale
+                    } else {
+                        tension_scale * self.bond_align
+                    };
+                    self.particles[i].torque_accum += tau_i * torque_scale;
+                    self.particles[j].torque_accum += tau_j * torque_scale;
                 }
 
                 // Inter-group bond dissipation (radial): the tension well is
