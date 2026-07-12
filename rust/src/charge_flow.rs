@@ -122,7 +122,7 @@ impl FlowState {
 /// (`NUCLEON_PITCH`), smoothstep to 0 at `CHANNEL_TAIL·NUCLEON_PITCH` —
 /// the same geometry as the channeling factor (the funnel mouth IS the
 /// capture cross-section).
-fn capture_falloff(r: f64) -> f64 {
+pub(crate) fn capture_falloff(r: f64) -> f64 {
     let lo = NUCLEON_PITCH;
     let hi = CHANNEL_TAIL * NUCLEON_PITCH;
     let t = ((r - lo) / (hi - lo)).clamp(0.0, 1.0);

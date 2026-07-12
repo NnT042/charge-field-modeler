@@ -1639,6 +1639,9 @@ mod tests {
         if let Some(v) = get("CFM_BONDTENSION") {
             core.bond_tension = v;
         }
+        if let Some(v) = get("CFM_BONDDAMP") {
+            core.bond_damp = v;
+        }
         // Directional ambient flow along −Y (charge travels downward), so a
         // nucleus's +Y pole faces upstream and becomes the intake socket.
         // Magnitude = bias strength (see solve_charge_flow). 0 = isotropic.
@@ -3496,19 +3499,24 @@ mod tests {
         // Tension is the only lever that makes a well, so sweep it alone.
         // Gain is O(1) (flow_tension_pair already carries O(1) couplings);
         // watch for the stiff-torque blowup at the top of the range.
+        // (tension, damp). Tension fixed at 2 (report_oh_wellscan showed a
+        // clean well there); sweep the new inter-group dissipation to see if
+        // shedding the approach energy lets H settle instead of reflecting
+        // off the pole wall. suction stays 0 (inert at the pole).
         let combos = [
-            ("base ", 0.0f64, 0.0f64),
-            ("t2   ", 0.0, 2.0),
-            ("t4   ", 0.0, 4.0),
-            ("t6   ", 0.0, 6.0),
+            ("t2+d1 ", 2.0f64, 1.0f64),
+            ("t2+d8 ", 2.0, 8.0),
+            ("t2+d20", 2.0, 20.0),
+            ("t2+d40", 2.0, 40.0),
         ];
-        for (cname, bond_suction, bond_tension) in combos {
+        for (cname, bond_tension, bond_damp) in combos {
             for (name, start) in approaches {
                 let mut core = standard_core();
                 apply_env_overrides(&mut core);
                 core.plug_pair_gap = 0.35;
-                core.bond_suction = bond_suction;
+                core.bond_suction = 0.0;
                 core.bond_tension = bond_tension;
+                core.bond_damp = bond_damp;
                 // Default directional flow on for the diagnostic (charge
                 // down −Y → +Y pole is the intake/in-line socket) unless an
                 // env CFM_AMBFLOW already set it.
@@ -3533,7 +3541,7 @@ mod tests {
                 core.running = true;
                 let ocom = core.groups[gid].com;
                 println!(
-                    "\n== OH  {cname}  {name}  suction={bond_suction} tension={bond_tension} ==\n\
+                    "\n== OH  {cname}  {name}  tension={bond_tension} damp={bond_damp} ==\n\
                      {:>7} | {:>7} | {:>6} | {:>7} | {:>7} | {:>6}",
                     "step", "O-H d", "lat", "azim°", "H_spin", "e_d"
                 );

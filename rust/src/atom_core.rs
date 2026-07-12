@@ -1340,6 +1340,23 @@ pub struct AtomCore {
     /// particle emits almost nothing polar, so H₂ and the locked M5
     /// molecular suite are untouched. Ships 0 until OH/O₂ earns it.
     pub bond_tension: f64,
+    /// Session-35 cont-2: INTER-group bond dissipation (radial). The OH
+    /// tension well (above) is conservative — report_oh_bond showed H
+    /// falling in, overshooting the shallow minimum into the pole wall, and
+    /// reflecting back out; nothing sheds the approach energy so it never
+    /// settles. Mathis's charge field DOES dissipate: charge-collision "spin
+    /// damping" (neut2.pdf) and cog-opposition drag when a body moves
+    /// against a charge stream (venus2.pdf: "like opposite cogs meeting …
+    /// causes slowing"; matched/co-moving profiles feel NO drag, which is
+    /// why this can't fight the co-rotating carousel — eccen.html: the
+    /// charge wind "resists eccentricity, pushing orbits back toward
+    /// equilibrium"). Modeled as a drag on the RADIAL relative velocity of
+    /// an inter-group pair, gated by `capture_falloff` (same bond range as
+    /// the tension) and applied equal-and-opposite (momentum conserved).
+    /// Two atoms at rest in a bond have zero relative velocity → no drag,
+    /// so it damps the APPROACH without decaying the bond. INTER-group only
+    /// → the intra-nucleus carousel is untouched. Ships 0.
+    pub bond_damp: f64,
     /// Flow-solver cadence in physics steps (session-34 knob, seeded
     /// from charge_flow::FLOW_SOLVE_EVERY). The Phase B forces read
     /// flow amplitudes up to this many steps stale; the lag makes them
@@ -1422,6 +1439,7 @@ impl AtomCore {
             flow_emit_scale: crate::charge_flow::DEFAULT_FLOW_EMIT_SCALE,
             bond_suction: 0.0,
             bond_tension: 0.0,
+            bond_damp: 0.0,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
             plug_orient_lock: false,
         }
@@ -3403,6 +3421,33 @@ impl AtomCore {
                     self.particles[i].force_accum -= f_on_j * tension_scale;
                     self.particles[i].torque_accum += tau_i * tension_scale;
                     self.particles[j].torque_accum += tau_j * tension_scale;
+                }
+
+                // Inter-group bond dissipation (radial): the tension well is
+                // conservative, so a captured partner overshoots and
+                // reflects instead of settling. This bleeds the RADIAL
+                // relative velocity within bond range (venus2.pdf cog-drag /
+                // neut2.pdf spin damping — see `bond_damp`). Equal-and-
+                // opposite (momentum conserved); zero at relative rest so a
+                // seated bond doesn't decay. INTER-group only.
+                // Baryon-only: an equal-and-opposite drag force on the
+                // 1/1836-mass electron is a huge acceleration (numerically
+                // stiff → the H proton/electron pair blows apart). The bond
+                // drag is between the nucleons; the electron just rides.
+                if !same_group
+                    && self.bond_damp.abs() > 1e-12
+                    && pi_prof.mass > 0.5
+                    && pj_prof.mass > 0.5
+                {
+                    let fall = crate::charge_flow::capture_falloff(r);
+                    if fall > 1e-6 {
+                        let v_rel = self.particles[j].velocity
+                            - self.particles[i].velocity;
+                        let v_radial = v_rel.dot(d_hat);
+                        let f_damp = -self.bond_damp * v_radial * fall;
+                        self.particles[j].force_accum += d_hat * f_damp;
+                        self.particles[i].force_accum -= d_hat * f_damp;
+                    }
                 }
 
                 // Contact repulsion: hard-sphere boundary at sum of radii,
