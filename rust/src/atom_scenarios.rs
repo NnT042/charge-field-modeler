@@ -1636,6 +1636,9 @@ mod tests {
         if let Some(v) = get("CFM_BONDSUCTION") {
             core.bond_suction = v;
         }
+        if let Some(v) = get("CFM_BONDTENSION") {
+            core.bond_tension = v;
+        }
         // Directional ambient flow along −Y (charge travels downward), so a
         // nucleus's +Y pole faces upstream and becomes the intake socket.
         // Magnitude = bias strength (see solve_charge_flow). 0 = isotropic.
@@ -3482,12 +3485,34 @@ mod tests {
             ("on-axis ", DVec3::new(0.0, 8.0, 0.0)),
             ("off-axis", DVec3::new(2.5, 7.5, 0.0)),
         ];
-        for bond_suction in [0.0f64, 8.0, 20.0, 50.0] {
+        // (bond_suction, bond_tension): suction is the long-range attractor
+        // (draws H in from ~d35), tension the short-range channel lock
+        // (capture_falloff maxes r=7.8). Directional flow ON so oxygen's
+        // core builds a real through-channel (mult>1) for both to bite on.
+        // Tension gain is O(1): flow_tension_pair already carries the
+        // O(1) flow_tension/flow_align couplings, so the inter-group copy
+        // needs a small multiplier (the same-group copy runs at gain 1).
+        // Larger gains drive a stiff torque blowup at this dt. bond_suction
+        // still needs a big gain (it amplifies a mult−1 that is ~0..1).
+        let combos = [
+            ("base      ", 0.0f64, 0.0f64),
+            ("lock1     ", 0.0, 1.0),
+            ("suck+lock1", 8.0, 1.0),
+            ("suck+lock2", 8.0, 2.0),
+        ];
+        for (cname, bond_suction, bond_tension) in combos {
             for (name, start) in approaches {
                 let mut core = standard_core();
                 apply_env_overrides(&mut core);
                 core.plug_pair_gap = 0.35;
                 core.bond_suction = bond_suction;
+                core.bond_tension = bond_tension;
+                // Default directional flow on for the diagnostic (charge
+                // down −Y → +Y pole is the intake/in-line socket) unless an
+                // env CFM_AMBFLOW already set it.
+                if core.ambient_charge_dir == DVec3::ZERO {
+                    core.ambient_charge_dir = DVec3::new(0.0, -2.0, 0.0);
+                }
                 let gid = core
                     .spawn_preset("oxygen", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
                     .expect("oxygen");
@@ -3503,10 +3528,12 @@ mod tests {
                 core.running = true;
                 let ocom = core.groups[gid].com;
                 println!(
-                    "\n== OH  {name}  bond_suction={bond_suction} ==\n\
+                    "\n== OH  {cname}  {name}  suction={bond_suction} tension={bond_tension} ==\n\
                      {:>7} | {:>7} | {:>6} | {:>7} | {:>7} | {:>6}",
                     "step", "O-H d", "lat", "azim°", "H_spin", "e_d"
                 );
+                let mut d_min = f64::INFINITY;
+                let mut d_final = 0.0f64;
                 for s in 0..=300_000 {
                     if s % 25_000 == 0 {
                         let rel = core.particles[hp].position - ocom;
@@ -3524,7 +3551,21 @@ mod tests {
                         );
                     }
                     core.step();
+                    let d = (core.particles[hp].position - ocom).length();
+                    d_min = d_min.min(d);
+                    d_final = d;
                 }
+                // Crude bond verdict: H settled near the pole (final within
+                // the capture range) vs drifted off. Oxygen's outer pole
+                // nucleon sits ~6.5 out, so a seated H reads d≈7-10.
+                let verdict = if d_final < 12.0 {
+                    "BOUND"
+                } else {
+                    "free "
+                };
+                println!(
+                    "  -> {verdict}  d_final={d_final:.2}  d_min={d_min:.2}"
+                );
             }
         }
     }

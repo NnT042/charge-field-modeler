@@ -1323,6 +1323,23 @@ pub struct AtomCore {
     /// free) is untouched; only multi-nucleon nuclei reach out. Ships 0
     /// until the OH/O₂ bond earns it. See `compute_forces`.
     pub bond_suction: f64,
+    /// Session-35 Phase C: INTER-group through-charge tension gain. The
+    /// same `flow_tension_pair` glue that binds a nucleus's own posts
+    /// (atom_core.rs same-group branch) IS the covalent/H bond — poll.pdf:
+    /// "water/water bonds ... are just channels in the stream. You could
+    /// say that about any bond." water2.pdf: a bonding proton "isn't
+    /// plugging into an alpha, it is simply aligning itself to the charge
+    /// field" — which is exactly this force's channel tension + its cos²/
+    /// sin² restoring torques. Same-group tension is unscaled (gain 1);
+    /// this scales the INTER-group copy by `bond_tension`. It only bites
+    /// where a real channel exists: the force is proportional to the
+    /// emitter's `out_pole` flow, ~0 without the directional network and
+    /// only significant once a stacked nucleus builds mult>1 through-charge
+    /// (CFM_AMBFLOW). bond_suction draws the partner in from long range;
+    /// this locks it at the seat (capture_falloff maxes r=7.8). A free
+    /// particle emits almost nothing polar, so H₂ and the locked M5
+    /// molecular suite are untouched. Ships 0 until OH/O₂ earns it.
+    pub bond_tension: f64,
     /// Flow-solver cadence in physics steps (session-34 knob, seeded
     /// from charge_flow::FLOW_SOLVE_EVERY). The Phase B forces read
     /// flow amplitudes up to this many steps stale; the lag makes them
@@ -1404,6 +1421,7 @@ impl AtomCore {
             flow_suction: crate::charge_flow::DEFAULT_FLOW_SUCTION,
             flow_emit_scale: crate::charge_flow::DEFAULT_FLOW_EMIT_SCALE,
             bond_suction: 0.0,
+            bond_tension: 0.0,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
             plug_orient_lock: false,
         }
@@ -3365,13 +3383,26 @@ impl AtomCore {
                 // tests are untouched; Phase C extends output-stream
                 // effects to third parties (auger.pdf intruder
                 // repulsion).
-                if same_group {
+                // Same-group tension is the intra-nucleus post glue
+                // (gain 1). Phase C (session 35): the SAME force binds an
+                // external partner along a shared channel — poll.pdf's "you
+                // could say that about any bond" — scaled by `bond_tension`
+                // (ships 0, so the locked molecular suite is untouched).
+                // Driven by the emitter's `out_pole`, it is ~0 without the
+                // directional network and only grabs where a real through-
+                // channel (mult>1) reaches the partner.
+                let tension_scale = if same_group {
+                    1.0
+                } else {
+                    self.bond_tension
+                };
+                if tension_scale.abs() > 1e-12 {
                     let (f_on_j, tau_i, tau_j) =
                         self.flow_tension_pair(i, j, d_hat, r);
-                    self.particles[j].force_accum += f_on_j;
-                    self.particles[i].force_accum -= f_on_j;
-                    self.particles[i].torque_accum += tau_i;
-                    self.particles[j].torque_accum += tau_j;
+                    self.particles[j].force_accum += f_on_j * tension_scale;
+                    self.particles[i].force_accum -= f_on_j * tension_scale;
+                    self.particles[i].torque_accum += tau_i * tension_scale;
+                    self.particles[j].torque_accum += tau_j * tension_scale;
                 }
 
                 // Contact repulsion: hard-sphere boundary at sum of radii,
