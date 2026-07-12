@@ -3481,24 +3481,26 @@ mod tests {
     #[ignore]
     fn report_oh_bond() {
         use crate::atom_core::NucleusDynamics;
+        // Spawn OUTSIDE the repulsive pole wall. report_oh_wellscan showed
+        // a giant charge/stream wall for d<~9.75 (dPole<3.4); the only
+        // attractive region — the through-charge tension shelf — sits at
+        // d≈10-13 (dPole≈4-6). The old test started H at d=8 (INSIDE the
+        // wall), so it was blasted out before it could fall into the well.
         let approaches = [
-            ("on-axis ", DVec3::new(0.0, 8.0, 0.0)),
-            ("off-axis", DVec3::new(2.5, 7.5, 0.0)),
+            ("on-axis ", DVec3::new(0.0, 12.5, 0.0)),
+            ("off-axis", DVec3::new(3.0, 12.0, 0.0)),
         ];
-        // (bond_suction, bond_tension): suction is the long-range attractor
-        // (draws H in from ~d35), tension the short-range channel lock
-        // (capture_falloff maxes r=7.8). Directional flow ON so oxygen's
-        // core builds a real through-channel (mult>1) for both to bite on.
-        // Tension gain is O(1): flow_tension_pair already carries the
-        // O(1) flow_tension/flow_align couplings, so the inter-group copy
-        // needs a small multiplier (the same-group copy runs at gain 1).
-        // Larger gains drive a stiff torque blowup at this dt. bond_suction
-        // still needs a big gain (it amplifies a mult−1 that is ~0..1).
+        // Pure tension sweep. bond_suction is INERT at the pole (terminal
+        // nucleon mult=1 → 1+gain·(mult−1)=1; wellscan: suck8/20/50
+        // identical) and intake is 100-1000× weaker than the wall anyway.
+        // Tension is the only lever that makes a well, so sweep it alone.
+        // Gain is O(1) (flow_tension_pair already carries O(1) couplings);
+        // watch for the stiff-torque blowup at the top of the range.
         let combos = [
-            ("base      ", 0.0f64, 0.0f64),
-            ("lock1     ", 0.0, 1.0),
-            ("suck+lock1", 8.0, 1.0),
-            ("suck+lock2", 8.0, 2.0),
+            ("base ", 0.0f64, 0.0f64),
+            ("t2   ", 0.0, 2.0),
+            ("t4   ", 0.0, 4.0),
+            ("t6   ", 0.0, 6.0),
         ];
         for (cname, bond_suction, bond_tension) in combos {
             for (name, start) in approaches {
@@ -3522,7 +3524,10 @@ mod tests {
                 let toward = (DVec3::ZERO - start).normalize();
                 let (hp, he) =
                     spawn_formed_hydrogen(&mut core, start, toward, -toward, 1.0);
-                let v_in = toward * 0.04;
+                // Very gentle nudge — the shelf is shallow (~1-2 units of
+                // force); a fast approach just overshoots into the wall and
+                // reflects back out. Let the well do the work.
+                let v_in = toward * 0.01;
                 core.particles[hp].velocity += v_in;
                 core.particles[he].velocity += v_in;
                 core.running = true;
@@ -3555,16 +3560,105 @@ mod tests {
                     d_min = d_min.min(d);
                     d_final = d;
                 }
-                // Crude bond verdict: H settled near the pole (final within
-                // the capture range) vs drifted off. Oxygen's outer pole
-                // nucleon sits ~6.5 out, so a seated H reads d≈7-10.
-                let verdict = if d_final < 12.0 {
-                    "BOUND"
+                // Verdict: H held on the tension shelf (well minimum d≈11,
+                // dPole≈4.6) vs drifted off. Started at d≈12.5, so "held"
+                // means it stayed on the shelf (roughly 9-15) instead of
+                // escaping. Wall reflection would send an overshoot to large
+                // d, so d_final near the well = a real (weak/long) bond.
+                let verdict = if d_final < 16.0 {
+                    "HELD"
                 } else {
-                    "free "
+                    "free"
                 };
                 println!(
                     "  -> {verdict}  d_final={d_final:.2}  d_min={d_min:.2}"
+                );
+            }
+        }
+    }
+
+    /// Session-35 cont-2: STATIC axial well scan for the in-line OH bond.
+    /// The dynamic report_oh_bond showed H stalling at d≈8 and drifting
+    /// off — no attractive well. report_element_field_map hid the seat
+    /// (it marks everything within 2.4 of a nucleon "·buried"). This walks
+    /// a lone test proton (pole axial, absorption facing O) straight down
+    /// the +Y intake pole INTO that region and prints the NET radial force
+    /// + a coarse attribution, so we can see whether the intake vortex
+    /// makes a well at the backed-out seat and what (if anything)
+    /// bond_suction adds. Negative Fy = inward (toward O = a bond pull).
+    /// A stable well = Fy < 0 for d beyond the seat, crossing to Fy > 0
+    /// (contact/cushion) as d shrinks. Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_oh_wellscan --nocapture`
+    #[test]
+    #[ignore]
+    fn report_oh_wellscan() {
+        use crate::atom_core::NucleusDynamics;
+        // d = distance from O COM (origin) up the +Y axis. O's outer pole
+        // nucleon sits ~6.5 out; scan from just above it out to clear space.
+        let ds: Vec<f64> = (0..=26).map(|k| 6.75 + 0.25 * k as f64).collect();
+        for (sname, suction, tension) in [
+            ("base      ", 0.0f64, 0.0f64),
+            ("suck8     ", 8.0, 0.0),
+            ("suck20    ", 20.0, 0.0),
+            ("suck50    ", 50.0, 0.0),
+            ("suck20+t2 ", 20.0, 2.0),
+        ] {
+            let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            core.plug_pair_gap = 0.35;
+            core.ambient_gravity = DVec3::ZERO;
+            core.ambient_charge = DVec3::ZERO;
+            core.bond_suction = suction;
+            core.bond_tension = tension;
+            if core.ambient_charge_dir == DVec3::ZERO {
+                core.ambient_charge_dir = DVec3::new(0.0, -2.0, 0.0);
+            }
+            core.spawn_preset("oxygen", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("oxygen");
+            core.set_nucleus_dynamics(NucleusDynamics::RigidLock);
+            for _ in 0..40 {
+                core.solve_charge_flow();
+            }
+            let p_id = core.profile_id_by_name("proton").unwrap();
+            let probe = core
+                .spawn_particle_ex(
+                    p_id,
+                    DVec3::new(0.0, ds[0], 0.0),
+                    DVec3::ZERO,
+                    DVec3::Y,
+                    0.0,
+                )
+                .expect("probe");
+            let n_o = probe; // O nucleons are ids 0..probe
+            println!(
+                "\n== OH wellscan  {sname}  suction={suction} tension={tension} ==\n\
+                 {:>6} | {:>6} | {:>9} | {:>8} | {:>8} | {:>8}",
+                "d", "dPole", "Fy_net", "intake", "repel", "tens"
+            );
+            for &d in &ds {
+                let pos = DVec3::new(0.0, d, 0.0);
+                core.particles[probe].position = pos;
+                core.particles[probe].orientation = glam::DQuat::IDENTITY;
+                core.particles[probe].velocity = DVec3::ZERO;
+                for _ in 0..40 {
+                    core.solve_charge_flow();
+                }
+                core.compute_forces();
+                let fy = core.particles[probe].force_accum.y;
+                // nearest O nucleon + coarse term attribution.
+                let mut d_pole = f64::INFINITY;
+                let (mut intake, mut repel, mut tens) = (0.0f64, 0.0f64, 0.0f64);
+                for o in 0..n_o {
+                    let dd = (core.particles[o].position - pos).length();
+                    d_pole = d_pole.min(dd);
+                    let b = core.pair_force_breakdown(o, probe);
+                    intake += b[5];
+                    repel += b[3] + b[6] + b[7];
+                    tens += b[8];
+                }
+                println!(
+                    "{d:>6.2} | {d_pole:>6.2} | {fy:>9.3} | {intake:>8.3} | {repel:>8.3} | {tens:>8.3}"
                 );
             }
         }
