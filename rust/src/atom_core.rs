@@ -1312,6 +1312,17 @@ pub struct AtomCore {
     /// Phase B.2: same form on the charge push — a fed emitter pushes
     /// harder (charge_flow::DEFAULT_FLOW_EMIT_SCALE).
     pub flow_emit_scale: f64,
+    /// Session-35 INTER-atom bonding vortex. `flow_suction` above is
+    /// same-group (internal, earned at 0). This is its external twin: a
+    /// nucleon channeling the whole stack's through-charge has an intake
+    /// vortex far stronger than its own spin (user), reaching PAST its own
+    /// disc to draw in a bonding partner. Scales the intake/channeling/
+    /// corotation pull an INTER-group emitter exerts by `1 + gain·(mult−1)`
+    /// of its live `FlowState::mult` — emission is NOT amplified (we make
+    /// nuclei SUCK, not push). A free particle has mult=1 so H₂ (both ends
+    /// free) is untouched; only multi-nucleon nuclei reach out. Ships 0
+    /// until the OH/O₂ bond earns it. See `compute_forces`.
+    pub bond_suction: f64,
     /// Flow-solver cadence in physics steps (session-34 knob, seeded
     /// from charge_flow::FLOW_SOLVE_EVERY). The Phase B forces read
     /// flow amplitudes up to this many steps stale; the lag makes them
@@ -1392,6 +1403,7 @@ impl AtomCore {
             align_to_stream: false,
             flow_suction: crate::charge_flow::DEFAULT_FLOW_SUCTION,
             flow_emit_scale: crate::charge_flow::DEFAULT_FLOW_EMIT_SCALE,
+            bond_suction: 0.0,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
             plug_orient_lock: false,
         }
@@ -3086,6 +3098,21 @@ impl AtomCore {
                         (1.0 + self.flow_emit_scale * (mult_i - 1.0)).max(0.0),
                         (1.0 + self.flow_emit_scale * (mult_j - 1.0)).max(0.0),
                     )
+                } else if self.bond_suction.abs() > 1e-12 {
+                    // Session-35 INTER-atom bonding vortex: a nucleon
+                    // channeling the whole stack's through-charge reaches
+                    // out and SUCKS a partner in — intake/channeling/corot
+                    // scaled by the emitter's throughput, emission left
+                    // alone (epush = 1). Free partners (mult = 1) are
+                    // untouched, so H₂ and lone particles are unaffected.
+                    let mult_i = self.particles[i].flow.mult;
+                    let mult_j = self.particles[j].flow.mult;
+                    (
+                        (1.0 + self.bond_suction * (mult_i - 1.0)).max(0.0),
+                        (1.0 + self.bond_suction * (mult_j - 1.0)).max(0.0),
+                        1.0,
+                        1.0,
+                    )
                 } else {
                     (1.0, 1.0, 1.0, 1.0)
                 };
@@ -3274,8 +3301,13 @@ impl AtomCore {
                     if vc_len > COROT_V_MAX {
                         v_corot *= COROT_V_MAX / vc_len;
                     }
-                    let f_corot =
-                        (v_corot - v_tan_vec) * (cq.corot * mass_prod * ai2 / r2s);
+                    // × suction_i: the bonding vortex that captures a
+                    // partner also SYNCS it (session-35 — the spin-lock that
+                    // holds A to B's vortex; same throughput scaling as the
+                    // radial pull). Unity internally (flow_suction=0) and for
+                    // free partners (mult=1).
+                    let f_corot = (v_corot - v_tan_vec)
+                        * (cq.corot * mass_prod * ai2 * suction_i / r2s);
                     self.particles[j].force_accum += f_corot;
                     self.particles[i].force_accum -= f_corot;
 
@@ -3287,8 +3319,8 @@ impl AtomCore {
                     if vcj_len > COROT_V_MAX {
                         v_corot_j *= COROT_V_MAX / vcj_len;
                     }
-                    let f_corot_i =
-                        (v_corot_j + v_tan_vec) * (cq.corot * mass_prod * aj2 / r2s);
+                    let f_corot_i = (v_corot_j + v_tan_vec)
+                        * (cq.corot * mass_prod * aj2 * suction_j / r2s);
                     self.particles[i].force_accum += f_corot_i;
                     self.particles[j].force_accum -= f_corot_i;
                 }

@@ -1633,6 +1633,9 @@ mod tests {
         if let Some(v) = get("CFM_AMBALIGN") {
             core.ambient_align = v;
         }
+        if let Some(v) = get("CFM_BONDSUCTION") {
+            core.bond_suction = v;
+        }
     }
 
     #[test]
@@ -3399,6 +3402,123 @@ mod tests {
                     })
                     .collect();
                 println!("{th_deg:>10.0}° | {row}");
+            }
+        }
+    }
+
+    /// Session-35 flow readout: per-nucleon throughput of a lone nucleus.
+    /// The "make them suck" bonding vortex scales the intake pull by each
+    /// emitter's `FlowState::mult` (output ÷ free-field baseline). If the
+    /// pole plug that channels the whole stack's through-charge reads
+    /// mult ≈ 1, it has NO amplified vortex to reach a partner — the gap the
+    /// user flagged ("a proton on the pole of a larger stack ought to feel a
+    /// vortex bigger than its own spin"). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_nucleus_flow --nocapture`
+    #[test]
+    #[ignore]
+    fn report_nucleus_flow() {
+        use crate::atom_core::NucleusDynamics;
+        for element in ["carbon", "oxygen"] {
+            let mut core = standard_core();
+            apply_env_overrides(&mut core);
+            core.plug_pair_gap = 0.35;
+            let gid = core
+                .spawn_preset(element, DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                .expect("preset");
+            core.set_nucleus_dynamics(NucleusDynamics::RigidAlpha);
+            for _ in 0..60 {
+                core.solve_charge_flow();
+            }
+            println!(
+                "\n== {element} per-nucleon flow (RigidAlpha) ==\n\
+                 {:>4} {:>8} {:>7} {:>6} {:>7} {:>7} {:>7}",
+                "id", "name", "y", "mult", "intake", "out_pol", "lateral"
+            );
+            let members = core.groups[gid].members.clone();
+            for m in members {
+                let p = &core.particles[m];
+                let f = &p.flow;
+                println!(
+                    "{m:>4} {:>8} {:>7.2} {:>6.2} {:>7.2} {:>7.2} {:>7.2}",
+                    core.profiles[p.profile_id].name,
+                    p.position.y,
+                    f.mult,
+                    f.intake[0] + f.intake[1],
+                    f.through(),
+                    f.lateral,
+                );
+            }
+        }
+    }
+
+    /// Session-35 OH bond probe (user: "see how OH fares and work up from
+    /// there"). A hydrogen atom approaches the +Y pole of an oxygen nucleus
+    /// with a gentle inward velocity. Tests the user's DYNAMIC bond
+    /// mechanism: the field draws H into O's polar VORTEX (far stronger than
+    /// H's own spin, reaching past the plug proton's disc), H and O spin into
+    /// sync, and they hold as a unit — LOOSER than fusion (a breakable
+    /// directional link), which a static bare-proton probe (see
+    /// report_element_field_map) cannot show because the sync force is
+    /// velocity-dependent (`corot`). Columns: O–H distance, lateral offset
+    /// from the pole axis, azimuth about the axis (advancing ⇒ captured,
+    /// orbiting the vortex), H axial spin. On-/off-axis start × suction
+    /// off/on (throughput may amplify the socket — the plug proton channels
+    /// the whole stack's intake). Bond ⇔ d settles bounded, not repelled
+    /// (d grows) nor fused (d→contact ~2). Run:
+    /// `cargo test --release --manifest-path rust/Cargo.toml -- --ignored
+    ///  report_oh_bond --nocapture`
+    #[test]
+    #[ignore]
+    fn report_oh_bond() {
+        use crate::atom_core::NucleusDynamics;
+        let approaches = [
+            ("on-axis ", DVec3::new(0.0, 8.0, 0.0)),
+            ("off-axis", DVec3::new(2.5, 7.5, 0.0)),
+        ];
+        for bond_suction in [0.0f64, 8.0, 20.0, 50.0] {
+            for (name, start) in approaches {
+                let mut core = standard_core();
+                apply_env_overrides(&mut core);
+                core.plug_pair_gap = 0.35;
+                core.bond_suction = bond_suction;
+                let gid = core
+                    .spawn_preset("oxygen", DVec3::ZERO, DVec3::ZERO, DVec3::Y)
+                    .expect("oxygen");
+                core.set_nucleus_dynamics(NucleusDynamics::RigidLock);
+                // H approaches pole-first (proton pole toward O, electron on
+                // the far side), with a gentle inward velocity.
+                let toward = (DVec3::ZERO - start).normalize();
+                let (hp, he) =
+                    spawn_formed_hydrogen(&mut core, start, toward, -toward, 1.0);
+                let v_in = toward * 0.04;
+                core.particles[hp].velocity += v_in;
+                core.particles[he].velocity += v_in;
+                core.running = true;
+                let ocom = core.groups[gid].com;
+                println!(
+                    "\n== OH  {name}  bond_suction={bond_suction} ==\n\
+                     {:>7} | {:>7} | {:>6} | {:>7} | {:>7} | {:>6}",
+                    "step", "O-H d", "lat", "azim°", "H_spin", "e_d"
+                );
+                for s in 0..=300_000 {
+                    if s % 25_000 == 0 {
+                        let rel = core.particles[hp].position - ocom;
+                        let d = rel.length();
+                        let lat = (rel.x * rel.x + rel.z * rel.z).sqrt();
+                        let az = rel.z.atan2(rel.x).to_degrees();
+                        let spin = core.particles[hp]
+                            .angular_velocity
+                            .dot(core.particles[hp].pole_axis());
+                        let e_d = (core.particles[he].position
+                            - core.particles[hp].position)
+                            .length();
+                        println!(
+                            "{s:>7} | {d:>7.2} | {lat:>6.2} | {az:>7.1} | {spin:>7.2} | {e_d:>6.2}"
+                        );
+                    }
+                    core.step();
+                }
             }
         }
     }
