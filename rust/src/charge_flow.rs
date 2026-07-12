@@ -256,11 +256,39 @@ impl AtomCore {
             let share = e.g / port_demand[e.i][e.port].max(1.0);
             delivered[e.j][e.p] += out * share;
         }
+        // Directional ambient (session-35): the ambient charge field has a
+        // DIRECTION (salt.pdf/fajans.pdf: "charge always has a direction ...
+        // each nucleus takes in the most charge at the pole [facing] the
+        // stream"). The pole facing INTO the oncoming charge drinks more,
+        // building the asymmetric pole-to-pole through-charge that turns one
+        // pole into the strong intake SOCKET (nte.pdf: the pole-to-pole
+        // channel is the electrical vector; phos.pdf: a bond needs the
+        // ingoing stream to reach ~1 proton's worth). `ambient_charge_dir`
+        // is both the alignment axis and the flow bias: its MAGNITUDE is the
+        // bias strength (0 = isotropic, the pre-session-35 behaviour), its
+        // direction is the way charge travels. The upstream pole's ambient
+        // is boosted by (1 + strength·max(0, −face·floŵ)); the downstream
+        // pole is unchanged, so total intake rises at the socket → mult > 1
+        // there → the inter-atom bonding vortex (`bond_suction`) has
+        // something to amplify.
+        let flow_vec = self.ambient_charge_dir;
+        let flow_str = flow_vec.length();
+        let flow_hat = if flow_str > 1e-9 {
+            flow_vec / flow_str
+        } else {
+            DVec3::ZERO
+        };
         let mut intake = vec![[0.0f64; 2]; n];
         for j in 0..n {
             let (baseline, _, _) = self.flow_params(self.particles[j].profile_id);
-            let ambient = 0.5 * baseline;
+            let base_ambient = 0.5 * baseline;
+            let pole_j = self.particles[j].pole_axis();
             for p in 0..2usize {
+                // Pole p's outward face; upstream (normal points against the
+                // flow) drinks the boost.
+                let face = if p == 1 { pole_j } else { -pole_j };
+                let upstream = (-face.dot(flow_hat)).max(0.0);
+                let ambient = base_ambient * (1.0 + flow_str * upstream);
                 // Session-34 no-starve rule: ambient is displaced only to
                 // the extent the captured stream actually REPLACES it —
                 // deut.pdf's leaky hose ("like a hose that hasn't been

@@ -1636,6 +1636,12 @@ mod tests {
         if let Some(v) = get("CFM_BONDSUCTION") {
             core.bond_suction = v;
         }
+        // Directional ambient flow along −Y (charge travels downward), so a
+        // nucleus's +Y pole faces upstream and becomes the intake socket.
+        // Magnitude = bias strength (see solve_charge_flow). 0 = isotropic.
+        if let Some(v) = get("CFM_AMBFLOW") {
+            core.ambient_charge_dir = DVec3::new(0.0, -v, 0.0);
+        }
     }
 
     #[test]
