@@ -1642,6 +1642,9 @@ mod tests {
         if let Some(v) = get("CFM_BONDDAMP") {
             core.bond_damp = v;
         }
+        if let Some(v) = get("CFM_BONDDAMPTAN") {
+            core.bond_damp_tan = v;
+        }
         if let Some(v) = get("CFM_BONDALIGN") {
             core.bond_align = v;
         }
@@ -3506,16 +3509,34 @@ mod tests {
         // clean well there); sweep the new inter-group dissipation to see if
         // shedding the approach energy lets H settle instead of reflecting
         // off the pole wall. suction stays 0 (inert at the pole).
-        // (tension, damp, align). align scales the inter-group torque only;
-        // align=0 = force-only well (isolates whether the torque pump is the
-        // sole capture blocker). Row 1 is the torque-on reference.
+        // (tension, damp, damp_tan, align). Session-35 cont-3: the flow
+        // tables proved the well's ingredients (neutron out_pole 0.67 axial +
+        // plug proton's 0.95 disc, both captured by H) are already routed —
+        // the −1.85 shelf is shallow only because the coupling
+        // (flow_tension 0.85 × bond_tension 2 = 1.7) is weak, not because the
+        // channel is dead. So this sweep tests the one untested combination:
+        // a DEEP well (high bond_tension) × NO torque pump (align=0) × FULL
+        // dissipation (radial bond_damp + tangential bond_damp_tan).
+        //
+        // RESULT: REFUTED. All 8 runs eject (d_final 1.3k-4.3k). Deeper well →
+        // FARTHER ejection (t8→1331, t16→3547), and tangential damp makes it
+        // WORSE (dt20→3800-4300) — proof the ejector is the velocity-dependent
+        // corot/vortex SPRINKLER, not a conservative wall: the deep well just
+        // feeds H into the sprinkler faster, and bond_damp_tan pumps H onto
+        // the nucleus's rotation (drag is vs each spinning nucleon, not the
+        // stream). H reaches d_min≈11 (dPole≈4.5 = the poll.pdf bond distance)
+        // and pauses there before being flung — so the geometry is right; the
+        // missing piece is a spin-SYNC lock that holds H in the vortex instead
+        // of orbiting-then-ejecting. The bond is not a tension-well problem.
+        // NEXT: ablate corot/vortex for the O-H pair to confirm the sprinkler,
+        // then model co-rotation capture (user's mechanism: sync-and-hold).
         let combos = [
-            ("t2 d20 a1", 2.0f64, 20.0f64, 1.0f64),
-            ("t2 d8  a0", 2.0, 8.0, 0.0),
-            ("t2 d20 a0", 2.0, 20.0, 0.0),
-            ("t4 d20 a0", 4.0, 20.0, 0.0),
+            ("t8  d20 dt0  a0", 8.0f64, 20.0f64, 0.0f64, 0.0f64), // deep, radial only (ref)
+            ("t8  d20 dt20 a0", 8.0, 20.0, 20.0, 0.0),            // deep, FULL dissipation
+            ("t16 d30 dt30 a0", 16.0, 30.0, 30.0, 0.0),           // deeper + more damp
+            ("t8  d0  dt20 a0", 8.0, 0.0, 20.0, 0.0),             // tangential-only isolate
         ];
-        for (cname, bond_tension, bond_damp, bond_align) in combos {
+        for (cname, bond_tension, bond_damp, bond_damp_tan, bond_align) in combos {
             for (name, start) in approaches {
                 let mut core = standard_core();
                 apply_env_overrides(&mut core);
@@ -3523,6 +3544,7 @@ mod tests {
                 core.bond_suction = 0.0;
                 core.bond_tension = bond_tension;
                 core.bond_damp = bond_damp;
+                core.bond_damp_tan = bond_damp_tan;
                 core.bond_align = bond_align;
                 // Default directional flow on for the diagnostic (charge
                 // down −Y → +Y pole is the intake/in-line socket) unless an
@@ -3548,7 +3570,7 @@ mod tests {
                 core.running = true;
                 let ocom = core.groups[gid].com;
                 println!(
-                    "\n== OH  {cname}  {name}  t={bond_tension} d={bond_damp} a={bond_align} ==\n\
+                    "\n== OH  {cname}  {name}  t={bond_tension} d={bond_damp} dt={bond_damp_tan} a={bond_align} ==\n\
                      {:>7} | {:>7} | {:>6} | {:>7} | {:>7} | {:>6}",
                     "step", "O-H d", "lat", "azim°", "H_spin", "e_d"
                 );
@@ -3580,7 +3602,13 @@ mod tests {
                 // means it stayed on the shelf (roughly 9-15) instead of
                 // escaping. Wall reflection would send an overshoot to large
                 // d, so d_final near the well = a real (weak/long) bond.
-                let verdict = if d_final < 16.0 {
+                // A deep well can now over-bind — distinguish a loose bond
+                // (the poll.pdf shelf, dPole≈4-6 ⇒ d≈10-13, but a deeper well
+                // may seat closer) from a collapse to contact (d<4 ⇒ fused,
+                // over-bound) and from escape.
+                let verdict = if d_final < 4.0 {
+                    "FUSED"
+                } else if d_final < 15.0 {
                     "HELD"
                 } else {
                     "free"

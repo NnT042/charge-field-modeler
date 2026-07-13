@@ -1357,6 +1357,22 @@ pub struct AtomCore {
     /// so it damps the APPROACH without decaying the bond. INTER-group only
     /// → the intra-nucleus carousel is untouched. Ships 0.
     pub bond_damp: f64,
+    /// Session-35 cont-3: TANGENTIAL companion to `bond_damp`. REFUTED as a
+    /// capture aid — kept as a documented dead-end (ships 0 → radial-only).
+    /// The idea: radial damping alone can't capture because H escapes
+    /// TANGENTIALLY, so also drag the component of inter-group relative
+    /// velocity PERPENDICULAR to the line. But `v_rel` is measured against
+    /// each individual (spinning, orbiting) oxygen NUCLEON, not the local
+    /// charge stream — so this "drag" pulls H toward each nucleon's orbital
+    /// velocity, i.e. it PUMPS H up to the nucleus's rotation and slings it
+    /// off. report_oh_bond (session-35 cont-3): dt=20 ejected H to d≈3800-4300
+    /// vs radial-only d≈1300; tangential-only flung it out immediately. The
+    /// real lesson: the ejector is the `corot`/`vortex` sprinkler, and the
+    /// bond is a spin-SYNC capture problem, not a tension-well + drag problem
+    /// (the well merely feeds H into the sprinkler faster the deeper it gets).
+    /// A correct dissipation must be relative to the CHARGE STREAM (venus2.pdf
+    /// co-moving = no drag), not the nucleon — future work.
+    pub bond_damp_tan: f64,
     /// Session-35 cont-2 diagnostic knob: scales the INTER-group tension
     /// ALIGN TORQUE only (not the tension force). Ships 1.0 (no change to
     /// the bond_tension behavior). report_oh_bond showed the inter-group
@@ -1448,6 +1464,7 @@ impl AtomCore {
             bond_suction: 0.0,
             bond_tension: 0.0,
             bond_damp: 0.0,
+            bond_damp_tan: 0.0,
             bond_align: 1.0,
             flow_solve_every: crate::charge_flow::FLOW_SOLVE_EVERY,
             plug_orient_lock: false,
@@ -3452,7 +3469,7 @@ impl AtomCore {
                 // stiff → the H proton/electron pair blows apart). The bond
                 // drag is between the nucleons; the electron just rides.
                 if !same_group
-                    && self.bond_damp.abs() > 1e-12
+                    && (self.bond_damp.abs() > 1e-12 || self.bond_damp_tan.abs() > 1e-12)
                     && pi_prof.mass > 0.5
                     && pj_prof.mass > 0.5
                 {
@@ -3461,9 +3478,15 @@ impl AtomCore {
                         let v_rel = self.particles[j].velocity
                             - self.particles[i].velocity;
                         let v_radial = v_rel.dot(d_hat);
-                        let f_damp = -self.bond_damp * v_radial * fall;
-                        self.particles[j].force_accum += d_hat * f_damp;
-                        self.particles[i].force_accum -= d_hat * f_damp;
+                        let v_rad_vec = d_hat * v_radial;
+                        let v_tan_vec = v_rel - v_rad_vec;
+                        // Radial drag along the line + tangential drag on the
+                        // perpendicular component (session-35 cont-3). Both
+                        // equal-and-opposite; zero at relative rest.
+                        let f_damp = v_rad_vec * (-self.bond_damp * fall)
+                            + v_tan_vec * (-self.bond_damp_tan * fall);
+                        self.particles[j].force_accum += f_damp;
+                        self.particles[i].force_accum -= f_damp;
                     }
                 }
 
