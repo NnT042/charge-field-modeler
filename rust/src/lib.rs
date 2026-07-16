@@ -2,10 +2,13 @@ use godot::prelude::*;
 
 pub mod atom_core;
 pub mod atom_scenarios;
+pub mod calibration;
+mod calibration_view;
 pub mod charge_flow;
 mod atom_sim;
 mod field_sim;
 mod focus_particle;
+pub mod hitbox;
 mod path_trace;
 mod spin_stack;
 mod types;

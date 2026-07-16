@@ -132,6 +132,31 @@ pub fn wavelength_to_rgb(wl_nm: f64) -> (f32, f32, f32) {
     )
 }
 
+// --- Ambient charge-field density (Field Calibration Mode, CM-1) ---
+//
+// Sourced from Mathis "Redefining the Photon" (photon3.pdf): the average density
+// of the charge field, derived from c. He finds D = 1.54e-29 kg/m³, "about 56
+// million photons per cubic meter", giving D/n = 2.75e-37 kg per photon — which
+// matches the charge-photon mass derived elsewhere. heat.html: "heat is photon
+// density" (temperature scales n). pause.html: the Sun's charge density is
+// 84,986× Earth's — the anchor for the solar-core preset.
+
+// Sourced anchors, staged for the natural↔SI flux calibration (CM-1's second
+// half). Not yet wired into runtime flux (which is still relative to Room), so
+// allow them to sit unused until that conversion lands.
+#[allow(dead_code)]
+/// Average charge-field mass density (photon3.pdf).
+pub const AMBIENT_CHARGE_MASS_DENSITY_KG_M3: f64 = 1.54e-29;
+#[allow(dead_code)]
+/// Average charge-photon number density: ≈56 million per m³ (photon3.pdf).
+pub const AMBIENT_PHOTON_NUMBER_DENSITY_PER_M3: f64 = 5.6e7;
+#[allow(dead_code)]
+/// Charge-photon mass = D/n (photon3.pdf; matches the recycling-rate paper).
+pub const CHARGE_PHOTON_MASS_KG: f64 = 2.75e-37;
+#[allow(dead_code)]
+/// Sun's charge density ÷ Earth's (pause.html) — solar-core preset anchor.
+pub const SUN_EARTH_CHARGE_DENSITY_RATIO: f64 = 84_986.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +168,15 @@ mod tests {
         let wl_nat = TAU * 4.0;
         let nm = wavelength_nm(wl_nat);
         assert!((nm - 2000.0).abs() < 0.01, "z1 at c should be 2000 nm, got {}", nm);
+    }
+
+    /// Sourced self-consistency: D/n should equal the charge-photon mass
+    /// (photon3.pdf). Confirms the three constants agree to ~1%.
+    #[test]
+    fn ambient_density_constants_are_consistent() {
+        let m = AMBIENT_CHARGE_MASS_DENSITY_KG_M3 / AMBIENT_PHOTON_NUMBER_DENSITY_PER_M3;
+        assert!((m - CHARGE_PHOTON_MASS_KG).abs() / CHARGE_PHOTON_MASS_KG < 0.02,
+            "D/n = {:.3e} should match photon mass {:.3e}", m, CHARGE_PHOTON_MASS_KG);
     }
 
     #[test]
