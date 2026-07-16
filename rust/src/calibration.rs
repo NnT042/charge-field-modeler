@@ -55,6 +55,32 @@ pub struct CalibrationParticle {
     i_transverse: f64,
 }
 
+/// CM-2 gear-pump SELF-LIMITER candidates under measurement (see the session
+/// task this was written for; sourced docs: elecpro.html/higgs3.pdf/elecrad.pdf
+/// for the spin-energy ladder that motivates `gear_efficiency` values fed to
+/// `apply_photon`; pole.pdf/grav4.pdf/bright.pdf for direction-relative
+/// chirality). These variants do NOT change `apply_photon` — they are read
+/// through [`CalibrationParticle::gear_pump_variant_torque`] only, to measure
+/// which (if any) makes the gear pump self-limit against the drag channel
+/// (`swing_drag_torque`) at Earth mix without an externally-imposed ladder
+/// efficiency.
+#[derive(Clone, Copy)]
+pub enum PumpRule {
+    /// Today's `apply_photon` rule: `w_sign = χ`, `w_mag = 1`. Reproduces
+    /// `swing_pump_torque · (2·photon_fraction − 1)` exactly.
+    Baseline,
+    /// Model B, b1 (sign only): chirality becomes DIRECTION-RELATIVE —
+    /// `w_sign = χ·sgn(−dir·t̂)`, `w_mag = 1`. `t̂` is the ACTUAL signed swing
+    /// tangent (`swing_tangent`), falling back to the geometric positive
+    /// tangent `t_pos` at rest (documented in `gear_pump_variant_torque`).
+    DirRelSign,
+    /// Model B, b2 (magnitude only): `w_sign = χ`, `w_mag = |dir − v_surf|`
+    /// (`v_surf` = swing surface velocity, same as `swing_drag_torque`'s `v`).
+    CatchWeight,
+    /// Model B, b3: b1 × b2 combined.
+    DirRelCatch,
+}
+
 impl CalibrationParticle {
     pub fn new(hitbox: BakedLoop, mass: f64) -> Self {
         let mass = mass.max(1e-12);
@@ -466,6 +492,120 @@ impl CalibrationParticle {
                         torque += w * f * lever_pole;
                     }
                     count += w;
+                }
+            }
+        }
+        if count > 0.0 {
+            torque / count
+        } else {
+            0.0
+        }
+    }
+
+    /// DIAGNOSTIC (measurement, not a rule): mean pole-axis torque per unit
+    /// `momentum` from isotropic bombardment under one of the [`PumpRule`]
+    /// self-limiter candidates (see that enum's doc comment for sourcing).
+    /// Generalizes `swing_pump_torque` (which measures ONLY today's
+    /// `apply_photon` gear term, per unit chirality) to also mix the two
+    /// chirality populations explicitly by `photon_fraction` (`p`) and to
+    /// let the sign/magnitude weighting itself vary by `rule`.
+    ///
+    /// Structure mirrors `swing_pump_torque` exactly: same Fibonacci-sphere
+    /// `dirs`, same swing-phase sweep, same world-point transform, same
+    /// count-normalization. Per `(point, dir)` sample:
+    /// `net += p·contrib(χ=+1) + (1−p)·contrib(χ=−1)`, with
+    /// `contrib(χ) = w_sign(χ) · w_mag · f · lever_signed`:
+    ///   - `lever_signed = (r×t_pos)·pole` — the exact same geometric factor
+    ///     `swing_pump_torque` calls `lever_pole`; per that method's doc
+    ///     comment it reduces algebraically to `|r_perp| ≥ 0` (`t_pos` is
+    ///     defined ⊥ both `pole` and `r_perp`). It carries no sign channel
+    ///     of its own here either — `DirRelSign`'s sign comes entirely from
+    ///     `sgn(−dir·t̂)` below, not from this factor. Named to match this
+    ///     task's spec; kept as the raw dot product (not `.abs()`) purely to
+    ///     reuse `swing_pump_torque`'s internals unmodified.
+    ///   - `f` is `apply_photon` term 2's existing catch-direction factor,
+    ///     `(1 − dir·t̂_actual)/2` (0.5 at rest) — `t̂_actual` is the REAL
+    ///     signed swing tangent (`swing_tangent`), independent of the
+    ///     DirRelSign fallback below.
+    ///   - `w_sign(χ) = χ` (Baseline, CatchWeight) or `χ·sgn(−dir·t̂)`
+    ///     (DirRelSign, DirRelCatch), where `t̂` = `t̂_actual` if nonzero,
+    ///     else falls back to the geometric positive tangent `t_pos` (the
+    ///     documented rest-state choice — per the task this was measured
+    ///     for, if this fallback makes each chirality population cancel
+    ///     itself to ~zero net pump at rest, that's a FINDING, not a bug).
+    ///   - `w_mag = 1` (Baseline, DirRelSign) or `|dir − v_surf|`
+    ///     (CatchWeight, DirRelCatch), `v_surf = omega × r` (the swing
+    ///     surface velocity, same `v` as `swing_drag_torque`).
+    ///
+    /// `Baseline` at `photon_fraction = 1.0` must equal `swing_pump_torque`
+    /// exactly (unit-tested) since `p·contrib(+1) + 0·contrib(−1) =
+    /// contrib(+1)` and `contrib(+1)` under Baseline is bit-identical to
+    /// `swing_pump_torque`'s per-sample term.
+    pub fn gear_pump_variant_torque(
+        &self,
+        photon_fraction: f64,
+        rule: PumpRule,
+        dir_samples: usize,
+        swing_samples: usize,
+    ) -> f64 {
+        let n = self.hitbox.points.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let pole = self.pole_axis();
+        let omega = pole * (self.outer_spin / self.swing_orbit_radius);
+        let swing_samples = swing_samples.max(1);
+        let m = dir_samples.max(1);
+        let dirs: Vec<DVec3> = (0..m)
+            .map(|k| {
+                let z = 1.0 - 2.0 * (k as f64 + 0.5) / m as f64;
+                let r = (1.0 - z * z).max(0.0).sqrt();
+                let phi = k as f64 * 2.399_963_229_728_653;
+                DVec3::new(r * phi.cos(), r * phi.sin(), z)
+            })
+            .collect();
+
+        let p = photon_fraction;
+        let mut torque = 0.0;
+        let mut count = 0.0;
+        for si in 0..swing_samples {
+            let phi = si as f64 / swing_samples as f64 * std::f64::consts::TAU;
+            let srot = DQuat::from_axis_angle(self.hitbox.swing_axis, phi);
+            for i in 0..n {
+                let world_p =
+                    self.position + self.orientation * (srot * (self.hitbox.points[i] + self.hitbox.swing_offset));
+                let r = world_p - self.position;
+                let rp = r - pole * r.dot(pole);
+                let t_pos = pole.cross(rp).normalize_or_zero();
+                let on_axis = t_pos.length_squared() < 1e-18;
+                // Same quantity as swing_pump_torque's `lever_pole` (reduces
+                // algebraically to |r_perp| >= 0; no sign channel of its own).
+                let lever_signed = if on_axis { 0.0 } else { r.cross(t_pos).dot(pole) };
+                let t_actual = if on_axis { DVec3::ZERO } else { self.swing_tangent(world_p) };
+                // DirRelSign/DirRelCatch sign-reference tangent: the actual
+                // signed swing tangent, falling back to the geometric
+                // positive tangent at rest (documented fallback choice).
+                let t_hat = if t_actual.length_squared() > 1e-18 { t_actual } else { t_pos };
+                let v_surf = omega.cross(r);
+                for d in &dirs {
+                    let f = if t_actual.length_squared() > 1e-18 {
+                        ((1.0 - d.dot(t_actual)) * 0.5).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                    let contrib = |chi: f64| -> f64 {
+                        let w_sign = match rule {
+                            PumpRule::Baseline | PumpRule::CatchWeight => chi,
+                            PumpRule::DirRelSign | PumpRule::DirRelCatch => chi * (-d.dot(t_hat)).signum(),
+                        };
+                        let w_mag = match rule {
+                            PumpRule::Baseline | PumpRule::DirRelSign => 1.0,
+                            PumpRule::CatchWeight | PumpRule::DirRelCatch => (*d - v_surf).length(),
+                        };
+                        w_sign * w_mag * f * lever_signed
+                    };
+                    torque += p * contrib(1.0) + (1.0 - p) * contrib(-1.0);
+                    count += 1.0;
                 }
             }
         }
@@ -961,6 +1101,77 @@ mod tests {
         let p = CalibrationParticle::new(bake_loop(3, 16), 1.0);
         assert!((p.pole_axis() - DVec3::Z).length() < 1e-9, "expected Z pole");
         p
+    }
+
+    // --- gear-pump self-limiter candidates (PumpRule / gear_pump_variant_torque) ---
+
+    /// Identity check: at `photon_fraction = 1.0` (pure photon population,
+    /// chi=-1 term contributes zero weight), `PumpRule::Baseline` must
+    /// reproduce `swing_pump_torque · (2·1.0 − 1) = swing_pump_torque`
+    /// exactly — `contrib(+1)` under Baseline (`w_sign=1, w_mag=1`) is
+    /// bit-for-bit the same per-sample term `swing_pump_torque` accumulates.
+    /// Checked at rest and mid-spin; validates the plumbing before trusting
+    /// any of the other rule variants.
+    #[test]
+    fn baseline_variant_matches_swing_pump_torque() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        for &s in &[0.0, 0.6] {
+            p.outer_spin = s;
+            let swing = p.swing_pump_torque(48, 16, false);
+            let variant = p.gear_pump_variant_torque(1.0, PumpRule::Baseline, 48, 16);
+            assert!(
+                (swing - variant).abs() < 1e-9,
+                "s={}: swing_pump_torque={} gear_pump_variant_torque(Baseline)={}",
+                s, swing, variant
+            );
+        }
+    }
+
+    /// MEASURED relationship (not prejudged): at s=0.6, photon_fraction=1.0,
+    /// `PumpRule::CatchWeight` (`w_mag = |dir - v_surf|`) pumps MORE than
+    /// `PumpRule::Baseline` (`w_mag = 1`) — probed directly: baseline ≈
+    /// 130.57, catch-weight ≈ 149.66 (rust/src/calibration.rs probe, 2026-07).
+    /// Reading: at s=0.6 the opposing (head-on) half of the isotropic
+    /// direction set has relative speed > 1 (`|dir - v_surf| > 1`) while the
+    /// co-moving half has relative speed < 1, and because the catch factor
+    /// `f` already up-weights the opposing directions (same asymmetry
+    /// `swing_drag_torque` exploits for its drag), the CatchWeight magnitude
+    /// term reinforces rather than dilutes the pump at this spin — i.e. b2
+    /// alone does NOT act as a limiter here, it grows the pump with speed.
+    /// This test locks in the sign of that relationship as a regression
+    /// guard; it is a measurement, not a physics claim about which model is
+    /// correct (that's the requester's call, made in the report interpretation).
+    #[test]
+    fn catch_weight_rule_grows_pump_with_headon() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        p.outer_spin = 0.6;
+        let baseline = p.gear_pump_variant_torque(1.0, PumpRule::Baseline, 48, 16);
+        let catch_weight = p.gear_pump_variant_torque(1.0, PumpRule::CatchWeight, 48, 16);
+        assert!(
+            catch_weight > baseline,
+            "measured CatchWeight ({}) should exceed Baseline ({}) at s=0.6, p=1.0 — see comment for the reading",
+            catch_weight, baseline
+        );
+    }
+
+    /// MEASURED finding (not a bug): at rest (`outer_spin = 0`), every point's
+    /// actual swing tangent is zero, so `PumpRule::DirRelSign` falls back to
+    /// `sgn(-dir·t_pos)` (the geometric, dir-independent-only-in-magnitude
+    /// tangent). Averaged over the isotropic Fibonacci-sphere direction set,
+    /// this sign term cancels almost exactly to machine noise (probed:
+    /// ~3.3e-17 for the proton bake, vs ~130.57 for Baseline at the same
+    /// state) — i.e. the direction-relative-chirality sign rule, at rest,
+    /// self-cancels: half the isotropic photons see the tangent as "opposing"
+    /// and half as "co-moving" in exactly equal measure, net pump ~0. This
+    /// is the "population cancellation" finding flagged in the task spec,
+    /// not a plumbing bug — asserted here as a tight bound so a future
+    /// change that breaks the cancellation shows up as a test failure.
+    #[test]
+    fn dirrel_sign_rule_at_rest() {
+        let p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        assert_eq!(p.outer_spin, 0.0);
+        let v = p.gear_pump_variant_torque(1.0, PumpRule::DirRelSign, 48, 16);
+        assert!(v.abs() < 1e-6, "expected near-zero net pump at rest by population cancellation, got {:e}", v);
     }
 
     #[test]
@@ -1596,6 +1807,26 @@ mod tests {
         let saved = p.outer_spin;
         p.outer_spin = s;
         let t = p.swing_pump_torque(48, 16, occluded);
+        p.outer_spin = saved;
+        t
+    }
+
+    /// Evaluate `gear_pump_variant_torque` at a trial `outer_spin` without
+    /// permanently disturbing the particle (restores afterward). Same
+    /// save/restore convention as `pump_at_spin`/`drag_at_spin`, generalized
+    /// to a [`PumpRule`] and a `photon_fraction`. Used by
+    /// `report_pump_self_limiter`.
+    fn gear_pump_at_spin(
+        p: &mut CalibrationParticle,
+        s: f64,
+        photon_fraction: f64,
+        rule: PumpRule,
+        dir_samples: usize,
+        swing_samples: usize,
+    ) -> f64 {
+        let saved = p.outer_spin;
+        p.outer_spin = s;
+        let t = p.gear_pump_variant_torque(photon_fraction, rule, dir_samples, swing_samples);
         p.outer_spin = saved;
         t
     }
@@ -2320,5 +2551,285 @@ mod tests {
             "isotropic control should show no directional alignment preference, got final tilt {:.3} deg (start {:.3})",
             final_tilt_c, start_tilt_c
         );
+    }
+
+    // --- CM-2 gear-pump self-limiter candidates: PumpRule report ---
+
+    /// Locates the SETTLING (dynamically stable) root of `s ->
+    /// gear_eff·pump(s) + drag(s)` using CACHED, pre-tabulated `pump`/`drag`
+    /// values on a shared `grid` (not fresh calls per gear_efficiency — see
+    /// `report_pump_self_limiter`'s header comment on why the tables are
+    /// built once and reused).
+    ///
+    /// `net > 0` pushes `outer_spin` up, `net < 0` pulls it down, so a
+    /// physically settling equilibrium is a DOWNWARD crossing (`net` goes
+    /// from `>= 0` to `< 0` as `s` increases) — perturb it up, it's pulled
+    /// back; perturb it down, it's pushed back up. An UPWARD crossing (`net`
+    /// goes `< 0` to `>= 0`) is a REPELLER, not an answer: `s` sitting
+    /// exactly there is a mathematical root but an unstable one, and reporting
+    /// it would be misleading (this bites `DirRelSign`/`DirRelCatch`
+    /// specifically: their pump is ~0 at rest by the population-cancellation
+    /// finding, so `net(0) ~= 0` is ALWAYS a root, but for large enough
+    /// `gear_efficiency` the pump jumps to a nonzero plateau for any `s > 0`
+    /// and net immediately goes positive — s=0 is a repeller there, and the
+    /// real settling point is farther out where drag finally catches the
+    /// plateau). So this scans for the FIRST DOWNWARD crossing specifically,
+    /// treating upward crossings as pass-through waypoints, not answers.
+    /// Crossings are refined via the piecewise-LINEAR closed-form root within
+    /// the bracketing grid cell (equivalent precision to iterative bisection
+    /// given a grid this fine, at zero extra function-call cost).
+    ///
+    /// No downward crossing anywhere in the scanned range means: if `net`
+    /// ever went positive (at s=0 or via an upward crossing), it's "runaway
+    /// (transmutes)" (nothing ever pulls `outer_spin` back down, so it rides
+    /// the gear pump to the c-saturation clamp); otherwise `net <= 0`
+    /// throughout, "rest (no spin-up)".
+    fn find_equilibrium_label(grid: &[f64], pump: &[f64], drag: &[f64], gear_eff: f64) -> String {
+        let net = |i: usize| gear_eff * pump[i] + drag[i];
+        let n = grid.len();
+        let mut prev = net(0);
+        let mut saw_upward = prev > 0.0;
+        for i in 1..n {
+            let cur = net(i);
+            if prev >= 0.0 && cur < 0.0 {
+                // Downward (settling) crossing — the answer.
+                let s0 = grid[i - 1];
+                let s1 = grid[i];
+                let root = (s0 - prev * (s1 - s0) / (cur - prev)).clamp(s0, s1);
+                return format!("s*={:.4}", root);
+            }
+            if prev < 0.0 && cur >= 0.0 {
+                // Upward (repelling) crossing — note it and keep scanning;
+                // this is NOT a settling equilibrium.
+                saw_upward = true;
+            }
+            prev = cur;
+        }
+        if saw_upward || prev > 0.0 {
+            "runaway (transmutes)".to_string()
+        } else {
+            "rest (no spin-up)".to_string()
+        }
+    }
+
+    /// REPORT (ignored by default): MEASURES (does not choose between) the
+    /// two candidate CM-2 gear-pump self-limiters described in the task this
+    /// was written for.
+    ///
+    /// Background: `apply_photon`'s gear term (`j_tan = t_pos · momentum · f
+    /// · χ · gear_efficiency`) overruns the catch-weighted Newtonian drag at
+    /// Earth mix (2/3 photon) with `gear_efficiency = 1.0`, so proton and
+    /// electron both spin up to c (transmute) under an ordinary ambient field
+    /// — falsified, since real matter is stable in ordinary starlight. Two
+    /// families of fix are on the table:
+    ///   (A) an externally-imposed spin-energy-ladder efficiency
+    ///       (elecpro.html/higgs3.pdf: 16385 = the full stacked-spin sum,
+    ///       1820.56 ≈ Dalton = 16385/9, 9 = the axial-spin-electron rung) —
+    ///       this report tries `gear_efficiency` in {1.0, 1/9, 1/1820.56,
+    ///       1/16385} against the unmodified (`Baseline`) gear rule;
+    ///   (B) making the gear rule ITSELF direction/speed-relative
+    ///       (pole.pdf/grav4.pdf/bright.pdf), tried here as three sub-rules
+    ///       (`DirRelSign`, `CatchWeight`, `DirRelCatch`, see [`PumpRule`])
+    ///       at `gear_efficiency = 1.0` — does changing the rule alone (no
+    ///       ladder) already produce a finite equilibrium?
+    /// The two families aren't mutually exclusive — the equilibrium table
+    /// (Block 2) crosses every rule against every `gear_efficiency`, so a
+    /// rule that needs help from the ladder shows up as "runaway" at
+    /// `gear_efficiency=1.0` but a finite `s*` at a smaller one.
+    ///
+    /// This test performs MEASUREMENT ONLY: no collision rule
+    /// (`apply_photon`, `AmbientField::tick`) is touched, and `PumpRule` /
+    /// `gear_pump_variant_torque` are read-only diagnostics layered on top.
+    /// The only assert is the drag(0)≈0 sanity check inherited from
+    /// `swing_drag_is_zero_at_rest`; everything else is print-only — the
+    /// tables ARE the deliverable, interpretation is the requester's call
+    /// (see this test's own header printout for a build-time honesty check
+    /// on the proton/neutron/electron construction).
+    ///
+    /// PERFORMANCE NOTE: `gear_pump_variant_torque`/`swing_drag_torque` at
+    /// (dir_samples=48, swing_samples=16, n=256 loop points) cost ~2e5 inner
+    /// iterations per call. Block 2's cross product (3 particles × 4 rules ×
+    /// 3 photon_fractions × 4 gear_efficiencies = 144 rows) would mean tens
+    /// of thousands of calls if each row recomputed `pump`/`drag` from
+    /// scratch — but `drag` never depends on `rule`/`photon_fraction`/
+    /// `gear_efficiency` at all, and `pump` never depends on
+    /// `gear_efficiency`. So this report tabulates `pump(s)`/`drag(s)` ONCE
+    /// per (particle) and (particle, rule, photon_fraction) respectively, on
+    /// a shared 201-point grid over `s ∈ [0, 0.995]`, and every row of Block
+    /// 2/3 just looks up (interpolates) into those cached tables via
+    /// `find_equilibrium_label` — physically identical results, without the
+    /// wasted recomputation.
+    #[test]
+    #[ignore]
+    fn report_pump_self_limiter() {
+        struct ParticleSpec {
+            label: &'static str,
+            make: Box<dyn Fn() -> CalibrationParticle>,
+        }
+        let specs: Vec<ParticleSpec> = vec![
+            ParticleSpec { label: "proton", make: Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0)) },
+            ParticleSpec { label: "neutron", make: Box::new(|| CalibrationParticle::new(bake_loop(11, 256), 1.0)) },
+            ParticleSpec { label: "electron", make: Box::new(|| CalibrationParticle::new(bake_loop(8, 256), 1.0)) },
+        ];
+
+        let rules = [PumpRule::Baseline, PumpRule::DirRelSign, PumpRule::CatchWeight, PumpRule::DirRelCatch];
+        let rule_label = |r: PumpRule| match r {
+            PumpRule::Baseline => "Baseline",
+            PumpRule::DirRelSign => "DirRelSign",
+            PumpRule::CatchWeight => "CatchWeight",
+            PumpRule::DirRelCatch => "DirRelCatch",
+        };
+
+        println!("\n=== report_pump_self_limiter ===");
+        println!(
+            "particles: proton=bake_loop(12,256) neutron=bake_loop(11,256) electron=bake_loop(8,256), mass=1.0 (direct bake, not the proton()/neutron()/electron() ctors)."
+        );
+
+        // --- Header honesty check: does the direct bake match the ctors? ---
+        // bake_loop's swing_offset/swing_axis/swing_is_precession depend only
+        // on loop_level, not on `samples` (see report_spin_equilibrium's own
+        // comment on this) — so the ONLY thing the ctors could differ on is
+        // sample count (they call bake_loop(level, recommended_samples(level))
+        // instead of a fixed 256). Verify this claim rather than assert it.
+        let ctor_pairs: [(&str, u8, fn(f64) -> CalibrationParticle); 3] = [
+            ("proton", 12, CalibrationParticle::proton),
+            ("neutron", 11, CalibrationParticle::neutron),
+            ("electron", 8, CalibrationParticle::electron),
+        ];
+        for (label, level, ctor) in ctor_pairs {
+            let direct = CalibrationParticle::new(bake_loop(level, 256), 1.0);
+            let via_ctor = ctor(1.0);
+            let off_diff = (direct.hitbox.swing_offset - via_ctor.hitbox.swing_offset).length();
+            let axis_diff = (direct.hitbox.swing_axis - via_ctor.hitbox.swing_axis).length();
+            let prec_match = direct.hitbox.swing_is_precession == via_ctor.hitbox.swing_is_precession;
+            println!(
+                "  {}: ctor samples={} (direct=256) | swing_offset diff={:.3e} swing_axis diff={:.3e} precession_match={} -> {}",
+                label,
+                recommended_samples(level),
+                off_diff,
+                axis_diff,
+                prec_match,
+                if off_diff < 1e-9 && axis_diff < 1e-9 && prec_match {
+                    "GEOMETRY MATCHES (this report's direct bake reproduces the ctor's swing geometry exactly, including the neutron kite offset; sample-count is the only difference and it doesn't affect swing_offset/axis/precession)"
+                } else {
+                    "GEOMETRY DIFFERS (see diffs above)"
+                }
+            );
+        }
+
+        // ============================= BLOCK 1 =============================
+        // Pump curves per particle, all 4 rules as columns, at Earth mix
+        // (p=2/3), plus drag(s) as the last column for reference. Small
+        // s-value set (11 points) — direct calls, no caching needed.
+        let p_earth = 2.0 / 3.0;
+        let s_values = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99];
+        println!("\n--- Block 1: pump curves (photon_fraction = 2/3, Earth mix) ---");
+        println!("(pump columns: per unit momentum·gear_efficiency; drag column: per unit momentum)");
+        for spec in &specs {
+            let mut p = (spec.make)();
+            println!(
+                "\n{}\n{:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+                spec.label, "s", "Baseline", "DirRelSign", "CatchWeight", "DirRelCatch", "drag"
+            );
+            for &s in &s_values {
+                let b = gear_pump_at_spin(&mut p, s, p_earth, PumpRule::Baseline, 48, 16);
+                let dr = gear_pump_at_spin(&mut p, s, p_earth, PumpRule::DirRelSign, 48, 16);
+                let cw = gear_pump_at_spin(&mut p, s, p_earth, PumpRule::CatchWeight, 48, 16);
+                let dc = gear_pump_at_spin(&mut p, s, p_earth, PumpRule::DirRelCatch, 48, 16);
+                let dg = drag_at_spin(&mut p, s, false);
+                println!("{:>6.2} {:>14.6} {:>14.6} {:>14.6} {:>14.6} {:>14.6}", s, b, dr, cw, dc, dg);
+                if s == 0.0 {
+                    assert!(dg.abs() < 1e-9, "{}: drag(0) should be ~0, got {}", spec.label, dg);
+                }
+            }
+        }
+
+        // ============================= BLOCK 2 =============================
+        // Equilibrium table: particle x rule x photon_fraction x gear_eff.
+        // Tables cached once per (particle) [drag] and (particle, rule,
+        // photon_fraction) [pump] on a shared grid, reused across all 4
+        // gear_efficiency values (see the performance note in this test's doc
+        // comment). Also reused by Block 3 below.
+        const GRID_N: usize = 200;
+        let grid_s: Vec<f64> = (0..=GRID_N).map(|i| 0.995 * i as f64 / GRID_N as f64).collect();
+        let p_values = [0.5, 2.0 / 3.0, 1.0];
+        let gear_effs: [(&str, f64); 4] =
+            [("1.0", 1.0), ("1/9", 1.0 / 9.0), ("1/1820.56", 1.0 / 1820.56), ("1/16385", 1.0 / 16385.0)];
+
+        // drag_tables[particle_idx] ; pump_tables[particle_idx][rule_idx][p_idx]
+        let mut drag_tables: Vec<Vec<f64>> = Vec::with_capacity(specs.len());
+        let mut pump_tables: Vec<Vec<Vec<Vec<f64>>>> = Vec::with_capacity(specs.len());
+        for spec in &specs {
+            let mut p = (spec.make)();
+            let drag_table: Vec<f64> = grid_s.iter().map(|&s| drag_at_spin(&mut p, s, false)).collect();
+            let mut per_rule: Vec<Vec<Vec<f64>>> = Vec::with_capacity(rules.len());
+            for &rule in &rules {
+                let mut per_p: Vec<Vec<f64>> = Vec::with_capacity(p_values.len());
+                for &pf in &p_values {
+                    let table: Vec<f64> =
+                        grid_s.iter().map(|&s| gear_pump_at_spin(&mut p, s, pf, rule, 48, 16)).collect();
+                    per_p.push(table);
+                }
+                per_rule.push(per_p);
+            }
+            drag_tables.push(drag_table);
+            pump_tables.push(per_rule);
+        }
+
+        println!("\n--- Block 2: equilibrium table (gear_efficiency*pump(s*) + drag(s*) = 0) ---");
+        println!("{:>10} {:>12} {:>8} {:>12} {:>28}", "particle", "rule", "p", "gear_eff", "verdict/s*");
+        for (pi, spec) in specs.iter().enumerate() {
+            for (ri, &rule) in rules.iter().enumerate() {
+                for (pfi, &pf) in p_values.iter().enumerate() {
+                    let pump_table = &pump_tables[pi][ri][pfi];
+                    let drag_table = &drag_tables[pi];
+                    for &(eff_label, eff) in &gear_effs {
+                        let verdict = find_equilibrium_label(&grid_s, pump_table, drag_table, eff);
+                        println!(
+                            "{:>10} {:>12} {:>8.4} {:>12} {:>28}",
+                            spec.label, rule_label(rule), pf, eff_label, verdict
+                        );
+                    }
+                }
+            }
+        }
+
+        // ============================= BLOCK 3 =============================
+        // Anchors: electron s* under (Baseline & CatchWeight) x gear_eff=1/9
+        // @ p=2/3, vs the two sourced electron-speed anchors; proton s* under
+        // gear_eff=1/16385 (does it stay finite/sub-c at p=1.0, the pure-
+        // photon/collider-like stress case, or does even the ladder factor
+        // fail to save it there?).
+        println!("\n--- Block 3: anchors ---");
+        let electron_idx = specs.iter().position(|s| s.label == "electron").unwrap();
+        let proton_idx = specs.iter().position(|s| s.label == "proton").unwrap();
+        let baseline_idx = rules.iter().position(|r| matches!(r, PumpRule::Baseline)).unwrap();
+        let catchweight_idx = rules.iter().position(|r| matches!(r, PumpRule::CatchWeight)).unwrap();
+        let p_earth_idx = p_values.iter().position(|&p| (p - p_earth).abs() < 1e-12).unwrap();
+        let p_one_idx = p_values.iter().position(|&p| (p - 1.0).abs() < 1e-12).unwrap();
+
+        let e_drag = &drag_tables[electron_idx];
+        let e_baseline_verdict = find_equilibrium_label(
+            &grid_s, &pump_tables[electron_idx][baseline_idx][p_earth_idx], e_drag, 1.0 / 9.0,
+        );
+        let e_catchweight_verdict = find_equilibrium_label(
+            &grid_s, &pump_tables[electron_idx][catchweight_idx][p_earth_idx], e_drag, 1.0 / 9.0,
+        );
+        println!("electron s* (Baseline,   gear_eff=1/9, p=2/3 Earth mix): {}", e_baseline_verdict);
+        println!("electron s* (CatchWeight, gear_eff=1/9, p=2/3 Earth mix): {}", e_catchweight_verdict);
+        println!("  anchor: Mathis electron speed ~0.0057c (comp2.html, fourth root of 2G)");
+        println!("  anchor: project's old trace structure ~0.055c");
+
+        println!();
+        let pr_drag = &drag_tables[proton_idx];
+        for (ri, &rule) in rules.iter().enumerate() {
+            let verdict =
+                find_equilibrium_label(&grid_s, &pump_tables[proton_idx][ri][p_one_idx], pr_drag, 1.0 / 16385.0);
+            println!(
+                "proton s* ({:<11} gear_eff=1/16385, p=1.0 pure-photon/collider-stress): {}",
+                format!("{},", rule_label(rule)),
+                verdict
+            );
+        }
     }
 }
