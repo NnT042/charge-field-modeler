@@ -351,3 +351,33 @@ Run in order; each depends on the previous being calibrated.
 Each CM step ends with a committed diagnostic and a numbers table, same discipline as the
 session-3x campaign — but this time the numbers feed forward into Atom mode instead of chasing
 an explosion.
+
+## Model A: velocity-channel drag (implemented)
+
+**Measurement history.** The orientation-participation diagnostic showed the hit-weighting
+channel (which orientation the loop presents to the field) is dead as a self-limiter — it barely
+moves the histogram even at high `outer_spin`. `swing_drag_torque` found the real limiter
+instead: model B's gear-catch pump (`apply_photon`) computed `tau_perp` and *discarded* the
+pole-axis component of the plain momentum torque (`r × j`). Restoring it, weighted by the
+photon's speed **relative to the moving swing surface** (`|c·dir − v_surface|`, c = 1), gives a
+torque that grows with `outer_spin` and is signed to oppose it — a genuine drag, not another pump.
+
+**The rule.** In `apply_photon`, after the chirality pump: `tau_pole = (r × (dir · momentum ·
+catch)) · pole`, `outer_spin += spin_coupling · tau_pole / i_spin`. `catch = |c·dir − v_surface|`
+where `v_surface = ω × r` is the swing surface's velocity at the contact point. Head-on photons
+have a larger relative speed than co-moving ones can chase, so an isotropic field's mean torque
+is nonzero and spin-down — unlike the chirality pump, this channel owes nothing to chirality.
+
+**The scaling law.** Equilibrium is where the augment/cancel pump balances the drag:
+`0.5·spin_gain·(2p−1) + spin_coupling·momentum·swing_drag_torque(s*) = 0` (p = photon_fraction).
+`report_spin_equilibrium` bisects that relation per field setting and compares it against a
+ticked `AmbientField` simulation's actual settled `outer_spin`. Across an imbalance sweep
+(p = 0.5…1.0, flux 200) and a density sweep (flux 50/200/800, p = 0.667), predicted and simulated
+equilibria agree to within a few percent, and the density sweep confirms the settled value is
+flux-independent while `settle_step` (time-to-settle) shrinks with flux — exactly what a
+density-independent equilibrium with density-dependent approach rate predicts.
+
+**Thermal floor.** At rest, or for any single photon, the drag term is generally nonzero — only
+the *isotropic mean* vanishes (`drag_has_zero_mean_at_rest`). Per-photon scatter around zero is
+expected noise, not a bug; a balanced field's simulated settled spin jitters near zero for the
+same reason (see the p=0.5 row above).

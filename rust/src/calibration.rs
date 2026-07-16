@@ -213,6 +213,20 @@ impl CalibrationParticle {
             0.5
         };
         self.outer_spin += spin_gain * f * chirality / self.i_spin;
+
+        // Model A: velocity-channel drag — the pole component of the momentum
+        // torque, which model B discarded, restored with the relative-speed catch
+        // weight |c·dir − v_surface| (c = 1 natural units). Head-on photons catch
+        // harder than co-moving ones can chase, so an isotropic field nets a
+        // spin-DOWN torque growing with outer_spin (see swing_drag_torque). At
+        // rest the isotropic mean is zero; per-photon scatter remains as a
+        // thermal floor.
+        let omega = pole * (self.outer_spin / self.swing_orbit_radius);
+        let v_surf = omega.cross(r);
+        let catch = (dir - v_surf).length();
+        let tau_pole = r.cross(dir * (momentum * catch)).dot(pole);
+        self.outer_spin += self.spin_coupling * tau_pole / self.i_spin;
+
         if self.outer_spin.abs() >= 1.0 {
             self.outer_spin = self.outer_spin.clamp(-1.0, 1.0);
             self.transmuted = true;
@@ -668,6 +682,17 @@ mod tests {
 
     /// A photon opposing the surface motion (gears catch, f≈1) pumps far more
     /// spin than one co-moving with it (slips, f≈0).
+    ///
+    /// NOTE (model A landed): `momentum=0.0` here, changed from the original
+    /// `0.02`. The pump term this test isolates doesn't depend on `momentum` at
+    /// all, but the new velocity-channel drag term (added in `apply_photon`
+    /// alongside the pump, unconditionally) does — and for this exact geometry
+    /// (opposing photon, outer_spin=0.5) the drag is a same-order-of-magnitude
+    /// NEGATIVE contribution that ate most of the old 100x headroom (measured
+    /// ratio dropped to ~27x with momentum=0.02). That's expected: it's the same
+    /// self-limiter `report_spin_equilibrium` measures. Zeroing momentum isolates
+    /// the chirality gear-catch mechanism this test is actually about, leaving
+    /// the drag/pump interaction to the model-A-specific tests.
     #[test]
     fn opposing_photon_catches_comoving_slips() {
         // Z-pole particle spinning +; at contact +X the surface moves +Y.
@@ -678,8 +703,8 @@ mod tests {
         let contact_o = opp.position + DVec3::X;
         let contact_c = com.position + DVec3::X;
         // opposing surface (+Y) → dir -Y; co-moving → dir +Y.
-        opp.apply_photon(contact_o, -DVec3::Y, 1.0, 0.02, 0.5);
-        com.apply_photon(contact_c, DVec3::Y, 1.0, 0.02, 0.5);
+        opp.apply_photon(contact_o, -DVec3::Y, 1.0, 0.0, 0.5);
+        com.apply_photon(contact_c, DVec3::Y, 1.0, 0.0, 0.5);
         let d_opp = opp.outer_spin - 0.5;
         let d_com = com.outer_spin - 0.5;
         assert!(d_opp > 0.0, "opposing hit should pump spin, got {}", d_opp);
@@ -818,5 +843,243 @@ mod tests {
             flux: 500.0, photon_fraction: 0.5, direction_bias: None,
             momentum: 0.0, spin_gain: 0.5, time_scale: ts,
         }
+    }
+
+    // --- model A: velocity-channel drag ---
+
+    /// Deterministic Fibonacci-sphere directions, same pattern as
+    /// `swing_drag_torque`'s isotropic sampling.
+    fn fib_sphere(m: usize) -> Vec<DVec3> {
+        (0..m)
+            .map(|k| {
+                let z = 1.0 - 2.0 * (k as f64 + 0.5) / m as f64;
+                let r = (1.0 - z * z).max(0.0).sqrt();
+                let phi = k as f64 * 2.399_963_229_728_653;
+                DVec3::new(r * phi.cos(), r * phi.sin(), z)
+            })
+            .collect()
+    }
+
+    /// At rest, an isotropic bombardment's pole-axis drag torque must average to
+    /// zero (per-photon it's nonzero — that's the thermal floor — but the mean
+    /// over an isotropic direction set at a fixed contact point vanishes). Each
+    /// photon is applied to a *fresh* rest-state particle so later hits don't
+    /// contaminate the "at rest" measurement (matches how `swing_drag_torque`
+    /// itself is a stateless snapshot at a given `outer_spin`).
+    #[test]
+    fn drag_has_zero_mean_at_rest() {
+        let template = CalibrationParticle::new(bake_loop(3, 128), 1.0);
+        let pts = template.world_points();
+        let stride = (pts.len() / 12).max(1);
+        let contacts: Vec<DVec3> = pts.iter().step_by(stride).copied().collect();
+        let dirs = fib_sphere(64);
+        let momentum = 0.02;
+
+        let mut sum = 0.0;
+        let mut sum_sq = 0.0;
+        let mut n = 0u64;
+        for &contact in &contacts {
+            for &dir in &dirs {
+                let mut p = CalibrationParticle::new(bake_loop(3, 128), 1.0);
+                assert_eq!(p.outer_spin, 0.0);
+                p.apply_photon(contact, dir, 1.0, momentum, 0.0);
+                let d = p.outer_spin; // delta from the rest state
+                sum += d;
+                sum_sq += d * d;
+                n += 1;
+            }
+        }
+        let mean = sum / n as f64;
+        let rms = (sum_sq / n as f64).sqrt();
+        assert!(rms > 1e-12, "expected nonzero per-photon thermal scatter, got rms {}", rms);
+        assert!(mean.abs() < 0.05 * rms,
+            "isotropic drag should have ~zero mean at rest: mean={} rms={} (n={})", mean, rms, n);
+    }
+
+    /// A balanced (photon_fraction 0.5, spin_gain 0.0) isotropic field drags a
+    /// spun-up particle back down toward zero — the drag term alone, no pump.
+    #[test]
+    fn balanced_field_drags_spin_down() {
+        // Smaller bake than the full proton (still L12/Z-pole) to keep the test fast.
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        assert!((p.pole_axis() - DVec3::Z).length() < 1e-9);
+        p.outer_spin = 0.8;
+        let field = AmbientField {
+            flux: 200.0,
+            photon_fraction: 0.5,
+            direction_bias: None,
+            momentum: 0.02,
+            spin_gain: 0.0,
+            time_scale: 1.0,
+        };
+        let dt = 0.02;
+        let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+        let mut settled = false;
+        for _ in 0..20_000 {
+            field.tick(&mut p, dt, &mut rng);
+            p.integrate(dt, field.time_scale);
+            if p.outer_spin < 0.4 {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "drag should pull outer_spin below 0.4, stuck at {}", p.outer_spin);
+        assert!(!p.transmuted, "pure drag should never transmute, got outer_spin {}", p.outer_spin);
+    }
+
+    /// Mirror of the above starting from negative spin: drag restores toward
+    /// zero from either side, no sign-dependent gate.
+    #[test]
+    fn drag_restores_negative_spin_toward_zero() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        p.outer_spin = -0.8;
+        let field = AmbientField {
+            flux: 200.0,
+            photon_fraction: 0.5,
+            direction_bias: None,
+            momentum: 0.02,
+            spin_gain: 0.0,
+            time_scale: 1.0,
+        };
+        let dt = 0.02;
+        let mut rng = 0x1D87_2B23_45FF_0011u64;
+        let mut settled = false;
+        for _ in 0..20_000 {
+            field.tick(&mut p, dt, &mut rng);
+            p.integrate(dt, field.time_scale);
+            if p.outer_spin > -0.4 {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "drag should pull outer_spin above -0.4, stuck at {}", p.outer_spin);
+        assert!(!p.transmuted, "pure drag should never transmute, got outer_spin {}", p.outer_spin);
+    }
+
+    /// Evaluate `swing_drag_torque` at a trial `outer_spin` without permanently
+    /// disturbing the particle (restores afterward). Returns torque per photon
+    /// WITHOUT the momentum factor (see the diagnostic's doc comment).
+    fn drag_at_spin(p: &mut CalibrationParticle, s: f64) -> f64 {
+        let saved = p.outer_spin;
+        p.outer_spin = s;
+        let t = p.swing_drag_torque(48, 16);
+        p.outer_spin = saved;
+        t
+    }
+
+    /// Bisect for the equilibrium `outer_spin` where the chirality pump balances
+    /// the velocity-channel drag: `pump + spin_coupling·momentum·drag_at_spin(s)
+    /// == 0`. `pump` is signed (positive for a photon-rich field); the drag term
+    /// is negative-growing for positive spin (see `swing_drag_torque`'s doc), so
+    /// for a photon-rich field the root sits at positive `s`.
+    fn bisect_equilibrium(p: &mut CalibrationParticle, pump: f64, spin_coupling: f64, momentum: f64) -> f64 {
+        let g = |p: &mut CalibrationParticle, s: f64| -> f64 { pump + spin_coupling * momentum * drag_at_spin(p, s) };
+        let sign = pump.signum();
+        let (mut lo, mut hi) = if sign >= 0.0 { (0.0, 0.995) } else { (-0.995, 0.0) };
+        let mut glo = g(p, lo);
+        let ghi = g(p, hi);
+        if glo == 0.0 {
+            return lo;
+        }
+        if glo.signum() == ghi.signum() {
+            // No sign change in range (drag never catches the pump) — report the
+            // boundary closest to balance so the caller can see it's saturating.
+            return if ghi.abs() < glo.abs() { hi } else { lo };
+        }
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            let gmid = g(p, mid);
+            if gmid.signum() == glo.signum() {
+                lo = mid;
+                glo = gmid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    }
+
+    /// REPORT (ignored by default): validates the model-A scaling law end to
+    /// end. Predicted equilibrium from the augment/cancel pump vs. the measured
+    /// `swing_drag_torque` drag (via bisection) against the actual settled
+    /// `outer_spin` of a ticked `AmbientField` simulation, swept over field
+    /// imbalance and density. Prints tables; no hard physics asserts (see
+    /// `report_*` convention elsewhere in the repo) beyond basic sanity.
+    #[test]
+    #[ignore]
+    fn report_spin_equilibrium() {
+        // Proton-shaped bake (L12/Z-pole), reduced samples for tractable runtime;
+        // geometry (pole axis, swing kind) is identical to the full bake.
+        let make_particle = || CalibrationParticle::new(bake_loop(12, 256), 1.0);
+
+        let run_sweep = |label: &str, rows: Vec<(f64, f64, f64)>| {
+            // rows: (photon_fraction, flux, spin_gain)
+            println!(
+                "\n== {label} ==\n{:>10} {:>8} {:>10} {:>12} {:>14} {:>12}",
+                "p_photon", "flux", "spin_gain", "predicted_s*", "sim_settled_s", "settle_step"
+            );
+            for (photon_fraction, flux, spin_gain) in rows {
+                let momentum = 0.02;
+                let mut p = make_particle();
+                let coupling = p.spin_coupling;
+                let pump = 0.5 * spin_gain * (2.0 * photon_fraction - 1.0);
+                let predicted = bisect_equilibrium(&mut p, pump, coupling, momentum);
+
+                let mut sim = make_particle();
+                let field = AmbientField {
+                    flux,
+                    photon_fraction,
+                    direction_bias: None,
+                    momentum,
+                    spin_gain,
+                    time_scale: 1.0,
+                };
+                let dt = (2.0 / flux).clamp(0.005, 0.05); // aim ~1-4 photons/tick
+                let steps = 150_000usize;
+                let mut rng = 0xC0FF_EE12_3456_789Au64;
+                let mut trace = Vec::with_capacity(steps);
+                for _ in 0..steps {
+                    field.tick(&mut sim, dt, &mut rng);
+                    sim.integrate(dt, field.time_scale);
+                    trace.push(sim.outer_spin);
+                }
+                let tail_start = steps - steps / 5; // last 20%
+                let settled: f64 = trace[tail_start..].iter().sum::<f64>() / (steps - tail_start) as f64;
+                let target = 0.9 * settled;
+                let settle_step = trace
+                    .iter()
+                    .position(|&v| {
+                        if settled >= 0.0 {
+                            v >= target
+                        } else {
+                            v <= target
+                        }
+                    })
+                    .unwrap_or(steps);
+
+                println!(
+                    "{:>10.3} {:>8.1} {:>10.3} {:>12.4} {:>14.4} {:>12}",
+                    photon_fraction, flux, spin_gain, predicted, settled, settle_step
+                );
+            }
+        };
+
+        // Imbalance sweep at flux 200.
+        run_sweep(
+            "imbalance sweep (flux=200)",
+            vec![
+                (0.5, 200.0, 2.0),
+                (0.583, 200.0, 2.0),
+                (0.667, 200.0, 2.0),
+                (0.75, 200.0, 2.0),
+                (1.0, 200.0, 2.0),
+            ],
+        );
+
+        // Density sweep at photon_fraction 0.667.
+        run_sweep(
+            "density sweep (photon_fraction=0.667)",
+            vec![(0.667, 50.0, 2.0), (0.667, 200.0, 2.0), (0.667, 800.0, 2.0)],
+        );
     }
 }
