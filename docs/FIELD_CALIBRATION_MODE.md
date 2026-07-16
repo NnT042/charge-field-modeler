@@ -405,3 +405,27 @@ simulation time into SI seconds by matching the real momentum-current the sim ru
 anchors and derived `K`/time-conversion per particle at Room density; Table 2, the settle
 trajectory (same 150k-step loop as `report_spin_equilibrium`) run through `from_si`, with
 settle time converted to SI seconds; Table 3, the K-invariance check for the proton.
+
+## Alignment channels measured (2026-07-16) — shadow aligns, intake goes broadside
+
+`directional_torque` already established the clean negative: the velocity-catch channel
+produces ZERO alignment torque at every tilt. Four candidate channels were then measured
+(diagnostics only, no rule change): `surface_shadow_torque` (downstream self-occlusion of
+the surface channel, chirality-blind) and three chirality-gated pole-intake bookkeepings
+(`intake_mouth_torque` absorb-at-mouth, `intake_channel_torque` channel-to-core +
+equatorial ring emission, `intake_through_torque` pole-to-pole through charge — the last
+reduces exactly to the first because the exit recoil is parallel to the pole). Sweep:
+`report_alignment_channels`, proton bake, tilt 0-180 deg vs a fixed stream.
+
+**Results.** SHADOW is the standing-up channel: stable attractors at 0 AND 180 deg (pole
+parallel to field, either polarity), repeller at 90 — the dielec.pdf "stand straight up"
+torque, present at all outer_spin values tested. The INTAKE bookkeepings are all
+weathervane-mechanical: an aperture that absorbs momentum is pushed downstream, so every
+variant is STABLE BROADSIDE (90 deg) — no absorption bookkeeping can turn a mouth INTO
+the stream (hof.pdf's feeding polarity). In a photon-rich field the intake channel also
+destabilizes the south-mouth-upstream pole twice as strongly as the north (2:1 mix).
+
+**Open question (polarity):** shadow alignment is polarity-degenerate; Mathis's
+south-mouth-into-the-stream selection needs a mechanism beyond passive absorption —
+likely a suction/pressure-deficit term (capture REMOVES ambient pushback at the mouth,
+flipping the sign of the mouth torque). Model and measure before wiring any intake rule.

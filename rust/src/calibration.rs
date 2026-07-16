@@ -405,6 +405,163 @@ impl CalibrationParticle {
         }
     }
 
+    // --- Alignment-channel diagnostics (measurement only) ---
+    //
+    // Geometry conventions shared by everything below:
+    //   - Field photons travel along unit `d` (the field DIRECTION of travel).
+    //     "Upstream" = −d (where the photons are coming FROM).
+    //   - "North" aperture sits at `position + h·pole`, "south" at
+    //     `position − h·pole`, where `h` = the loop's pole extent (see
+    //     `pole_extent`).
+    //   - Chirality gate (venus2.pdf): photons (χ=+1) are captured only at the
+    //     SOUTH aperture; antiphotons (χ=−1) only at the NORTH aperture.
+    //   - Lambert cosine capture weight: the south mouth's outward normal is
+    //     `−pole`, and it faces the incoming stream when `(−pole)·(−d) > 0`
+    //     i.e. `d·pole > 0`, so `w_s = max(0, d·pole)`; symmetrically
+    //     `w_n = max(0, −d·pole)`.
+
+    /// Half-extent of the baked loop along the pole axis, in the body
+    /// (pre-orientation) frame: `h = max_i |local_point_i · local_pole|` with
+    /// `local_pole = hitbox.swing_axis` (unnormalized-safe) and
+    /// `local_point_i = points[i] + swing_offset` — derived the same way
+    /// `pole_axis()` is, just without applying `self.orientation`. The swing
+    /// rotation (about `swing_axis`) preserves the along-axis component, so no
+    /// swing average is needed here. Returns `(h, used_fallback)`; if the loop
+    /// is flat/equatorial (`h < 1e-6`, e.g. no measurable pole extent) falls
+    /// back to `swing_orbit_radius()` and flags it.
+    fn pole_extent(&self) -> (f64, bool) {
+        let local_pole = self.hitbox.swing_axis.normalize_or_zero();
+        let h = self
+            .hitbox
+            .points
+            .iter()
+            .map(|&p| (p + self.hitbox.swing_offset).dot(local_pole).abs())
+            .fold(0.0_f64, f64::max);
+        if h < 1e-6 {
+            (self.swing_orbit_radius, true)
+        } else {
+            (h, false)
+        }
+    }
+
+    /// DIAGNOSTIC (measurement, not a rule): net whole-body torque about
+    /// `self.position` from a directional field, per unit photon momentum —
+    /// like `directional_torque`, but each contribution is weighted by an
+    /// upstream-exposure ("Lambert shadow") factor `expose = max(0, −d·r̂)`
+    /// with `r̂ = (world_p − position).normalize_or_zero()`: points on the
+    /// downstream side of the body (facing away from the stream) are treated
+    /// as self-occluded and contribute nothing, points squarely upstream
+    /// contribute fully. This tests whether pure geometric shadowing — with NO
+    /// chirality gate and no aperture structure — produces a net alignment
+    /// torque toward pole-parallel-to-field on its own.
+    pub fn surface_shadow_torque(&self, field_dir: DVec3, swing_samples: usize) -> DVec3 {
+        let n = self.hitbox.points.len();
+        if n == 0 {
+            return DVec3::ZERO;
+        }
+        let d = field_dir.normalize_or_zero();
+        let pole = self.pole_axis();
+        let omega = pole * (self.outer_spin / self.swing_orbit_radius);
+        let swing_samples = swing_samples.max(1);
+        let mut tau = DVec3::ZERO;
+        let mut count = 0.0;
+        for si in 0..swing_samples {
+            let phi = si as f64 / swing_samples as f64 * std::f64::consts::TAU;
+            let srot = DQuat::from_axis_angle(self.hitbox.swing_axis, phi);
+            for i in 0..n {
+                let world_p = self.position
+                    + self.orientation * (srot * (self.hitbox.points[i] + self.hitbox.swing_offset));
+                let r = world_p - self.position;
+                let rhat = r.normalize_or_zero();
+                let expose = (-d.dot(rhat)).max(0.0);
+                let catch = (d - omega.cross(r)).length(); // relative speed (c=1)
+                tau += r.cross(d * (catch * expose));
+                count += 1.0;
+            }
+        }
+        if count > 0.0 {
+            tau / count
+        } else {
+            DVec3::ZERO
+        }
+    }
+
+    /// DIAGNOSTIC (measurement, not a rule) — Scheme A: absorb at the aperture
+    /// mouth. Chirality-gated, Lambert-weighted: photons (χ=+1, fraction
+    /// `photon_fraction`) capture only at the south mouth `r_s = −h·pole`;
+    /// antiphotons (fraction `1 − photon_fraction`) only at the north mouth
+    /// `r_n = +h·pole`. `τ = photon_fraction·w_s·(r_s×d) + (1−photon_fraction)
+    /// ·w_n·(r_n×d)`, per unit incoming photon momentum. No swing average —
+    /// the apertures ride the pole and don't move under the swing rotation.
+    pub fn intake_mouth_torque(&self, field_dir: DVec3, photon_fraction: f64) -> DVec3 {
+        let d = field_dir.normalize_or_zero();
+        let pole = self.pole_axis();
+        let (h, _fallback) = self.pole_extent();
+        let r_s = -pole * h;
+        let r_n = pole * h;
+        let w_s = d.dot(pole).max(0.0);
+        let w_n = (-d.dot(pole)).max(0.0);
+        photon_fraction * w_s * r_s.cross(d) + (1.0 - photon_fraction) * w_n * r_n.cross(d)
+    }
+
+    /// DIAGNOSTIC (measurement, not a rule) — Scheme B: captured charge
+    /// channels from the mouth toward the core and re-emits as a symmetric
+    /// equatorial ring (ring recoil cancels, so it deposits no torque of its
+    /// own). Approximation: model the momentum deposit as applied at the
+    /// midpoint of the mouth→center segment rather than at the mouth itself —
+    /// same formula as `intake_mouth_torque` but with `r_s/2`, `r_n/2`.
+    pub fn intake_channel_torque(&self, field_dir: DVec3, photon_fraction: f64) -> DVec3 {
+        let d = field_dir.normalize_or_zero();
+        let pole = self.pole_axis();
+        let (h, _fallback) = self.pole_extent();
+        let r_s = -pole * h * 0.5;
+        let r_n = pole * h * 0.5;
+        let w_s = d.dot(pole).max(0.0);
+        let w_n = (-d.dot(pole)).max(0.0);
+        photon_fraction * w_s * r_s.cross(d) + (1.0 - photon_fraction) * w_n * r_n.cross(d)
+    }
+
+    /// DIAGNOSTIC (measurement, not a rule) — Scheme C: pole-to-pole
+    /// through-charge (venus2.pdf). The photon enters the mouth traveling
+    /// along `d` and exits at the OPPOSITE pole redirected along that pole's
+    /// outward direction. Honest two-point bookkeeping: the entry deposits
+    /// `+d` at the entry mouth (`r_entry`), and launching the photon back out
+    /// deposits the recoil `−exit_dir` at the exit tip (`r_exit`). For a south
+    /// entry (photons): `r_entry = r_s`, `r_exit = r_n`, `exit_dir = +pole`.
+    /// For a north entry (antiphotons): `r_entry = r_n`, `r_exit = r_s`,
+    /// `exit_dir = −pole`. In both cases `r_exit` is itself along the pole
+    /// axis, so `r_exit × (−exit_dir) = 0` exactly — the exit recoil produces
+    /// NO torque (the exit tip sits ON the axis it's recoiling along). The
+    /// term is kept explicit in code for bookkeeping honesty even though it
+    /// algebraically vanishes. Net per-photon:
+    /// `τ = photon_fraction·w_s·[r_s×d + r_n×(−pole)]
+    ///    + (1−photon_fraction)·w_n·[r_n×d + r_s×pole]`.
+    pub fn intake_through_torque(&self, field_dir: DVec3, photon_fraction: f64) -> DVec3 {
+        let d = field_dir.normalize_or_zero();
+        let pole = self.pole_axis();
+        let (h, _fallback) = self.pole_extent();
+        let r_s = -pole * h;
+        let r_n = pole * h;
+        let w_s = d.dot(pole).max(0.0);
+        let w_n = (-d.dot(pole)).max(0.0);
+
+        // South entry (photons): enters at r_s along d, exits at r_n along
+        // +pole. Exit recoil = r_n × (−pole); r_n ∥ pole so this is exactly
+        // zero.
+        let south_entry = r_s.cross(d);
+        let south_exit = r_n.cross(-pole);
+        let south = south_entry + south_exit;
+
+        // North entry (antiphotons): enters at r_n along d, exits at r_s
+        // along −pole. Exit recoil = r_s × pole; r_s ∥ pole so this is also
+        // exactly zero.
+        let north_entry = r_n.cross(d);
+        let north_exit = r_s.cross(pole);
+        let north = north_entry + north_exit;
+
+        photon_fraction * w_s * south + (1.0 - photon_fraction) * w_n * north
+    }
+
     /// Integrate one step. `time_scale` matches the spin engine's convention
     /// (natural radians per real second at v = c for orbit_radius 1).
     pub fn integrate(&mut self, dt: f64, time_scale: f64) {
@@ -910,6 +1067,85 @@ mod tests {
             "no spin drag at rest, got pole torque {}", tau.dot(p.pole_axis()));
     }
 
+    // --- Alignment-channel diagnostics: fast unit tests ---
+
+    /// A field exactly along (or exactly against) the untilted pole gives both
+    /// aperture position vectors (`r_s`, `r_n`) parallel to `d`, so the lever
+    /// `r × d` is zero regardless of aperture weights — the mouth-scheme
+    /// torque must vanish at exact alignment.
+    #[test]
+    fn intake_mouth_zero_at_exact_alignment() {
+        let p = CalibrationParticle::new(bake_loop(12, 256), 1.0); // untilted, pole = +Z
+        let tau = p.intake_mouth_torque(DVec3::Z, 2.0 / 3.0);
+        assert!(tau.length() < 1e-9, "pole parallel to field should give zero lever, got {:?}", tau);
+        let tau2 = p.intake_mouth_torque(-DVec3::Z, 2.0 / 3.0);
+        assert!(tau2.length() < 1e-9, "pole antiparallel to field should also give zero lever, got {:?}", tau2);
+    }
+
+    /// Chirality gate: at a tilt where the NORTH aperture is geometrically
+    /// favored (`w_n > 0`, `w_s = 0`), a pure-photon field (`photon_fraction =
+    /// 1.0`) must still return exactly zero — photons (χ=+1) are never
+    /// captured at the north mouth, so its geometric weight is discarded
+    /// entirely, not merely down-weighted. Flipping to pure-antiphoton
+    /// (`photon_fraction = 0.0`) activates the north term; hand-computed
+    /// against the documented formula.
+    #[test]
+    fn intake_mouth_chirality_gate_isolates_active_term() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        p.orientation = DQuat::from_axis_angle(DVec3::X, 90f64.to_radians()); // pole -> -Y
+        let pole = p.pole_axis();
+        // d chosen so the north aperture is geometrically favored: w_n > 0, w_s == 0.
+        let d = (DVec3::Y + DVec3::Z).normalize();
+        let w_s = d.dot(pole).max(0.0);
+        let w_n = (-d.dot(pole)).max(0.0);
+        assert_eq!(w_s, 0.0, "expected south weight clipped to zero for this d");
+        assert!(w_n > 0.0, "expected north weight to be geometrically favored");
+
+        // Pure photon field: south is zero (w_s=0) AND the chirality gate
+        // discards the north term's coefficient -> net torque must be exactly zero.
+        let pure_photon = p.intake_mouth_torque(d, 1.0);
+        assert!(pure_photon.length() < 1e-9,
+            "pure-photon field should ignore the geometrically-favored north aperture: got {:?}", pure_photon);
+
+        // Pure antiphoton field activates the north-only term; hand-compute it.
+        let (h, _) = p.pole_extent();
+        let r_n = pole * h;
+        let expected_north_only = w_n * r_n.cross(d);
+        let pure_anti = p.intake_mouth_torque(d, 0.0);
+        assert!((pure_anti - expected_north_only).length() < 1e-9,
+            "expected north-only term {:?}, got {:?}", expected_north_only, pure_anti);
+    }
+
+    /// Regression check on `surface_shadow_torque`'s aggregate loop: with
+    /// `swing_samples = 1` (no averaging, `srot` = identity) the method must
+    /// equal a direct hand-rolled recomputation of its documented formula
+    /// (`expose = max(0, -d·r̂)`, contribution `r × (d · catch · expose)`).
+    /// Guards against sign/typo regressions without re-deriving the physics.
+    #[test]
+    fn surface_shadow_matches_hand_rolled_formula() {
+        let mut p = CalibrationParticle::new(bake_loop(3, 32), 1.0);
+        p.orientation = DQuat::from_axis_angle(DVec3::X, 0.7);
+        p.outer_spin = 0.4;
+        let d = DVec3::new(0.3, -0.6, 0.74).normalize();
+
+        let pole = p.pole_axis();
+        let omega = pole * (p.outer_spin / p.swing_orbit_radius());
+        let n = p.hitbox.points.len();
+        let mut expected = DVec3::ZERO;
+        for i in 0..n {
+            let world_p = p.position + p.orientation * (p.hitbox.points[i] + p.hitbox.swing_offset);
+            let r = world_p - p.position;
+            let rhat = r.normalize_or_zero();
+            let expose = (-d.dot(rhat)).max(0.0);
+            let catch = (d - omega.cross(r)).length();
+            expected += r.cross(d * (catch * expose));
+        }
+        expected /= n as f64;
+
+        let actual = p.surface_shadow_torque(d, 1);
+        assert!((actual - expected).length() < 1e-9, "expected {:?}, got {:?}", expected, actual);
+    }
+
     fn bal_like(ts: f64) -> AmbientField {
         AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: None,
@@ -1314,6 +1550,242 @@ mod tests {
             rel_diff < 0.05,
             "K-invariance violated: settled_a={} settled_b={} rel_diff={}",
             settled_a, settled_b, rel_diff
+        );
+    }
+
+    // --- Alignment-channel report ---
+
+    /// Locate zero-crossing equilibria in a `(theta, value)` series and
+    /// classify each as stable/unstable. Because the intake schemes are exact
+    /// (not swing-averaged noise), some crossings sit exactly ON a sample
+    /// point (e.g. theta=90 where both aperture weights are analytically
+    /// zero) rather than between two nonzero-opposite-sign samples, so both
+    /// cases are handled: an exact-zero grid point is an equilibrium if its
+    /// nearest nonzero neighbors on either side disagree in sign; otherwise a
+    /// linear-interpolated crossing between two nonzero opposite-sign samples.
+    /// A crossing from `+` (below theta*) to `-` (above theta*) is STABLE
+    /// under `dtheta/dt = tau_x` (positive tau_x increases theta, so it pushes
+    /// theta UP toward theta* from below and DOWN toward theta* from above);
+    /// the reverse crossing is UNSTABLE (pushes away from theta* both sides).
+    fn find_equilibria(thetas: &[f64], values: &[f64]) -> Vec<(f64, bool)> {
+        let is_zero = |v: f64| v.abs() < 1e-9;
+        let n = values.len();
+        let mut out = Vec::new();
+        for i in 0..n {
+            if is_zero(values[i]) {
+                let before = (0..i).rev().map(|j| values[j]).find(|&v| !is_zero(v));
+                let after = (i + 1..n).map(|j| values[j]).find(|&v| !is_zero(v));
+                if let (Some(b), Some(a)) = (before, after) {
+                    if b.signum() != a.signum() {
+                        out.push((thetas[i], b > 0.0 && a < 0.0));
+                    }
+                }
+            } else if i + 1 < n && !is_zero(values[i + 1]) && values[i].signum() != values[i + 1].signum() {
+                let (t0, t1, v0, v1) = (thetas[i], thetas[i + 1], values[i], values[i + 1]);
+                let theta_star = t0 + (t1 - t0) * v0 / (v0 - v1);
+                out.push((theta_star, v0 > 0.0 && v1 < 0.0));
+            }
+        }
+        // De-dup near-identical crossings (e.g. an exact-zero grid point that
+        // also triggers the interpolated branch on an adjacent iteration).
+        out.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-6);
+        out
+    }
+
+    /// Translate an equilibrium theta (degrees) to a plain-English polarity
+    /// reading, per the tilt convention documented in `report_alignment_channels`.
+    fn polarity_of(theta_deg: f64) -> &'static str {
+        if theta_deg.abs() < 1.0 {
+            "north mouth upstream"
+        } else if (theta_deg - 180.0).abs() < 1.0 {
+            "south mouth upstream"
+        } else if (theta_deg - 90.0).abs() < 1.0 {
+            "axis perpendicular to field"
+        } else {
+            "intermediate tilt"
+        }
+    }
+
+    /// Print one verdict line for a channel's (theta, tau_x) series.
+    fn print_verdict(name: &str, thetas: &[f64], values: &[f64]) {
+        let is_zero = |v: f64| v.abs() < 1e-9;
+        if values.iter().all(|&v| is_zero(v)) {
+            println!("{:<16} no alignment torque (zero everywhere)", name);
+            return;
+        }
+        // Domain ENDPOINTS (theta = 0 and 180) are equilibria whenever tau_x
+        // vanishes there (it must, for a pole||field configuration), but the
+        // interior-crossing scan can't see them — no sample exists past the
+        // edge. Classify them from the adjacent interior sign: negative tau_x
+        // just above 0 pushes theta back DOWN to 0 (attractor); positive tau_x
+        // just below 180 pushes theta UP to 180 (attractor). This is where the
+        // real story lives for chirality-blind channels (2026-07-16 sweep:
+        // surface_shadow's attractors at 0/180 were invisible to the interior
+        // scan, leaving only the 90-degree repeller in the printout).
+        if let Some(&first) = values.iter().find(|v| !is_zero(**v)) {
+            if is_zero(values[0]) {
+                let stable = first < 0.0;
+                println!(
+                    "{:<16} theta_eq=   0.00 deg  {:<9} -> {}",
+                    name,
+                    if stable { "STABLE" } else { "UNSTABLE" },
+                    polarity_of(0.0)
+                );
+            }
+        }
+        let eqs = find_equilibria(thetas, values);
+        for (theta_star, stable) in eqs {
+            println!(
+                "{:<16} theta_eq={:>7.2} deg  {:<9} -> {}",
+                name,
+                theta_star,
+                if stable { "STABLE" } else { "UNSTABLE" },
+                polarity_of(theta_star)
+            );
+        }
+        if let Some(&last) = values.iter().rev().find(|v| !is_zero(**v)) {
+            if is_zero(values[values.len() - 1]) {
+                let stable = last > 0.0;
+                println!(
+                    "{:<16} theta_eq= 180.00 deg  {:<9} -> {}",
+                    name,
+                    if stable { "STABLE" } else { "UNSTABLE" },
+                    polarity_of(180.0)
+                );
+            }
+        }
+    }
+
+    /// REPORT (ignored by default): measures four candidate alignment-torque
+    /// channels — none of which touch any collision rule — across a tilt sweep
+    /// against a FIXED field direction, to see which (if any) produce a
+    /// restoring torque toward pole-parallel-to-field, and toward which
+    /// polarity. `directional_torque` (existing diagnostic) already found ZERO
+    /// alignment torque from the pure velocity-catch mechanism at every tilt;
+    /// this report checks four alternatives: (1) upstream self-shadowing on
+    /// the bare surface, and Scheme A/B/C intake-aperture models gated by
+    /// chirality (venus2.pdf).
+    #[test]
+    #[ignore]
+    fn report_alignment_channels() {
+        let d = DVec3::NEG_Z; // field DIRECTION of travel: photons move -Z (stream source sits at +Z, above).
+
+        println!("\n=== Alignment channel report ===");
+        println!("Field direction d = {:?} (photons travel toward -Z; the stream source is above, at +Z).", d);
+        println!("Tilt: p.orientation = DQuat::from_axis_angle(+X, theta). Untilted pole = +Z.");
+        println!("  theta=0    -> north pole (+Z) faces the stream source (mouth-upstream for ANTIPHOTON capture at N).");
+        println!("  theta=180  -> south pole faces the stream source (mouth-upstream for PHOTON capture at S).");
+        println!("Sign convention: the tilt is a rotation about +X, so ang_velocity_x = tau_x / I_transverse (I>0)");
+        println!("  and dtheta/dt = ang_velocity_x for this geometry. => POSITIVE tau_x INCREASES theta.");
+        println!("  A STABLE equilibrium at theta* therefore needs tau_x > 0 for theta < theta* (pushes UP toward");
+        println!("  theta*) and tau_x < 0 for theta > theta* (pushes DOWN toward theta*) -- a +-to-- crossing.");
+
+        let make = |theta_deg: f64| -> CalibrationParticle {
+            let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+            p.orientation = DQuat::from_axis_angle(DVec3::X, theta_deg.to_radians());
+            p
+        };
+
+        let probe = CalibrationParticle::proton(1.0);
+        let (h, fell_back) = probe.pole_extent();
+        println!(
+            "\npole extent h = {:.6} natural units (fallback to swing_orbit_radius triggered: {})",
+            h, fell_back
+        );
+
+        let thetas: Vec<f64> = (0..=180).step_by(15).map(|x| x as f64).collect();
+
+        // --- Table 1: surface_shadow (3 outer_spin values) + intake_* @ Earth (2/3) ---
+        println!("\n== Table 1: surface_shadow @ outer_spin={{0.0,0.6,0.9}}; intake_* @ photon_fraction=2/3 (Earth) ==");
+        println!(
+            "{:>6} {:>14} {:>14} {:>14} {:>14} {:>14} {:>14}",
+            "theta", "shadow_s0.0", "shadow_s0.6", "shadow_s0.9", "mouth_2/3", "channel_2/3", "through_2/3"
+        );
+        let mut shadow_s00 = Vec::new();
+        let mut shadow_s06 = Vec::new();
+        let mut shadow_s09 = Vec::new();
+        let mut mouth_23 = Vec::new();
+        let mut channel_23 = Vec::new();
+        let mut through_23 = Vec::new();
+        for &td in &thetas {
+            let mut p = make(td);
+            p.outer_spin = 0.0;
+            let s00 = p.surface_shadow_torque(d, 32).x;
+            p.outer_spin = 0.6;
+            let s06 = p.surface_shadow_torque(d, 32).x;
+            p.outer_spin = 0.9;
+            let s09 = p.surface_shadow_torque(d, 32).x;
+            let m = p.intake_mouth_torque(d, 2.0 / 3.0).x;
+            let c = p.intake_channel_torque(d, 2.0 / 3.0).x;
+            let t = p.intake_through_torque(d, 2.0 / 3.0).x;
+            println!(
+                "{:>6.0} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e}",
+                td, s00, s06, s09, m, c, t
+            );
+            shadow_s00.push(s00);
+            shadow_s06.push(s06);
+            shadow_s09.push(s09);
+            mouth_23.push(m);
+            channel_23.push(c);
+            through_23.push(t);
+        }
+
+        // --- Table 2: intake_* @ photon_fraction 0.5 and 1.0 ---
+        println!("\n== Table 2: intake_* @ photon_fraction=0.5 (balanced) and 1.0 (pure photon) ==");
+        println!(
+            "{:>6} {:>14} {:>14} {:>14} {:>14} {:>14} {:>14}",
+            "theta", "mouth_0.5", "channel_0.5", "through_0.5", "mouth_1.0", "channel_1.0", "through_1.0"
+        );
+        let mut mouth_50 = Vec::new();
+        let mut channel_50 = Vec::new();
+        let mut through_50 = Vec::new();
+        let mut mouth_10 = Vec::new();
+        let mut channel_10 = Vec::new();
+        let mut through_10 = Vec::new();
+        for &td in &thetas {
+            let p = make(td);
+            let m5 = p.intake_mouth_torque(d, 0.5).x;
+            let c5 = p.intake_channel_torque(d, 0.5).x;
+            let t5 = p.intake_through_torque(d, 0.5).x;
+            let m1 = p.intake_mouth_torque(d, 1.0).x;
+            let c1 = p.intake_channel_torque(d, 1.0).x;
+            let t1 = p.intake_through_torque(d, 1.0).x;
+            println!(
+                "{:>6.0} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e} {:>14.6e}",
+                td, m5, c5, t5, m1, c1, t1
+            );
+            mouth_50.push(m5);
+            channel_50.push(c5);
+            through_50.push(t5);
+            mouth_10.push(m1);
+            channel_10.push(c1);
+            through_10.push(t1);
+        }
+
+        // --- Table 3: verdicts ---
+        println!("\n== Table 3: verdicts (representative columns: surface_shadow@outer_spin=0.9, intake_*@photon_fraction=2/3) ==");
+        print_verdict("surface_shadow", &thetas, &shadow_s09);
+        print_verdict("intake_mouth", &thetas, &mouth_23);
+        print_verdict("intake_channel", &thetas, &channel_23);
+        print_verdict("intake_through", &thetas, &through_23);
+
+        // --- Sanity asserts ---
+        let i0 = 0;
+        let ilast = thetas.len() - 1;
+        assert!(mouth_23[i0].abs() < 1e-12, "intake_mouth should be zero at theta=0, got {}", mouth_23[i0]);
+        assert!(mouth_23[ilast].abs() < 1e-12, "intake_mouth should be zero at theta=180, got {}", mouth_23[ilast]);
+        assert!(channel_23[i0].abs() < 1e-12, "intake_channel should be zero at theta=0, got {}", channel_23[i0]);
+        assert!(channel_23[ilast].abs() < 1e-12, "intake_channel should be zero at theta=180, got {}", channel_23[ilast]);
+        assert!(through_23[i0].abs() < 1e-12, "intake_through should be zero at theta=0, got {}", through_23[i0]);
+        assert!(through_23[ilast].abs() < 1e-12, "intake_through should be zero at theta=180, got {}", through_23[ilast]);
+
+        // surface_shadow at theta=0, outer_spin=0: small relative to its theta=90 magnitude.
+        let idx90 = thetas.iter().position(|&t| t == 90.0).unwrap();
+        let bound = (shadow_s00[idx90].abs() * 1e-3).max(1e-9);
+        assert!(
+            shadow_s00[i0].abs() < bound,
+            "surface_shadow at theta=0,outer_spin=0 should be small vs theta=90: {} vs bound {} (theta90 val {})",
+            shadow_s00[i0], bound, shadow_s00[idx90]
         );
     }
 }
