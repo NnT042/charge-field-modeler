@@ -89,7 +89,7 @@ fn main() {
     eprintln!("outer_spin |   perp(+X) |  axial(+Z) | isotropic  |  swing_drag");
     for (ri, &os) in spins.iter().enumerate() {
         p.outer_spin = os;
-        let drag = p.swing_drag_torque(64, 24);
+        let drag = p.swing_drag_torque(64, 24, false);
         let row_y = PAD + ri as f64 * (CELL_H + ROW_GAP);
         svg.push_str(&format!(
             "<text x=\"{:.0}\" y=\"{:.0}\" font-size=\"13\" fill=\"#dfe6ec\">\

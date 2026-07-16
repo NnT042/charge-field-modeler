@@ -484,3 +484,51 @@ the chirality-pump statistics even under an isotropic-direction draw), so `repor
 equilibrium` and `report_si_calibration` pin `occlusion = false` to keep validating against the
 analytic `swing_drag_torque` prediction (which models the unshadowed channel); the shadowed
 number is now on record here rather than silently baked into those reports.
+
+## CM-2: the gear-tangent pump — zero fitted constants (2026-07-16)
+
+`apply_photon` carried two scaffold artifacts: `spin_gain` (a free coupling with no source)
+and a drag term that double-counted the plain Newtonian impulse (added once unweighted, then
+again catch-weighted). uran.pdf/uran4.pdf source the fix directly — "the spin force is at the
+tangent": a photon's edge spins at c while it travels at c, so the tangential spin force at the
+contact tooth has the SAME magnitude as the linear force. halbach.pdf adds that spin energy
+transfers to linear "on the tangent," with no separate spin-energy budget. So the chirality pump
+isn't an independent coupling; it's the photon's own momentum redirected along the surface
+tangent, signed by the chirality mesh. `apply_photon` is now exactly two terms: (1) a
+catch-weighted Newtonian transfer (linear + transverse + pole, replacing both the old plain
+impulse and the old stacked drag — this term IS model A, and reduces to the plain impulse
+exactly at rest where `catch = 1`), and (2) a gear tangential transfer of the SAME per-hit
+momentum along the pole-positive tangent, signed by chirality and scaled by the catch factor
+`f` — this term IS the chirality pump, now carrying its own geometric lever (`r × t̂`) instead of
+a lumped gain. `gear_efficiency` (dimensionless, ships 1.0 — the uran.pdf-sourced value) replaces
+`spin_gain`; it survives only as an ablation knob, not a magnitude to fit.
+
+**Equilibrium is momentum-free by construction.** Both terms in `apply_photon` are scaled by the
+SAME `spin_coupling / i_spin`, and the pump additionally by `momentum · gear_efficiency` where
+the drag has just `momentum` — since `gear_efficiency = 1.0`, momentum and the inertia coupling
+cancel out of the equilibrium condition entirely. The bisected equation is now
+`(2p−1)·swing_pump_torque(s*) + swing_drag_torque(s*) = 0` — pure geometry and photon:antiphoton
+mix, nothing else. `swing_pump_torque` is the new analytic counterpart to `swing_drag_torque`,
+sampled the same way (isotropic Fibonacci-sphere directions, swing-phase sweep, optional Lambert
+exposure weighting via `occluded`); both `swing_drag_torque` and `swing_pump_torque` gained that
+`occluded` parameter so `report_spin_equilibrium` can bisect both the unshadowed AND shadowed
+channels per particle.
+
+**PRESETS CANDIDATE (Earth mix 2/3 photon, occlusion on, flux 200)**: `proton = 0.9996`,
+`neutron = 0.1625`, `electron = 0.9973` — proton and electron settle to nearly the SAME value, a
+strong confirmation that their normalized drag curves are identical as this refactor predicts;
+the neutron's non-axisymmetric kite-offset swing sits in a completely different regime. Both
+proton and electron TRANSMUTE at Earth mix under these settled numbers — worth flagging rather
+than treating as expected, since a tied (momentum-free) pump was not obviously guaranteed to
+still saturate at c for both. Density-independence survives intact (proton settled `0.9996` at
+flux 50/200/800, bit-identical to 4 decimals). K-invariance is now close to a tautology
+(`gear_efficiency` doesn't scale with K at all) and the empirical check passes at 0.5% relative
+difference (tolerance 5%). The neutron's predicted-vs-simulated agreement is notably worse than
+proton/electron's (~3-4% off) — off by ~80% at several photon fractions — because its kite-offset
+orbital swing breaks the isotropic swing-average the bisection assumes far more than the clean
+axisymmetric precession swings do; flagged for follow-up, not patched here.
+
+`photon.html`'s size-differential edge-hit rule (bigger loops catch harder) is realized
+geometrically now, not probabilistically: `f` (catch factor), the lever `r × t̂`, and occlusion's
+exposure weighting are all measured from the baked geometry directly — nothing hardcodes which
+particle "should" catch more.

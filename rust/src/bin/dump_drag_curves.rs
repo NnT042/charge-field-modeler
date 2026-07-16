@@ -37,7 +37,7 @@ fn main() {
         let mut p = CalibrationParticle::new(bake_loop(s.loop_level, 768), 1.0);
         for &os in &spins {
             p.outer_spin = os;
-            s.drag.push(p.swing_drag_torque(48, 16));
+            s.drag.push(p.swing_drag_torque(48, 16, false));
         }
     }
 

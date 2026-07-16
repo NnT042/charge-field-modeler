@@ -76,9 +76,13 @@ impl CalibrationView {
         (p, display_scale, baked_max_r, time_scale)
     }
 
-    /// Display-tuned ambient field: spin_gain scaled by pole inertia so every
-    /// particle spins up on a watchable timescale (physically it's trillions of
-    /// hits; here we accelerate it for the eyeball). Magnitudes are placeholders.
+    /// Display-tuned ambient field: gear_efficiency scaled by pole inertia so
+    /// every particle spins up on a watchable timescale (physically it's
+    /// trillions of hits; here we accelerate it for the eyeball). Under CM-2
+    /// the sourced value is 1.0 (dimensionless), but this display view keeps
+    /// the old scaffold's inertia-cancelling trick as an explicit ablation
+    /// knob purely for watchability — NOT a claim about the physical value.
+    /// Magnitudes are placeholders.
     fn make_field(
         p: &CalibrationParticle,
         preset: FieldPreset,
@@ -92,7 +96,7 @@ impl CalibrationView {
             photon_fraction: if balanced { 0.5 } else { preset.photon_fraction() },
             direction_bias: if directional { Some(DVec3::X) } else { None },
             momentum: max_r * 0.0005,
-            spin_gain: p.i_spin() * 0.005,
+            gear_efficiency: p.i_spin() * 0.005,
             time_scale: ts,
             // Shadow occlusion on: this eyeball view should show the real
             // (measured) collision physics, not the analytic-only unshadowed
