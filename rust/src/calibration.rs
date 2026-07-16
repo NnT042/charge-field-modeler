@@ -215,18 +215,48 @@ impl CalibrationParticle {
         };
         self.outer_spin += spin_gain * f * chirality / self.i_spin;
 
-        // Model A: velocity-channel drag — the pole component of the momentum
-        // torque, which model B discarded, restored with the relative-speed catch
-        // weight |c·dir − v_surface| (c = 1 natural units). Head-on photons catch
-        // harder than co-moving ones can chase, so an isotropic field nets a
-        // spin-DOWN torque growing with outer_spin (see swing_drag_torque). At
-        // rest the isotropic mean is zero; per-photon scatter remains as a
-        // thermal floor.
+        // Model A: velocity-channel drag — the relative-speed catch weight
+        // |c·dir − v_material| (c = 1 natural units), where v_material is now
+        // the FULL local material velocity at the contact point — drift +
+        // tumble + swing (`contact_velocity(contact, 1.0)`), not just the
+        // swing surface `omega.cross(r)` alone. Head-on photons catch harder
+        // than co-moving ones can chase, so for ANY of the three motion
+        // channels an isotropic field's catch-weighted mean sits ANTI-parallel
+        // to that channel's own velocity — a standard photon-drag result
+        // (E_dir[dir·|dir−v|] ≈ −v/3 for small v). The catch-weighted
+        // "drag impulse" `dir·(momentum·catch)` is therefore split the same
+        // three ways the plain Newtonian impulse `j` was split above: pole
+        // component → `outer_spin` (as before — restores what model B
+        // discarded, see `swing_drag_torque`), transverse component →
+        // `ang_velocity` (pendulum settling for alignment — an aligning body
+        // no longer oscillates forever), full vector → `lin_velocity`
+        // (decelerates drift toward the field rest frame). Before this
+        // change, only the pole slice was ever extracted, so `ang_velocity`/
+        // `lin_velocity` structurally could not feel this channel at all —
+        // that's the bug `report_standing_up` needed fixed to settle instead
+        // of ringing. At rest the isotropic mean is zero on every channel;
+        // per-photon scatter remains as a thermal floor.
+        //
+        // `outer_spin`'s contribution to v_surf was always naturally bounded
+        // (|outer_spin| <= 1, clamped below), but ang_velocity/lin_velocity
+        // carry no such cap — nothing in physical reality should let a local
+        // material point exceed c either, and without the cap a rare large
+        // hit can push v_surf's magnitude past 1, where `catch` (which grows
+        // WITH |v_surf| once it's no longer small relative to c) starts
+        // amplifying instead of damping: explicit-Euler feedback runaway to
+        // NaN (seen 2026-07-16 on a long report_standing_up run). Clamp the
+        // material velocity fed into `catch` at c — the same physical
+        // ceiling `outer_spin` already respects.
         let omega = pole * (self.outer_spin / self.swing_orbit_radius);
-        let v_surf = omega.cross(r);
+        let v_surf = (self.lin_velocity + (self.ang_velocity + omega).cross(r)).clamp_length_max(1.0);
         let catch = (dir - v_surf).length();
-        let tau_pole = r.cross(dir * (momentum * catch)).dot(pole);
-        self.outer_spin += self.spin_coupling * tau_pole / self.i_spin;
+        let drag = dir * (momentum * catch);
+        let tau_drag = r.cross(drag);
+        let tau_drag_pole = tau_drag.dot(pole);
+        let tau_drag_perp = tau_drag - pole * tau_drag_pole;
+        self.outer_spin += self.spin_coupling * tau_drag_pole / self.i_spin;
+        self.ang_velocity += self.spin_coupling * tau_drag_perp / self.i_transverse;
+        self.lin_velocity += self.spin_coupling * drag / self.mass;
 
         if self.outer_spin.abs() >= 1.0 {
             self.outer_spin = self.outer_spin.clamp(-1.0, 1.0);
@@ -679,6 +709,13 @@ pub struct AmbientField {
     pub spin_gain: f64,
     /// Swing-rate time_scale, matching `CalibrationParticle::integrate`.
     pub time_scale: f64,
+    /// When true, `tick` samples contact points by upstream exposure (Lambert
+    /// shadowing: `expose = max(0, -dir·r̂)`), matching the measured
+    /// `surface_shadow_torque` channel (see `report_alignment_channels`).
+    /// When false, contacts are drawn uniformly (pre-occlusion behavior,
+    /// bit-identical), which is what the isotropic-mean analytics in
+    /// `swing_drag_torque` / `report_spin_equilibrium` assume.
+    pub occlusion: bool,
 }
 
 /// SI anchoring for an AmbientField (CM-1 second half). The sim can't deliver
@@ -707,6 +744,7 @@ impl AmbientField {
             momentum: 0.02,
             spin_gain: 0.5,
             time_scale,
+            occlusion: true,
         }
     }
 
@@ -735,6 +773,7 @@ impl AmbientField {
             momentum: sim_momentum,
             spin_gain: spin_gain_per_photon * aggregation,
             time_scale,
+            occlusion: true,
         };
         let cal = SiCalibration {
             flux_si_hz,
@@ -743,6 +782,44 @@ impl AmbientField {
             seconds_per_time_unit,
         };
         (field, cal)
+    }
+
+    /// Choose a contact index out of `pts` (world-space points, `center` =
+    /// the body's `position`) for an incoming photon traveling along `dir`.
+    ///
+    /// When `self.occlusion` is false: a single uniform draw — bit-identical
+    /// to the pre-occlusion code path (hit COUNT unaffected either way; this
+    /// only changes which point within the body gets credited).
+    ///
+    /// When true: REJECTION SAMPLING for an exposure-weighted draw. Candidate
+    /// indices are drawn uniformly and accepted with probability
+    /// `expose = max(0, -dir·r̂)` (`r̂ = (pts[idx]-center).normalize_or_zero()`),
+    /// i.e. Lambert-shadowed — points facing the incoming stream are likelier
+    /// to be picked, points on the downstream/self-occluded side are unlikely.
+    /// This matches the measured `surface_shadow_torque` channel (Lambert
+    /// sphere-like shadowing, chirality-blind) while keeping hit COUNT per
+    /// tick exactly `n` (only the spatial distribution changes). Capped at 64
+    /// attempts; on cap, falls through to the last candidate drawn (guards
+    /// degenerate/near-planar geometry — e.g. every candidate near-zero
+    /// exposure — where rejection sampling could stall indefinitely).
+    pub fn sample_contact(&self, pts: &[DVec3], center: DVec3, dir: DVec3, rng: &mut u64) -> usize {
+        if pts.is_empty() {
+            return 0;
+        }
+        if !self.occlusion {
+            return (xorshift64(rng) * pts.len() as f64) as usize % pts.len();
+        }
+        let mut last = 0usize;
+        for _ in 0..64 {
+            let idx = (xorshift64(rng) * pts.len() as f64) as usize % pts.len();
+            last = idx;
+            let rhat = (pts[idx] - center).normalize_or_zero();
+            let expose = (-dir.dot(rhat)).clamp(0.0, 1.0);
+            if xorshift64(rng) < expose {
+                return idx;
+            }
+        }
+        last
     }
 
     /// Deliver one time step's worth of photon contacts to `p`.
@@ -760,14 +837,29 @@ impl AmbientField {
             return;
         }
         for _ in 0..n {
-            let idx = (xorshift64(rng) * pts.len() as f64) as usize % pts.len();
-            let contact = pts[idx];
-            let dir = match self.direction_bias {
-                Some(b) => b.normalize_or_zero(),
-                None => rand_unit_vec(rng),
-            };
-            let chirality = if xorshift64(rng) < self.photon_fraction { 1.0 } else { -1.0 };
-            p.apply_photon(contact, dir, chirality, self.momentum, self.spin_gain);
+            if self.occlusion {
+                // dir drawn FIRST, then the contact is rejection-sampled
+                // against it (exposure depends on dir).
+                let dir = match self.direction_bias {
+                    Some(b) => b.normalize_or_zero(),
+                    None => rand_unit_vec(rng),
+                };
+                let idx = self.sample_contact(&pts, p.position, dir, rng);
+                let contact = pts[idx];
+                let chirality = if xorshift64(rng) < self.photon_fraction { 1.0 } else { -1.0 };
+                p.apply_photon(contact, dir, chirality, self.momentum, self.spin_gain);
+            } else {
+                // Exact pre-occlusion draw order — bit-identical to the old
+                // code path (idx, then dir, then chirality).
+                let idx = (xorshift64(rng) * pts.len() as f64) as usize % pts.len();
+                let contact = pts[idx];
+                let dir = match self.direction_bias {
+                    Some(b) => b.normalize_or_zero(),
+                    None => rand_unit_vec(rng),
+                };
+                let chirality = if xorshift64(rng) < self.photon_fraction { 1.0 } else { -1.0 };
+                p.apply_photon(contact, dir, chirality, self.momentum, self.spin_gain);
+            }
         }
     }
 }
@@ -942,9 +1034,13 @@ mod tests {
         let ts = 1.0;
 
         let mut balanced_p = make();
+        // occlusion: false — momentum=0.0 makes the drag channel (the only
+        // channel occlusion's contact-position bias could touch) inert here;
+        // this test isolates the chirality augment/cancel pump statistic, so
+        // keep contact sampling uniform rather than entangle it with shadowing.
         let bal = AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: None,
-            momentum: 0.0, spin_gain: 0.5, time_scale: ts,
+            momentum: 0.0, spin_gain: 0.5, time_scale: ts, occlusion: false,
         };
         let mut rng_b = 0x1234_5678_9abc_def0u64;
         for _ in 0..400 {
@@ -970,9 +1066,13 @@ mod tests {
     #[test]
     fn directional_field_drives_drift() {
         let mut p = CalibrationParticle::new(bake_loop(3, 32), 1.0);
+        // occlusion: true — the drag vector is always along the fixed `dir`
+        // (direction_bias = Some(X)), same as the base Newtonian impulse, so
+        // its sign can't flip regardless of which contact point occlusion
+        // picks; exercising the shadowed default here is free.
         let field = AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: Some(DVec3::X),
-            momentum: 0.02, spin_gain: 0.0, time_scale: 1.0,
+            momentum: 0.02, spin_gain: 0.0, time_scale: 1.0, occlusion: true,
         };
         let mut rng = 0xABCD_1234_5678_9012u64;
         for _ in 0..200 {
@@ -980,6 +1080,106 @@ mod tests {
         }
         assert!(p.lin_velocity.x > 0.0, "field along +X should drift +X, got {:?}", p.lin_velocity);
         assert!(p.lin_velocity.x > p.lin_velocity.y.abs() * 5.0, "drift should be mostly along X");
+    }
+
+    // --- Shadow occlusion (Change 1) + full-velocity drag (Change 2) ---
+
+    /// With occlusion ON, contacts are drawn exposure-weighted toward the
+    /// upstream side of the incoming photon (Lambert shadowing): the mean of
+    /// `-dir·r̂` over many accepted contacts should be clearly positive. With
+    /// occlusion OFF, the draw is uniform and that same statistic should
+    /// average to ~0 (no directional preference in which point gets hit).
+    #[test]
+    fn occlusion_biases_contacts_upstream() {
+        let p = CalibrationParticle::proton(1.0);
+        let pts = p.world_points();
+        // Photon travel direction (matches report_alignment_channels' convention:
+        // the stream source sits at +Z, photons travel toward -Z).
+        let dir = DVec3::NEG_Z;
+        let trials = 2000;
+
+        let field_on = AmbientField { occlusion: true, ..bal_like(1.0) };
+        let mut rng_on = 0x51A1_C1A5_0000_0001u64;
+        let mut sum_on = 0.0;
+        for _ in 0..trials {
+            let idx = field_on.sample_contact(&pts, p.position, dir, &mut rng_on);
+            let rhat = (pts[idx] - p.position).normalize_or_zero();
+            sum_on += -dir.dot(rhat);
+        }
+        let mean_on = sum_on / trials as f64;
+
+        let field_off = AmbientField { occlusion: false, ..bal_like(1.0) };
+        let mut rng_off = 0x51A1_C1A5_0000_0001u64;
+        let mut sum_off = 0.0;
+        for _ in 0..trials {
+            let idx = field_off.sample_contact(&pts, p.position, dir, &mut rng_off);
+            let rhat = (pts[idx] - p.position).normalize_or_zero();
+            sum_off += -dir.dot(rhat);
+        }
+        let mean_off = sum_off / trials as f64;
+
+        assert!(mean_on > 0.2, "occlusion on should bias contacts upstream, mean={}", mean_on);
+        assert!(mean_off.abs() < 0.1, "occlusion off should be unbiased, mean={}", mean_off);
+    }
+
+    /// A balanced isotropic field (no pump: photon_fraction 0.5, spin_gain 0)
+    /// damps an existing tumble (`ang_velocity`) back toward zero — the
+    /// full-contact-velocity drag catch (Change 2) opposing the body's own
+    /// transverse motion, not just its swing surface.
+    #[test]
+    fn tumble_damps_in_balanced_field() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        p.ang_velocity = DVec3::X * 0.3;
+        let field = AmbientField {
+            flux: 200.0,
+            photon_fraction: 0.5,
+            direction_bias: None,
+            momentum: 0.02,
+            spin_gain: 0.0,
+            time_scale: 1.0,
+            occlusion: true,
+        };
+        let dt = 0.02;
+        let mut rng: u64 = 0x7A11_5EED_0BA1_0001u64;
+        let mut settled = false;
+        for _ in 0..40_000 {
+            field.tick(&mut p, dt, &mut rng);
+            p.integrate(dt, field.time_scale);
+            if p.ang_velocity.length() < 0.15 {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "tumble should damp below 0.15, stuck at {} (len {})", p.ang_velocity, p.ang_velocity.length());
+    }
+
+    /// Mirror of the above for linear drift: a balanced isotropic field
+    /// decelerates existing `lin_velocity` toward the field rest frame.
+    #[test]
+    fn drift_damps_in_balanced_field() {
+        let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+        p.lin_velocity = DVec3::X * 0.3;
+        let field = AmbientField {
+            flux: 200.0,
+            photon_fraction: 0.5,
+            direction_bias: None,
+            momentum: 0.02,
+            spin_gain: 0.0,
+            time_scale: 1.0,
+            occlusion: true,
+        };
+        let dt = 0.02;
+        let mut rng: u64 = 0x0D21_F7A0_0BA1_0002u64;
+        let mut settled = false;
+        for _ in 0..40_000 {
+            field.tick(&mut p, dt, &mut rng);
+            p.integrate(dt, field.time_scale);
+            if p.lin_velocity.length() < 0.15 {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "drift should damp below 0.15, stuck at {} (len {})", p.lin_velocity, p.lin_velocity.length());
     }
 
     /// The SI momentum-current identity `from_si` is built to preserve exactly:
@@ -1147,9 +1347,12 @@ mod tests {
     }
 
     fn bal_like(ts: f64) -> AmbientField {
+        // occlusion: false — see the comment on `bal` above (momentum=0.0
+        // keeps the drag/occlusion-sensitive channel inert; this is a pure
+        // chirality-pump helper).
         AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: None,
-            momentum: 0.0, spin_gain: 0.5, time_scale: ts,
+            momentum: 0.0, spin_gain: 0.5, time_scale: ts, occlusion: false,
         }
     }
 
@@ -1212,6 +1415,10 @@ mod tests {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         assert!((p.pole_axis() - DVec3::Z).length() < 1e-9);
         p.outer_spin = 0.8;
+        // occlusion: false — this is a basic-mechanism validation of the
+        // drag term proper (same family as report_spin_equilibrium, whose
+        // predictions bisect the UNSHADOWED swing_drag_torque channel); keep
+        // it on the analytic isotropic footing rather than the shadowed one.
         let field = AmbientField {
             flux: 200.0,
             photon_fraction: 0.5,
@@ -1219,6 +1426,7 @@ mod tests {
             momentum: 0.02,
             spin_gain: 0.0,
             time_scale: 1.0,
+            occlusion: false,
         };
         let dt = 0.02;
         let mut rng = 0x9E37_79B9_7F4A_7C15u64;
@@ -1241,6 +1449,7 @@ mod tests {
     fn drag_restores_negative_spin_toward_zero() {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         p.outer_spin = -0.8;
+        // occlusion: false — mirrors balanced_field_drags_spin_down's choice.
         let field = AmbientField {
             flux: 200.0,
             photon_fraction: 0.5,
@@ -1248,6 +1457,7 @@ mod tests {
             momentum: 0.02,
             spin_gain: 0.0,
             time_scale: 1.0,
+            occlusion: false,
         };
         let dt = 0.02;
         let mut rng = 0x1D87_2B23_45FF_0011u64;
@@ -1334,6 +1544,10 @@ mod tests {
                 let predicted = bisect_equilibrium(&mut p, pump, coupling, momentum);
 
                 let mut sim = make_particle();
+                // occlusion: false — the analytic prediction bisects
+                // swing_drag_torque, which models the UNSHADOWED isotropic
+                // channel; keeping the sim unshadowed here preserves the
+                // validated predicted-vs-sim match measured pre-occlusion.
                 let field = AmbientField {
                     flux,
                     photon_fraction,
@@ -1341,6 +1555,7 @@ mod tests {
                     momentum,
                     spin_gain,
                     time_scale: 1.0,
+                    occlusion: false,
                 };
                 let dt = (2.0 / flux).clamp(0.005, 0.05); // aim ~1-4 photons/tick
                 let steps = 150_000usize;
@@ -1389,6 +1604,48 @@ mod tests {
             "density sweep (photon_fraction=0.667)",
             vec![(0.667, 50.0, 2.0), (0.667, 200.0, 2.0), (0.667, 800.0, 2.0)],
         );
+
+        // --- Shadow-occlusion shift: Earth-mix flux-200 run, unshadowed vs
+        // shadowed, settled side by side. Everything else identical (same
+        // seed, same steps, same field magnitudes) so the printed delta is
+        // purely the occlusion effect on the settled equilibrium.
+        println!("\n== Shadow-occlusion shift (photon_fraction=0.667, flux=200, spin_gain=2.0) ==");
+        println!("{:>12} {:>14}", "occlusion", "settled_s*");
+        let settle_occ = |occlusion: bool| -> f64 {
+            let momentum = 0.02;
+            let flux = 200.0;
+            let photon_fraction = 0.667;
+            let spin_gain = 2.0;
+            let mut sim = make_particle();
+            let field = AmbientField {
+                flux,
+                photon_fraction,
+                direction_bias: None,
+                momentum,
+                spin_gain,
+                time_scale: 1.0,
+                occlusion,
+            };
+            let dt = (2.0 / flux).clamp(0.005, 0.05);
+            let steps = 150_000usize;
+            let mut rng = 0xC0FF_EE12_3456_789Au64;
+            let mut sum = 0.0;
+            let tail_start = steps - steps / 5;
+            for i in 0..steps {
+                field.tick(&mut sim, dt, &mut rng);
+                sim.integrate(dt, field.time_scale);
+                if i >= tail_start {
+                    sum += sim.outer_spin;
+                }
+            }
+            sum / (steps - tail_start) as f64
+        };
+        let settled_unshadowed = settle_occ(false);
+        let settled_shadowed = settle_occ(true);
+        println!("{:>12} {:>14.4}", "false", settled_unshadowed);
+        println!("{:>12} {:>14.4}", "true", settled_shadowed);
+        let shift = (settled_shadowed - settled_unshadowed) / settled_unshadowed.abs().max(1e-12);
+        println!("relative shift = {:.4}", shift);
     }
 
     // --- CM-1 second half: SI flux calibration ---
@@ -1488,7 +1745,7 @@ mod tests {
             let momentum_natural = units::photon_momentum_natural(spec.mass_kg);
             let k = 0.02 / momentum_natural;
             let spin_gain_per_photon = 2.0 / k;
-            let (field, cal) = AmbientField::from_si(
+            let (mut field, cal) = AmbientField::from_si(
                 FieldPreset::Room293K,
                 spec.mass_kg,
                 spin_gain_per_photon,
@@ -1496,6 +1753,10 @@ mod tests {
                 200.0,
                 1.0,
             );
+            // occlusion: false — see report_spin_equilibrium's comment: the
+            // K-invariance identity this report validates is derived against
+            // the unshadowed isotropic drag channel.
+            field.occlusion = false;
             let (settled, settle_step, dt, transmuted) =
                 run_settle(&*spec.make, &field, 0xC0FF_EE12_3456_789Au64, 150_000);
             let settle_t_nat = settle_step as f64 * dt;
@@ -1519,10 +1780,14 @@ mod tests {
         let k_a = 0.02 / momentum_natural;
         let spin_gain_per_photon = 2.0 / k_a;
 
-        let (field_a, cal_a) =
+        let (mut field_a, cal_a) =
             AmbientField::from_si(FieldPreset::Room293K, mass_kg, spin_gain_per_photon, 0.02, 200.0, 1.0);
-        let (field_b, cal_b) =
+        let (mut field_b, cal_b) =
             AmbientField::from_si(FieldPreset::Room293K, mass_kg, spin_gain_per_photon, 0.005, 800.0, 1.0);
+        // occlusion: false — see above; K-invariance is validated on the
+        // unshadowed channel.
+        field_a.occlusion = false;
+        field_b.occlusion = false;
 
         let make_proton: Box<dyn Fn() -> CalibrationParticle> =
             Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0));
@@ -1786,6 +2051,129 @@ mod tests {
             shadow_s00[i0].abs() < bound,
             "surface_shadow at theta=0,outer_spin=0 should be small vs theta=90: {} vs bound {} (theta90 val {})",
             shadow_s00[i0], bound, shadow_s00[idx90]
+        );
+    }
+
+    /// REPORT (ignored by default): the headline end-to-end check for
+    /// Changes 1+2 together. A proton, tilted 45 deg off the field direction,
+    /// dropped into a DIRECTIONAL room-like field with shadow occlusion on:
+    /// does it actually settle pole-parallel-to-field (0 or 180 deg), not
+    /// just show a restoring torque in a static diagnostic sweep (that was
+    /// already `report_alignment_channels`)? The full-velocity drag (Change
+    /// 2) is what should let it SETTLE rather than ring forever.
+    #[test]
+    #[ignore]
+    fn report_standing_up() {
+        let d = DVec3::NEG_Z; // photons travel -Z; stream source sits at +Z (matches report_alignment_channels).
+
+        let make = || {
+            let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0); // proton
+            p.orientation = DQuat::from_axis_angle(DVec3::X, 45f64.to_radians());
+            p
+        };
+
+        // Knobs: Room-like mix (2/3 photon), occlusion on. spin_gain=0 to
+        // isolate the alignment+damping channels (Change 1's shadow torque +
+        // Change 2's full-velocity drag) from the chirality spin pump, which
+        // this report isn't about. momentum/flux/dt match the validated
+        // stable model-A regime (same as balanced_field_drags_spin_down):
+        // cranking momentum well above this (tried 10x) hits an explicit-
+        // Euler instability in the new velocity-dependent drag (catch grows
+        // with |v_surf| once v_surf is no longer small, so an overlarge step
+        // overshoots and diverges) — NaN, not a physics result. Converging
+        // "for real" at a validated-stable momentum just needs more steps.
+        let flux = 2000.0;
+        let momentum = 0.001;
+        let spin_gain = 0.0;
+        let photon_fraction = 2.0 / 3.0;
+        let dt = 0.005;
+        let steps = 2_000_000usize;
+        println!(
+            "\n=== report_standing_up ===\nknobs: flux={} momentum={} spin_gain={} photon_fraction={:.4} dt={} steps={}",
+            flux, momentum, spin_gain, photon_fraction, dt, steps
+        );
+
+        let tilt_deg = |p: &CalibrationParticle| -> f64 { p.pole_axis().dot(DVec3::Z).clamp(-1.0, 1.0).acos().to_degrees() };
+
+        // --- Directional run ---
+        let mut p = make();
+        let field = AmbientField {
+            flux,
+            photon_fraction,
+            direction_bias: Some(d),
+            momentum,
+            spin_gain,
+            time_scale: 1.0,
+            occlusion: true,
+        };
+        let mut rng: u64 = 0xA111_5EED_0001_0003u64;
+        let sample_every = (steps / 20).max(1);
+        let mut peak_ang = 0.0f64;
+        println!("\n-- directional field --\n{:>10} {:>10} {:>14} {:>12}", "step", "tilt_deg", "ang_vel", "outer_spin");
+        let mut final_tilt = tilt_deg(&p);
+        let mut final_ang = p.ang_velocity.length();
+        for step in 0..steps {
+            field.tick(&mut p, dt, &mut rng);
+            p.integrate(dt, field.time_scale);
+            let av = p.ang_velocity.length();
+            if av > peak_ang {
+                peak_ang = av;
+            }
+            if step % sample_every == 0 || step + 1 == steps {
+                let t = tilt_deg(&p);
+                println!("{:>10} {:>10.3} {:>14.6} {:>12.4}", step, t, av, p.outer_spin);
+                final_tilt = t;
+                final_ang = av;
+            }
+        }
+        println!(
+            "final: tilt={:.3} deg, |ang_velocity|={:.6}, running peak |ang_velocity|={:.6}",
+            final_tilt, final_ang, peak_ang
+        );
+
+        assert!(
+            final_tilt < 15.0 || final_tilt > 165.0,
+            "directional field should converge pole-parallel-to-field (tilt near 0/180), got {:.3} deg",
+            final_tilt
+        );
+        assert!(
+            final_ang < peak_ang,
+            "ang_velocity should have decayed from its running peak: final={:.6} peak={:.6}",
+            final_ang, peak_ang
+        );
+
+        // --- CONTROL: isotropic field, everything else identical ---
+        let mut pc = make();
+        let field_c = AmbientField {
+            flux,
+            photon_fraction,
+            direction_bias: None,
+            momentum,
+            spin_gain,
+            time_scale: 1.0,
+            occlusion: true,
+        };
+        let mut rng_c: u64 = 0xA111_5EED_0001_0003u64;
+        println!("\n-- isotropic CONTROL --\n{:>10} {:>10} {:>14} {:>12}", "step", "tilt_deg", "ang_vel", "outer_spin");
+        let start_tilt_c = tilt_deg(&pc);
+        let mut final_tilt_c = start_tilt_c;
+        for step in 0..steps {
+            field_c.tick(&mut pc, dt, &mut rng_c);
+            pc.integrate(dt, field_c.time_scale);
+            if step % sample_every == 0 || step + 1 == steps {
+                let t = tilt_deg(&pc);
+                println!("{:>10} {:>10.3} {:>14.6} {:>12.4}", step, t, pc.ang_velocity.length(), pc.outer_spin);
+                final_tilt_c = t;
+            }
+        }
+        println!("final: tilt={:.3} deg (start was {:.3} deg)", final_tilt_c, start_tilt_c);
+
+        // No directional preference: the isotropic control should NOT show
+        // the same tight convergence to 0/180 that the directional run does.
+        assert!(
+            (final_tilt_c > 15.0 && final_tilt_c < 165.0) || (final_tilt_c - start_tilt_c).abs() < 10.0,
+            "isotropic control should show no directional alignment preference, got final tilt {:.3} deg (start {:.3})",
+            final_tilt_c, start_tilt_c
         );
     }
 }

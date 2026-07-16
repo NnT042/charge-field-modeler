@@ -429,3 +429,58 @@ destabilizes the south-mouth-upstream pole twice as strongly as the north (2:1 m
 south-mouth-into-the-stream selection needs a mechanism beyond passive absorption —
 likely a suction/pressure-deficit term (capture REMOVES ambient pushback at the mouth,
 flipping the sign of the mouth torque). Model and measure before wiring any intake rule.
+
+## Shadow occlusion wired + full-velocity drag (2026-07-16)
+
+The two measured-but-inert channels above (`surface_shadow_torque`'s alignment restoring
+force, `swing_drag_torque`'s velocity-dependent drag) are now live collision rules, not just
+diagnostics.
+
+**Rule 1 — exposure-weighted contact sampling.** `AmbientField` gained `pub occlusion: bool`.
+When true, `tick` no longer draws a contact point uniformly from `p.world_points()`; it draws
+the photon direction `dir` first, then REJECTION-SAMPLES the contact so a candidate point is
+accepted with probability `expose = max(0, -dir·r̂)` (`r̂` from the body's center to the
+candidate). Points facing the incoming stream are likelier to be hit, points on the
+self-occluded downstream side are unlikely — the same Lambert-shadow law
+`surface_shadow_torque` already measured. Hit COUNT per tick is unchanged (still exactly `n`);
+only which point gets credited shifts. Capped at 64 draws with a last-candidate fallback for
+degenerate geometry. `occlusion = false` reproduces the old uniform draw bit-for-bit (used by
+`room_default`/`from_si` as the new default `true`, but pinned back to `false` in
+`report_spin_equilibrium`/`report_si_calibration` — see below).
+
+**Rule 2 — full-contact-velocity drag catch.** `apply_photon`'s model-A drag catch,
+`|c·dir − v_surface|`, used to compute `v_surface` from the swing rotation alone
+(`omega × r`), so a tumbling or drifting body felt no drag on those channels — an aligning
+particle driven by Rule 1's restoring torque would have oscillated forever, an undamped
+pendulum. `v_surface` is now the FULL local material velocity (`contact_velocity`: drift +
+tumble + swing), and the catch-weighted "drag impulse" is split the same three ways the plain
+Newtonian impulse already is: pole component → `outer_spin` (unchanged from before), transverse
+component → `ang_velocity` (pendulum settling), full vector → `lin_velocity` (drift decelerated
+toward the field rest frame). Isotropic mean of a catch-weighted impulse is anti-parallel to
+whatever velocity feeds it (`E_dir[dir·|dir−v|] ≈ −v/3` for small `v`), so this is genuine
+damping on all three channels, not another pump. **Numerical note:** unlike `outer_spin`
+(clamped to ±1 = c), `ang_velocity`/`lin_velocity` had no speed ceiling, and `catch` GROWS with
+`|v_surface|` once it's no longer small relative to c — an explicit-Euler feedback loop that
+diverges to NaN over a long run if nothing caps it. `v_surface` is now clamped to length ≤ 1
+before computing `catch` (the same physical ceiling `outer_spin` already respects).
+
+**Tests.** `occlusion_biases_contacts_upstream` confirms the exposure bias directly via a new
+`AmbientField::sample_contact` helper (mean of `-dir·r̂` over accepted contacts: clearly
+positive with occlusion on, ~0 with it off). `tumble_damps_in_balanced_field` and
+`drift_damps_in_balanced_field` confirm Rule 2 actually damps existing `ang_velocity`/
+`lin_velocity` in a balanced (no-pump) isotropic field. `report_standing_up` (ignored) is the
+headline: a proton tilted 45° in a directional Room-mix field with occlusion on settles into a
+fluctuating near-zero-tilt band (this is a stochastic system — think Kramers double-well
+hopping between the 0° and 180° attractors at high noise, not a clean deterministic settle;
+tuning `momentum` down and `flux` up improves the drift/diffusion ratio, since diffusion grows
+with `momentum²` but coherent drift only with `momentum`) while the isotropic control shows no
+directional preference at all.
+
+**Shadow-induced equilibrium shift.** `report_spin_equilibrium` now runs its Earth-mix
+flux-200 settle twice — occlusion off vs on — everything else identical. Unshadowed settled
+`outer_spin* = 0.3633`; shadowed `= 0.4963`; **relative shift ≈ 37%**. This is a genuinely
+large shift (occlusion changes which points a random-direction photon can hit, which changes
+the chirality-pump statistics even under an isotropic-direction draw), so `report_spin_
+equilibrium` and `report_si_calibration` pin `occlusion = false` to keep validating against the
+analytic `swing_drag_torque` prediction (which models the unshadowed channel); the shadowed
+number is now on record here rather than silently baked into those reports.

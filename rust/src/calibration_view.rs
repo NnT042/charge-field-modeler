@@ -94,6 +94,10 @@ impl CalibrationView {
             momentum: max_r * 0.0005,
             spin_gain: p.i_spin() * 0.005,
             time_scale: ts,
+            // Shadow occlusion on: this eyeball view should show the real
+            // (measured) collision physics, not the analytic-only unshadowed
+            // channel that a couple of validation reports pin to.
+            occlusion: true,
         }
     }
 
