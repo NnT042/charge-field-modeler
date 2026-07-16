@@ -150,12 +150,44 @@ pub const AMBIENT_CHARGE_MASS_DENSITY_KG_M3: f64 = 1.54e-29;
 #[allow(dead_code)]
 /// Average charge-photon number density: ≈56 million per m³ (photon3.pdf).
 pub const AMBIENT_PHOTON_NUMBER_DENSITY_PER_M3: f64 = 5.6e7;
-#[allow(dead_code)]
 /// Charge-photon mass = D/n (photon3.pdf; matches the recycling-rate paper).
+/// Cross-check: `PROTON_MASS_KG / 1821³` (photon.html's Dalton-cubed derivation)
+/// gives ≈2.77e-37 kg, agreeing with this D/n value to <1% (see
+/// `photon_mass_two_derivations_agree`).
 pub const CHARGE_PHOTON_MASS_KG: f64 = 2.75e-37;
 #[allow(dead_code)]
 /// Sun's charge density ÷ Earth's (pause.html) — solar-core preset anchor.
 pub const SUN_EARTH_CHARGE_DENSITY_RATIO: f64 = 84_986.0;
+
+// --- Natural↔SI flux calibration (CM-1 second half) ---
+//
+// e = 1.602e-19 C and 1 C = 2e-7 kg/s (SI Ampere definition), so the
+// elementary charge recycles mass at e = 3.204e-26 kg/s — the proton
+// recycles ~19.2x its own mass in charge photons every second (xpart.pdf,
+// fine3.pdf "Fine Structure Constant").
+pub const ELEMENTARY_CHARGE_KG_PER_S: f64 = 3.204e-26;
+/// Proton rest mass (SI).
+pub const PROTON_MASS_KG: f64 = 1.673e-27;
+#[allow(dead_code)]
+/// Neutron rest mass (SI).
+pub const NEUTRON_MASS_KG: f64 = 1.675e-27;
+#[allow(dead_code)]
+/// Electron rest mass (SI).
+pub const ELECTRON_MASS_KG: f64 = 9.109e-31;
+
+/// Photon contacts per second a particle of `mass_kg` recycles at Earth-ambient
+/// (Room) density. Recycling scales with particle mass (fine3.pdf: 19.2x own
+/// mass/s; fermi.pdf: electron recycles ~1/1821 of the proton's charge).
+/// Proton: ~1.16e11 photons/s.
+pub fn recycle_flux_hz(mass_kg: f64) -> f64 {
+    ELEMENTARY_CHARGE_KG_PER_S * (mass_kg / PROTON_MASS_KG) / CHARGE_PHOTON_MASS_KG
+}
+
+/// One charge photon's momentum in a particle's natural units (c = 1, particle
+/// mass = 1): p_nat = m_photon / m_particle. Proton: ~1.64e-10.
+pub fn photon_momentum_natural(mass_kg: f64) -> f64 {
+    CHARGE_PHOTON_MASS_KG / mass_kg
+}
 
 #[cfg(test)]
 mod tests {
@@ -177,6 +209,42 @@ mod tests {
         let m = AMBIENT_CHARGE_MASS_DENSITY_KG_M3 / AMBIENT_PHOTON_NUMBER_DENSITY_PER_M3;
         assert!((m - CHARGE_PHOTON_MASS_KG).abs() / CHARGE_PHOTON_MASS_KG < 0.02,
             "D/n = {:.3e} should match photon mass {:.3e}", m, CHARGE_PHOTON_MASS_KG);
+    }
+
+    /// Proton recycle flux at Earth-ambient density should land near the
+    /// Mathis-derived ~1.16e11 photons/s (fine3.pdf/photon3.pdf composite).
+    #[test]
+    fn recycle_flux_proton_matches_mathis() {
+        let f = recycle_flux_hz(PROTON_MASS_KG);
+        let expected = 1.16e11;
+        assert!((f - expected).abs() / expected < 0.03,
+            "proton recycle flux {:.4e} should be within 3% of {:.4e}", f, expected);
+    }
+
+    /// e / m_p should land in the ~19x-own-mass/sec recycling rate (fine3.pdf).
+    #[test]
+    fn recycle_ratio_is_19x() {
+        let ratio = ELEMENTARY_CHARGE_KG_PER_S / PROTON_MASS_KG;
+        assert!((18.5..19.5).contains(&ratio), "ratio {} should be ~19x", ratio);
+    }
+
+    /// A charge photon's momentum in proton-natural units should land near
+    /// 1.64e-10 (m_photon / m_p).
+    #[test]
+    fn photon_momentum_natural_proton() {
+        let p = photon_momentum_natural(PROTON_MASS_KG);
+        let expected = 1.64e-10;
+        assert!((p - expected).abs() / expected < 0.03,
+            "proton photon momentum {:.4e} should be within 3% of {:.4e}", p, expected);
+    }
+
+    /// Two independent derivations of the charge-photon mass — D/n (photon3.pdf)
+    /// and m_p/1821³ (photon.html's Dalton-cubed framing) — should agree.
+    #[test]
+    fn photon_mass_two_derivations_agree() {
+        let via_dalton = PROTON_MASS_KG / 1821f64.powi(3);
+        assert!((via_dalton - CHARGE_PHOTON_MASS_KG).abs() / CHARGE_PHOTON_MASS_KG < 0.02,
+            "m_p/1821^3 = {:.4e} should be within 2% of {:.4e}", via_dalton, CHARGE_PHOTON_MASS_KG);
     }
 
     #[test]

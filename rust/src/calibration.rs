@@ -23,6 +23,7 @@ use glam::{DQuat, DVec3};
 
 use crate::hitbox::{bake_loop, recommended_samples, BakedLoop};
 use crate::types::level_amplitude;
+use crate::units;
 
 pub struct CalibrationParticle {
     pub hitbox: BakedLoop,
@@ -523,6 +524,21 @@ pub struct AmbientField {
     pub time_scale: f64,
 }
 
+/// SI anchoring for an AmbientField (CM-1 second half). The sim can't deliver
+/// ~1e11 contacts/s, so one sim photon stands in for `aggregation` (K) real
+/// photons: per-photon magnitudes (momentum, spin_gain) scale UP by K, the
+/// contact rate scales DOWN by K. Pump and drag both scale linearly in their
+/// per-photon magnitude, so the equilibrium outer_spin is K-invariant (only
+/// noise granularity grows with K — report_si_calibration checks this).
+/// `seconds_per_time_unit` converts sim time to SI: flux_sim contacts per
+/// natural time unit represent flux_si·density contacts per second.
+pub struct SiCalibration {
+    pub flux_si_hz: f64,
+    pub aggregation: f64,
+    pub momentum_natural: f64,
+    pub seconds_per_time_unit: f64,
+}
+
 impl AmbientField {
     /// Room-temperature Earth-like default: 2/3 photon, isotropic. Magnitudes
     /// are placeholders (calibrated in CM-1).
@@ -535,6 +551,41 @@ impl AmbientField {
             spin_gain: 0.5,
             time_scale,
         }
+    }
+
+    /// Build a field whose magnitudes derive from the sourced SI anchors.
+    /// `spin_gain_per_photon` is the one remaining free coupling (CM-2
+    /// measures it); `sim_momentum` picks the working macro-photon impulse
+    /// (K = sim_momentum / true momentum); `sim_flux` picks the working
+    /// contact rate per natural time unit.
+    pub fn from_si(
+        preset: FieldPreset,
+        particle_mass_kg: f64,
+        spin_gain_per_photon: f64,
+        sim_momentum: f64,
+        sim_flux: f64,
+        time_scale: f64,
+    ) -> (Self, SiCalibration) {
+        let momentum_natural = units::photon_momentum_natural(particle_mass_kg);
+        let aggregation = sim_momentum / momentum_natural;
+        let flux_si_hz = units::recycle_flux_hz(particle_mass_kg) * preset.density_multiple();
+        let seconds_per_time_unit = sim_flux * aggregation / flux_si_hz;
+
+        let field = Self {
+            flux: sim_flux,
+            photon_fraction: preset.photon_fraction(),
+            direction_bias: None,
+            momentum: sim_momentum,
+            spin_gain: spin_gain_per_photon * aggregation,
+            time_scale,
+        };
+        let cal = SiCalibration {
+            flux_si_hz,
+            aggregation,
+            momentum_natural,
+            seconds_per_time_unit,
+        };
+        (field, cal)
     }
 
     /// Deliver one time step's worth of photon contacts to `p`.
@@ -772,6 +823,27 @@ mod tests {
         }
         assert!(p.lin_velocity.x > 0.0, "field along +X should drift +X, got {:?}", p.lin_velocity);
         assert!(p.lin_velocity.x > p.lin_velocity.y.abs() * 5.0, "drift should be mostly along X");
+    }
+
+    /// The SI momentum-current identity `from_si` is built to preserve exactly:
+    /// sim momentum-per-tick (`field.momentum · field.flux`) must equal the true
+    /// per-photon momentum times the true SI contact rate times the sim-time→SI
+    /// conversion, since `seconds_per_time_unit = sim_flux·K / flux_si_hz` and
+    /// `K = sim_momentum / momentum_natural` cancel algebraically.
+    #[test]
+    fn si_momentum_current_preserved() {
+        let (field, cal) = AmbientField::from_si(
+            FieldPreset::Room293K,
+            units::PROTON_MASS_KG,
+            1.0,
+            0.02,
+            200.0,
+            1.0,
+        );
+        let lhs = field.momentum * field.flux;
+        let rhs = cal.momentum_natural * cal.flux_si_hz * cal.seconds_per_time_unit;
+        let rel = (lhs - rhs).abs() / lhs.abs().max(1e-300);
+        assert!(rel < 1e-9, "momentum current mismatch: lhs={:e} rhs={:e} rel={:e}", lhs, rhs, rel);
     }
 
     #[test]
@@ -1080,6 +1152,168 @@ mod tests {
         run_sweep(
             "density sweep (photon_fraction=0.667)",
             vec![(0.667, 50.0, 2.0), (0.667, 200.0, 2.0), (0.667, 800.0, 2.0)],
+        );
+    }
+
+    // --- CM-1 second half: SI flux calibration ---
+
+    /// Ticks `field` against a fresh particle from `make` for 150k steps and
+    /// returns `(settled_s*, settle_step, dt)`, same convention as
+    /// `report_spin_equilibrium`'s inner sweep.
+    fn run_settle(
+        make: &dyn Fn() -> CalibrationParticle,
+        field: &AmbientField,
+        seed: u64,
+        steps: usize,
+    ) -> (f64, usize, f64, bool) {
+        let dt = (2.0 / field.flux).clamp(0.005, 0.05);
+        let mut rng = seed;
+        let mut sim = make();
+        let mut trace = Vec::with_capacity(steps);
+        for _ in 0..steps {
+            field.tick(&mut sim, dt, &mut rng);
+            sim.integrate(dt, field.time_scale);
+            trace.push(sim.outer_spin);
+        }
+        let tail_start = steps - steps / 5; // last 20%
+        let settled: f64 = trace[tail_start..].iter().sum::<f64>() / (steps - tail_start) as f64;
+        let target = 0.9 * settled;
+        let settle_step = trace
+            .iter()
+            .position(|&v| if settled >= 0.0 { v >= target } else { v <= target })
+            .unwrap_or(steps);
+        (settled, settle_step, dt, sim.transmuted)
+    }
+
+    /// REPORT (ignored by default): the natural↔SI flux calibration end to end.
+    /// Table 1 prints the sourced anchors per particle (mass, true recycle flux,
+    /// true per-photon momentum, the macro-photon aggregation K, and the sim↔SI
+    /// time conversion) for the working sim knobs (momentum=0.02, flux=200).
+    /// Table 2 runs the same settle loop as `report_spin_equilibrium` through
+    /// `from_si`, converting settle time to SI seconds. Table 3 checks that the
+    /// settled equilibrium is K-invariant — quartering `sim_momentum` (and
+    /// quadrupling `sim_flux` to hold the represented physical density fixed)
+    /// must reproduce the same settled `outer_spin` within noise. Run B gets
+    /// 2× the steps so both runs receive the same physical photon dose (see
+    /// the inline comment at the run_settle calls).
+    #[test]
+    #[ignore]
+    fn report_si_calibration() {
+        // --- Table 1: sourced anchors per particle ---
+        println!(
+            "\n== Table 1: SI anchors (Room, sim_momentum=0.02, flux_sim=200) ==\n{:>10} {:>12} {:>14} {:>16} {:>12} {:>18}",
+            "particle", "mass_kg", "flux_si_Hz", "momentum_nat", "K", "sec_per_tu"
+        );
+        let particles: [(&str, f64); 3] = [
+            ("proton", units::PROTON_MASS_KG),
+            ("neutron", units::NEUTRON_MASS_KG),
+            ("electron", units::ELECTRON_MASS_KG),
+        ];
+        for (label, mass_kg) in particles {
+            let momentum_natural = units::photon_momentum_natural(mass_kg);
+            let flux_si = units::recycle_flux_hz(mass_kg) * FieldPreset::Room293K.density_multiple();
+            let k = 0.02 / momentum_natural;
+            let sec_per_tu = 200.0 * k / flux_si;
+            println!(
+                "{:>10} {:>12.4e} {:>14.4e} {:>16.4e} {:>12.4e} {:>18.4e}",
+                label, mass_kg, flux_si, momentum_natural, k, sec_per_tu
+            );
+        }
+
+        // --- Table 2: Room-preset settling per particle ---
+        struct ParticleSpec {
+            label: &'static str,
+            mass_kg: f64,
+            make: Box<dyn Fn() -> CalibrationParticle>,
+        }
+        let specs: Vec<ParticleSpec> = vec![
+            ParticleSpec {
+                label: "proton",
+                mass_kg: units::PROTON_MASS_KG,
+                make: Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0)),
+            },
+            ParticleSpec {
+                label: "neutron",
+                mass_kg: units::NEUTRON_MASS_KG,
+                make: Box::new(|| CalibrationParticle::new(bake_loop(11, 256), 1.0)),
+            },
+            ParticleSpec {
+                label: "electron",
+                mass_kg: units::ELECTRON_MASS_KG,
+                make: Box::new(|| CalibrationParticle::new(bake_loop(8, 256), 1.0)),
+            },
+        ];
+
+        println!(
+            "\n== Table 2: Room-preset settling ==\n{:>10} {:>12} {:>12} {:>14} {:>16} {:>18}",
+            "particle", "settled_s*", "settle_step", "settle_t_nat", "settle_t_SI_s", "per_photon_gain"
+        );
+        for spec in &specs {
+            let momentum_natural = units::photon_momentum_natural(spec.mass_kg);
+            let k = 0.02 / momentum_natural;
+            let spin_gain_per_photon = 2.0 / k;
+            let (field, cal) = AmbientField::from_si(
+                FieldPreset::Room293K,
+                spec.mass_kg,
+                spin_gain_per_photon,
+                0.02,
+                200.0,
+                1.0,
+            );
+            let (settled, settle_step, dt, transmuted) =
+                run_settle(&*spec.make, &field, 0xC0FF_EE12_3456_789Au64, 150_000);
+            let settle_t_nat = settle_step as f64 * dt;
+            let settle_t_si = settle_t_nat * cal.seconds_per_time_unit;
+            println!(
+                "{:>10} {:>12.4} {:>12} {:>14.4} {:>16.4e} {:>18.4e}{}",
+                spec.label,
+                settled,
+                settle_step,
+                settle_t_nat,
+                settle_t_si,
+                spin_gain_per_photon,
+                if transmuted { "  (TRANSMUTED — hit c)" } else { "" }
+            );
+        }
+
+        // --- Table 3: K-invariance (proton, Room) ---
+        println!("\n== Table 3: K-invariance (proton, Room) ==");
+        let mass_kg = units::PROTON_MASS_KG;
+        let momentum_natural = units::photon_momentum_natural(mass_kg);
+        let k_a = 0.02 / momentum_natural;
+        let spin_gain_per_photon = 2.0 / k_a;
+
+        let (field_a, cal_a) =
+            AmbientField::from_si(FieldPreset::Room293K, mass_kg, spin_gain_per_photon, 0.02, 200.0, 1.0);
+        let (field_b, cal_b) =
+            AmbientField::from_si(FieldPreset::Room293K, mass_kg, spin_gain_per_photon, 0.005, 800.0, 1.0);
+
+        let make_proton: Box<dyn Fn() -> CalibrationParticle> =
+            Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0));
+        // Equal PHYSICAL photon dose, not equal step count: per step, run A
+        // delivers dt·flux·K = 0.01·200·K = 2K real photons while run B
+        // delivers 0.005·800·(K/4) = 1K — half the dose. With equal steps run
+        // B is still converging when the tail window opens, which shows up as
+        // a spurious ~15% "K-dependence" (seen 2026-07-16). Doubling B's steps
+        // equalizes the represented physical exposure.
+        let (settled_a, step_a, _dt_a, _tr_a) =
+            run_settle(&*make_proton, &field_a, 0xC0FF_EE12_3456_789Au64, 150_000);
+        let (settled_b, step_b, _dt_b, _tr_b) =
+            run_settle(&*make_proton, &field_b, 0xC0FF_EE12_3456_789Au64, 300_000);
+
+        let rel_diff = (settled_a - settled_b).abs() / settled_a.abs().max(settled_b.abs()).max(1e-12);
+        println!(
+            "{:>8} {:>10} {:>10} {:>10} {:>12}",
+            "run", "K", "flux_sim", "settled_s*", "settle_step"
+        );
+        println!("{:>8} {:>10.4e} {:>10.1} {:>10.4} {:>12}", "A", cal_a.aggregation, field_a.flux, settled_a, step_a);
+        println!("{:>8} {:>10.4e} {:>10.1} {:>10.4} {:>12}", "B", cal_b.aggregation, field_b.flux, settled_b, step_b);
+        println!("relative difference = {:.4}", rel_diff);
+
+        assert!(
+            rel_diff < 0.05,
+            "K-invariance violated: settled_a={} settled_b={} rel_diff={}",
+            settled_a, settled_b, rel_diff
         );
     }
 }

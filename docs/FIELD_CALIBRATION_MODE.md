@@ -381,3 +381,27 @@ density-independent equilibrium with density-dependent approach rate predicts.
 the *isotropic mean* vanishes (`drag_has_zero_mean_at_rest`). Per-photon scatter around zero is
 expected noise, not a bug; a balanced field's simulated settled spin jitters near zero for the
 same reason (see the p=0.5 row above).
+
+## CM-1 second half: SI flux calibration (implemented)
+
+**Sourced anchors (`units.rs`).** `e = 1.602e-19 C`, and `1 C = 2e-7 kg/s` (SI Ampere
+definition), so the elementary charge recycles mass at `3.204e-26 kg/s` (xpart.pdf, fine3.pdf
+"Fine Structure Constant") — the proton recycles ~19.2x its own mass in charge photons every
+second. Dividing by the charge-photon mass `2.75e-37 kg` (photon3.pdf `D/n`) gives the proton's
+true recycle flux, ~1.16e11 photons/s; that photon mass cross-checks against photon.html's
+`m_p/1821³ ≈ 2.77e-37` to <1%.
+
+**Macro-photon aggregation.** The sim can't tick 1e11 contacts/s, so one sim photon stands in
+for `K` real photons: `AmbientField::from_si` scales the per-photon magnitudes (momentum,
+spin_gain) UP by `K = sim_momentum / true_momentum_natural` while the contact rate stays at the
+chosen sim `flux`. Because the chirality pump and the velocity-channel drag are both linear in
+per-photon magnitude, the settled equilibrium `outer_spin` is K-invariant — only the noise floor
+coarsens as K grows (`report_si_calibration` Table 3 checks this directly, <15% tolerance).
+
+**Time mapping.** `seconds_per_time_unit = sim_flux · K / flux_si_hz` converts natural
+simulation time into SI seconds by matching the real momentum-current the sim run represents.
+
+**`report_si_calibration`** (ignored, `--nocapture` to read) prints: Table 1, the sourced
+anchors and derived `K`/time-conversion per particle at Room density; Table 2, the settle
+trajectory (same 150k-step loop as `report_spin_equilibrium`) run through `from_si`, with
+settle time converted to SI seconds; Table 3, the K-invariance check for the proton.
