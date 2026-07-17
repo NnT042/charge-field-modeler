@@ -2832,4 +2832,85 @@ mod tests {
             );
         }
     }
+
+    /// REPORT (ignored by default): critical gear efficiency under
+    /// `DirRelSign` — distinguishes "rest (no spin-up)" verdicts that are a
+    /// TRUE zero from ones that merely settle below print resolution.
+    ///
+    /// Both the DirRelSign pump and the drag vanish at rest, so whether a
+    /// particle spins up at all is a ratio contest: a nonzero settling point
+    /// exists iff `gear_efficiency >= eff_crit := min over s>0 of
+    /// -drag(s)/pump(s)` (pump mix-weighted, per unit momentum·efficiency).
+    /// Below `eff_crit` the net torque is negative at EVERY `s > 0` — rest is
+    /// the only attractor and the deterministic equilibrium is EXACTLY zero,
+    /// not a small number the display can't print. `1/eff_crit` reads
+    /// directly in ladder units: a spin-energy-ladder platform term LARGER
+    /// than it leaves the particle at true rest; a SMALLER one gives a live
+    /// swing.
+    ///
+    /// Motivated by the locked-platform reading of the ladder rule (the baked
+    /// levels are locked in — strippable only by a resonant slam — and
+    /// deliver the full force of THEIR ladder term; the live top swing is the
+    /// free variable), under which the neutron's platform term sits one rung
+    /// below the proton's 16385. This report checks every named rung
+    /// {9, 65, 1025, 16385} against eff_crit per particle x mix.
+    /// Measurement only; print-only, no rule wired.
+    #[test]
+    #[ignore]
+    fn report_critical_gear_efficiency() {
+        let specs: [(&str, u8); 3] = [("proton", 12), ("neutron", 11), ("electron", 8)];
+        // Fine near-zero points prepended to the uniform body: eff_crit's
+        // argmin can sit either at the s->0 slope ratio or at an interior
+        // knee of the pump plateau, and the uniform grid's first point
+        // (s ~= 0.01) is too coarse to see the former.
+        let mut grid: Vec<f64> =
+            vec![0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075];
+        grid.extend((2..=200).map(|i| 0.995 * i as f64 / 200.0));
+        let p_values = [2.0 / 3.0, 1.0];
+        let rungs: [(&str, f64); 4] =
+            [("1/9", 9.0), ("1/65", 65.0), ("1/1025", 1025.0), ("1/16385", 16385.0)];
+
+        println!("\n=== report_critical_gear_efficiency (rule = DirRelSign) ===");
+        for (label, level) in specs {
+            let mut p = CalibrationParticle::new(bake_loop(level, 256), 1.0);
+            for &pf in &p_values {
+                let pump: Vec<f64> = grid
+                    .iter()
+                    .map(|&s| gear_pump_at_spin(&mut p, s, pf, PumpRule::DirRelSign, 48, 16))
+                    .collect();
+                let drag: Vec<f64> = grid.iter().map(|&s| drag_at_spin(&mut p, s, false)).collect();
+                let mut eff_crit = f64::INFINITY;
+                let mut s_at = f64::NAN;
+                for i in 0..grid.len() {
+                    if pump[i] > 0.0 {
+                        let need = -drag[i] / pump[i];
+                        if need < eff_crit {
+                            eff_crit = need;
+                            s_at = grid[i];
+                        }
+                    }
+                }
+                if !eff_crit.is_finite() {
+                    println!(
+                        "\n{} @ p={:.4}: pump <= 0 everywhere (no spin-up at ANY efficiency)",
+                        label, pf
+                    );
+                    continue;
+                }
+                println!(
+                    "\n{} @ p={:.4}: eff_crit = {:.6e} = 1/{:.1} (argmin s = {:.4})",
+                    label, pf, eff_crit, 1.0 / eff_crit, s_at
+                );
+                for &(rung_label, rung) in &rungs {
+                    let verdict = find_equilibrium_label(&grid, &pump, &drag, 1.0 / rung);
+                    let side = if 1.0 / rung >= eff_crit {
+                        "above eff_crit -> live swing"
+                    } else {
+                        "below eff_crit -> TRUE zero"
+                    };
+                    println!("    gear_eff {:>8}: {:<24} [{}]", rung_label, verdict, side);
+                }
+            }
+        }
+    }
 }
