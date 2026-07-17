@@ -3170,4 +3170,743 @@ mod tests {
             }
         }
     }
+
+    // --- Vortex feedback / neutron first-passage (CM-2 open-measurement pair) ---
+
+    /// Shared particle-spec list for the vortex-feedback report family
+    /// (`report_vortex_feedback`, `report_vortex_feedback_probes`): proton,
+    /// neutron, electron, each with hitbox + locked ladder-rung
+    /// `gear_efficiency` (see `GEAR_LADDER_*`).
+    struct VortexSpec {
+        label: &'static str,
+        make: Box<dyn Fn() -> CalibrationParticle>,
+    }
+
+    fn vortex_specs() -> Vec<VortexSpec> {
+        vec![
+            VortexSpec {
+                label: "proton",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_PROTON;
+                    p
+                }),
+            },
+            VortexSpec {
+                label: "neutron",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(11, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_NEUTRON;
+                    p
+                }),
+            },
+            VortexSpec {
+                label: "electron",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_ELECTRON;
+                    p
+                }),
+            },
+        ]
+    }
+
+    /// The vortex-feedback family's per-row time step: aim for ~2 expected
+    /// contacts per tick, clamped. Shared by `settle_probe` (which uses it
+    /// internally) and by `report_vortex_feedback`'s duration normalization
+    /// (steps = duration / dt) so the two can never drift apart.
+    fn vortex_dt(f_a: f64, f_s: f64) -> f64 {
+        let total_flux = (f_a + f_s).max(1.0);
+        (2.0 / total_flux).clamp(0.005, 0.05)
+    }
+
+    /// Shared settle/lattice-hold machinery for the vortex-feedback report
+    /// family. Ticks `ambient` (isotropic, flux `f_a`) and `stream`
+    /// (directional at `theta_deg` off the particle's pole, photon fraction
+    /// `p_s`, flux `f_s`) on a held particle for `steps` ticks seeded by
+    /// `seed` (position/lin_velocity/ang_velocity/orientation reset every
+    /// step; only `outer_spin` is free). `occlusion` is applied to BOTH
+    /// fields identically. Returns `(tail_mean, tail_std, transmuted,
+    /// block_means)`: the tail stats are over the last 20% of the run
+    /// (bit-identical to `report_vortex_feedback`'s original statistic when
+    /// `occlusion=true`), and `block_means` is the mean of each of `n_blocks`
+    /// successive equal-length chunks spanning the WHOLE run — used by the
+    /// settling-check probes (A3/A4) to tell a real equilibrium from a slow
+    /// transient. `theta_deg`/`p_s` only matter when `f_s > 0`.
+    fn settle_probe(
+        make: &dyn Fn() -> CalibrationParticle,
+        theta_deg: f64,
+        p_s: f64,
+        f_a: f64,
+        f_s: f64,
+        steps: usize,
+        seed: u64,
+        occlusion: bool,
+        n_blocks: usize,
+    ) -> (f64, f64, bool, Vec<f64>) {
+        let mut sim = make();
+        let hold_orientation = sim.orientation;
+        let pole = sim.pole_axis();
+        // Orthonormal e1 perpendicular to pole (Gram-Schmidt off world X,
+        // falling back to Y if pole is nearly parallel to X).
+        let mut e1 = DVec3::X - pole * pole.dot(DVec3::X);
+        if e1.length_squared() < 1e-6 {
+            e1 = DVec3::Y - pole * pole.dot(DVec3::Y);
+        }
+        let e1 = e1.normalize_or_zero();
+        let theta = theta_deg.to_radians();
+        // Photon TRAVEL direction at angle theta off the pole.
+        let beam_dir = (pole * theta.cos() + e1 * theta.sin()).normalize_or_zero();
+
+        let ambient = AmbientField {
+            flux: f_a,
+            photon_fraction: 2.0 / 3.0,
+            direction_bias: None,
+            momentum: 0.02,
+            time_scale: 1.0,
+            occlusion,
+        };
+        let stream = AmbientField {
+            flux: f_s,
+            photon_fraction: p_s,
+            direction_bias: Some(beam_dir),
+            momentum: 0.02,
+            time_scale: 1.0,
+            occlusion,
+        };
+
+        let dt = vortex_dt(f_a, f_s);
+        let mut rng: u64 = seed;
+        let tail_start = steps - steps / 5; // last 20%
+        let mut sum = 0.0;
+        let mut sumsq = 0.0;
+        let mut count = 0u64;
+
+        let n_blocks = n_blocks.max(1);
+        let block_size = (steps / n_blocks).max(1);
+        let mut block_sums = vec![0.0f64; n_blocks];
+        let mut block_counts = vec![0u64; n_blocks];
+
+        for i in 0..steps {
+            ambient.tick(&mut sim, dt, &mut rng);
+            stream.tick(&mut sim, dt, &mut rng);
+            sim.integrate(dt, 1.0);
+            // LATTICE HOLD (see report_vortex_feedback's doc comment).
+            sim.position = DVec3::ZERO;
+            sim.lin_velocity = DVec3::ZERO;
+            sim.ang_velocity = DVec3::ZERO;
+            sim.orientation = hold_orientation;
+            if i >= tail_start {
+                sum += sim.outer_spin;
+                sumsq += sim.outer_spin * sim.outer_spin;
+                count += 1;
+            }
+            let b = (i / block_size).min(n_blocks - 1);
+            block_sums[b] += sim.outer_spin;
+            block_counts[b] += 1;
+        }
+        let mean = sum / count.max(1) as f64;
+        let var = (sumsq / count.max(1) as f64 - mean * mean).max(0.0);
+        let block_means: Vec<f64> = block_sums
+            .iter()
+            .zip(block_counts.iter())
+            .map(|(s, c)| if *c > 0 { s / *c as f64 } else { f64::NAN })
+            .collect();
+        (mean, var.sqrt(), sim.transmuted, block_means)
+    }
+
+    /// REPORT (ignored by default): does a NEIGHBOR's dense recycled charge
+    /// stream drive a held particle's outer swing, on top of (or against) the
+    /// plain isotropic ambient?
+    ///
+    /// In a nucleus, particles sit in each other's recycled streams: each
+    /// neighbor's emission is directional (radial from ITS position, so
+    /// roughly a beam by the time it crosses the small internuclear gap),
+    /// dense (way above ambient density), and CHIRALITY-COHERENT — sourced
+    /// from weak2.html: "particles emit right photons and anti-particles
+    /// emit left photons ... the charge field on the Earth will always sum
+    /// to a right photon field" (an individual matter particle's own
+    /// recycled stream is single-chirality; the Earth AMBIENT 2/3 mix is the
+    /// residual after summing many particles/antiparticles, not a property
+    /// of one particle's stream) and pause.html (emission is radial; photons
+    /// and antiphotons differ only in spin, not in the emission geometry).
+    /// So `p_s` (the stream's photon_fraction) is swept across {2/3, 1.0} —
+    /// Earth-like residual vs a neighbor's own coherent output — rather than
+    /// assumed to be 1.0 outright.
+    ///
+    /// LATTICE HOLD: the particle is HELD (hof.pdf: nuclei are "held in a
+    /// solid structure" by neighboring charge, only free to turn/spin, not
+    /// translate) — this is the physical scenario for a bound nucleon, and
+    /// it's also required for `theta` (the stream's angle off the particle's
+    /// OWN pole) to stay well-defined for the whole run. A FREE particle
+    /// dropped in a beam is a radiation sail (see `report_standing_up`'s
+    /// documented finding): it accelerates until it co-moves with the
+    /// stream, `catch -> 0`, and ALL coupling — including this feedback —
+    /// dies. Pinning position/lin_velocity/ang_velocity/orientation back to
+    /// their captured-at-construction values every step is what keeps this
+    /// report measuring the feedback itself rather than re-discovering the
+    /// sail effect. Only `outer_spin` (and `swing_phase`, which the pole-axis
+    /// spin pump does not depend on for the tangent/gear geometry here) is
+    /// left free.
+    ///
+    /// DURATION NORMALIZATION: each row runs a fixed PHYSICAL duration of
+    /// 3000 natural time units (`steps = 3000 / dt`, dt from `vortex_dt`),
+    /// not a fixed step count. The first run of this report used a fixed
+    /// 150k steps, and `report_vortex_feedback_probes` (A3/A4) showed that
+    /// captured slow TRANSIENTS, not equilibria — e.g. the proton theta=90
+    /// "+0.417" cell decays to ~0 by 3000 units (600k steps x dt=0.005),
+    /// and the "non-monotonic in stream flux" pattern was an artifact of
+    /// rows having different dt and therefore different physical durations
+    /// at a fixed step count. 3000 units is the empirically-settled horizon
+    /// from those probes. Tail statistic stays the last 20% of the run.
+    ///
+    /// THETA=0 CAVEAT (knife-edge, confirmed by
+    /// `report_vortex_feedback_probes` B1-B3): at exactly axial incidence
+    /// `dir.dot(t_hat) == +/-0.0`, so the DirRelSign effective chirality
+    /// `chi_eff = chirality * (-dir.dot(t_hat)).signum()` in `apply_photon`
+    /// evaluates `signum` on an IEEE SIGNED ZERO (or the fp residue of an
+    /// exactly-orthogonal dot) — the per-photon sign at exact pole incidence
+    /// is set by floating-point zero-sign bookkeeping, not geometry (probe
+    /// B3), theta=180 does NOT mirror to the opposite attractor (B1), and
+    /// theta=1/5 degrees do not connect continuously to the axial value
+    /// (B2). The theta=0 rows below are therefore NOT trustworthy physics
+    /// until the axial-incidence rule is decided (a dead-zone where chi_eff
+    /// -> 0 near the axis, vs a chirality-signed azimuthal push) — that is a
+    /// user physics decision, deliberately NOT wired here, because
+    /// `apply_photon` is the signed-off CM-2 rule (commits 663d8d8/3814281)
+    /// and this report only measures it.
+    ///
+    /// Grid: control row (`F_a=200, F_s=0`, theta/p_s irrelevant, run once)
+    /// plus the 2 (theta) x 2 (p_s) x 3 (F_a,F_s) = 12 stream rows, per
+    /// particle — 13 rows x 3 particles = 39 runs total. Single seed
+    /// (0xC0FF_EE12_3456_789A, same as `report_spin_equilibrium`'s settle
+    /// closure); if a future reader wants tighter error bars on a specific
+    /// stream cell, re-run it at a few more seeds by hand (see
+    /// `report_vortex_feedback_probes` A1 for the observed seed spread).
+    ///
+    /// Print-only for the stream rows (this is a measurement, not a claim);
+    /// the control row gets the same soft-assertion sanity check
+    /// `report_spin_equilibrium` uses (electron ~0.065 occluded equilibrium,
+    /// baryons near the TRUE zero).
+    #[test]
+    #[ignore]
+    fn report_vortex_feedback() {
+        const DURATION: f64 = 3000.0; // natural time units, per row
+        const SEED: u64 = 0xC0FF_EE12_3456_789A;
+
+        // Tick both fields on the same held particle for a fixed PHYSICAL
+        // duration (steps = DURATION / dt — dt varies per row with total
+        // flux, so a fixed step count would give rows different physical
+        // durations; see the doc comment), then report (tail mean, tail std,
+        // transmuted) over the last 20% of the run. `theta_deg`/`p_s` only
+        // matter when `f_s > 0`; pass anything for the control row (f_s = 0
+        // means the stream field contributes nothing).
+        let settle = |make: &dyn Fn() -> CalibrationParticle,
+                      theta_deg: f64,
+                      p_s: f64,
+                      f_a: f64,
+                      f_s: f64|
+         -> (f64, f64, bool) {
+            let steps = (DURATION / vortex_dt(f_a, f_s)).round() as usize;
+            let (mean, std, tr, _blocks) = settle_probe(make, theta_deg, p_s, f_a, f_s, steps, SEED, true, 1);
+            (mean, std, tr)
+        };
+
+        let specs = vortex_specs();
+
+        println!("\n=== report_vortex_feedback ===");
+        println!(
+            "lattice hold: position/lin_velocity/ang_velocity/orientation reset every step; only outer_spin is free."
+        );
+        println!(
+            "seed=0x{:X}  duration={} natural time units per row (steps = duration/dt; dt varies with total flux)",
+            SEED, DURATION
+        );
+        println!(
+            "WARNING (theta=0 rows): at exactly axial incidence dir.dot(t_hat) == +/-0.0, so DirRelSign's"
+        );
+        println!(
+            "  chi_eff = chirality * (-dir.dot(t_hat)).signum() evaluates signum on an IEEE signed zero /"
+        );
+        println!(
+            "  fp residue -- a floating-point knife edge, NOT geometry. Confirmed by report_vortex_feedback_probes:"
+        );
+        println!(
+            "  B3 (per-photon delta sign at exact pole incidence is set by fp zero-sign bookkeeping),"
+        );
+        println!(
+            "  B1 (theta=180 does not mirror), B2 (theta=1/5 deg do not connect continuously to the axis)."
+        );
+        println!(
+            "  theta=0 rows are NOT trustworthy physics until the axial-incidence rule is decided"
+        );
+        println!(
+            "  (dead-zone vs chirality-signed azimuthal push) -- a user physics decision, deliberately"
+        );
+        println!(
+            "  NOT wired here since apply_photon is the signed-off CM-2 rule."
+        );
+
+        let stream_cells: [(f64, f64); 3] = [(200.0, 200.0), (200.0, 800.0), (0.0, 200.0)];
+        let thetas = [0.0, 90.0];
+        let p_streams = [2.0 / 3.0, 1.0];
+
+        for spec in &specs {
+            println!(
+                "\n-- {} --\n{:>10} {:>8} {:>8} {:>8} {:>16} {:>12} {:>12}",
+                spec.label, "theta_deg", "p_s", "F_a", "F_s", "settled_mean", "tail_std", "transmuted"
+            );
+
+            // Control row: F_a=200, F_s=0.
+            let (ctrl_mean, ctrl_std, ctrl_tr) = settle(&spec.make, 0.0, 2.0 / 3.0, 200.0, 0.0);
+            println!(
+                "{:>10} {:>8} {:>8.1} {:>8.1} {:>16.6} {:>12.6} {:>12}",
+                "--", "--", 200.0, 0.0, ctrl_mean, ctrl_std, if ctrl_tr { "YES" } else { "no" }
+            );
+            if spec.label == "electron" {
+                assert!(
+                    (0.03..0.10).contains(&ctrl_mean),
+                    "electron control settled_mean {} should land in the known occluded equilibrium 0.03..0.10",
+                    ctrl_mean
+                );
+            } else {
+                assert!(
+                    ctrl_mean.abs() < 0.05,
+                    "{} control settled_mean {} should be near the baryon TRUE zero (|mean|<0.05)",
+                    spec.label, ctrl_mean
+                );
+            }
+
+            for &theta_deg in &thetas {
+                for &p_s in &p_streams {
+                    for &(f_a, f_s) in &stream_cells {
+                        let (mean, std, tr) = settle(&spec.make, theta_deg, p_s, f_a, f_s);
+                        println!(
+                            "{:>10.1} {:>8.4} {:>8.1} {:>8.1} {:>16.6} {:>12.6} {:>12}",
+                            theta_deg, p_s, f_a, f_s, mean, std, if tr { "YES" } else { "no" }
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Print a `block_means` slice (from `settle_probe`) as one line of
+    /// successive chunk means spanning the whole run, indexed from 0.
+    fn print_blocks(blocks: &[f64]) {
+        print!("  block means (whole-run chunks):");
+        for (i, b) in blocks.iter().enumerate() {
+            print!(" [{}]={:.6}", i, b);
+        }
+        println!();
+    }
+
+    /// PROBES (ignored by default) for two anomalies surfaced by the first
+    /// `report_vortex_feedback` run — see that test's printed rows for the
+    /// raw numbers being interrogated here. Reuses `vortex_specs`/
+    /// `settle_probe` (factored out of `report_vortex_feedback` for this
+    /// purpose; that test's own output is unchanged).
+    ///
+    /// ANOMALY A: proton, theta=90 (stream perpendicular to pole), settles at
+    /// a nonzero value (+0.417 at F_a=F_s=200) REGARDLESS of stream
+    /// chirality mix (p_s=2/3 vs 1.0 identical to 4 decimals) — meaning the
+    /// driver is the chirality-blind catch-weighted Newtonian term (1), not
+    /// the gear term (2) (whose proton `gear_efficiency` is 1/16385).
+    /// Stranger: F_a=200,F_s=800 settles at +0.149 and pure-stream
+    /// F_a=0,F_s=200 at -0.038 — non-monotonic in stream flux. Candidate
+    /// explanations: (1) frozen/slow swing-phase artifact at low spin turning
+    /// the beam into a quasi-static coherent windmill torque, (2)
+    /// occlusion-sampling asymmetry, (3) single-seed fluke, (4) unsettled
+    /// transient (different dt per row => different physical duration at
+    /// fixed step count).
+    ///
+    /// ANOMALY B: theta=0 exact pole-on incidence puts `dir.dot(t_hat) ==
+    /// +/-0.0` exactly in `apply_photon`'s `chi_eff = chirality *
+    /// (-dir.dot(t_hat)).signum()` term. Rust's `f64::signum` returns +1.0 for
+    /// +0.0 and -1.0 for -0.0 (IEEE signed-zero semantics), so the measured
+    /// electron plunge to -1 under a coherent axial stream may be picking its
+    /// sign from floating-point zero-sign bookkeeping rather than physics.
+    #[test]
+    #[ignore]
+    fn report_vortex_feedback_probes() {
+        println!("\n=== report_vortex_feedback_probes ===");
+        println!("ANOMALY A -- proton, theta=90, chirality-blind pump: settles nonzero (+0.417 at F_a=F_s=200 in the original run) regardless of stream chirality mix, and non-monotonic in stream flux (F_a=200,F_s=800 -> +0.149; F_a=0,F_s=200 -> -0.038).");
+        println!("  A1 seed sweep at (F_a,F_s)=(200,200)          -- is +0.417 a stable attractor, or seed/frozen-phase noise?");
+        println!("  A2 occlusion=false on BOTH fields, same cell   -- is the effect occlusion-sampling asymmetry?");
+        println!("  A3 same cell, steps=600000 (4x), block means   -- is +0.417 an equilibrium or a slow transient?");
+        println!("  A4 (200,800) and (0,200) at steps=600000       -- does the non-monotonic pattern survive a 4x-longer run?");
+        println!("ANOMALY B -- theta=0 axial pump rides dir.dot(t_hat)==+/-0.0 into signum(); electron (gear 1/9) is the sensitive detector.");
+        println!("  B1 theta=180 (beam along -pole)                -- does the settled spin flip sign?");
+        println!("  B2 theta=1,5,15,30 degrees                     -- smooth decay off-axis, or a discontinuous jump at 0?");
+        println!("  B3 direct apply_photon unit probe at exact pole incidence and +/-1e-6 rad off it -- pins whether the axial sign is signed-zero semantics and whether it's discontinuous across the axis.");
+
+        let specs = vortex_specs();
+        let proton = specs.iter().find(|s| s.label == "proton").expect("proton spec");
+        let electron = specs.iter().find(|s| s.label == "electron").expect("electron spec");
+
+        const SEED0: u64 = 0xC0FF_EE12_3456_789A; // same seed report_vortex_feedback uses
+        const STEPS: usize = 150_000;
+
+        // --- A1: seed sweep, proton, theta=90, p_s=2/3, F_a=F_s=200 ---
+        println!("\n-- A1: proton theta=90 p_s=2/3 F_a=200 F_s=200, seed sweep (steps={}) --", STEPS);
+        println!("{:>22} {:>16} {:>12}", "seed", "settled_mean", "tail_std");
+        let seeds: [u64; 4] = [
+            SEED0,
+            0x1111_1111_1111_1111,
+            0x9E37_79B9_7F4A_7C15,
+            0xABCD_EF01_2345_6789,
+        ];
+        let mut a1_means = Vec::new();
+        for &seed in &seeds {
+            let (mean, std, _tr, _blocks) = settle_probe(&proton.make, 90.0, 2.0 / 3.0, 200.0, 200.0, STEPS, seed, true, 1);
+            println!("{:>22} {:>16.6} {:>12.6}", format!("0x{:X}", seed), mean, std);
+            a1_means.push(mean);
+        }
+        let a1_max = a1_means.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let a1_min = a1_means.iter().cloned().fold(f64::INFINITY, f64::min);
+        println!("spread across seeds (max-min) = {:.6}", a1_max - a1_min);
+
+        // --- A2: occlusion off on BOTH fields, 2 seeds ---
+        println!("\n-- A2: proton theta=90 p_s=2/3 F_a=200 F_s=200, occlusion=false on BOTH fields (steps={}) --", STEPS);
+        println!("{:>22} {:>16} {:>12}", "seed", "settled_mean", "tail_std");
+        for &seed in &seeds[0..2] {
+            let (mean, std, _tr, _blocks) = settle_probe(&proton.make, 90.0, 2.0 / 3.0, 200.0, 200.0, STEPS, seed, false, 1);
+            println!("{:>22} {:>16.6} {:>12.6}", format!("0x{:X}", seed), mean, std);
+        }
+
+        // --- A3: settling check, one seed, steps=600_000, block means ---
+        println!("\n-- A3: proton theta=90 p_s=2/3 F_a=200 F_s=200, steps=600000, seed=0x{:X} --", SEED0);
+        let (mean_a3, std_a3, tr_a3, blocks_a3) =
+            settle_probe(&proton.make, 90.0, 2.0 / 3.0, 200.0, 200.0, 600_000, SEED0, true, 10);
+        print_blocks(&blocks_a3);
+        println!("  tail(last 20%) mean={:.6} std={:.6} transmuted={}", mean_a3, std_a3, tr_a3);
+
+        // --- A4: (200,800) and (0,200) at steps=600_000, one seed, block means ---
+        for &(f_a, f_s) in &[(200.0, 800.0), (0.0, 200.0)] {
+            println!(
+                "\n-- A4: proton theta=90 p_s=2/3 F_a={:.1} F_s={:.1}, steps=600000, seed=0x{:X} --",
+                f_a, f_s, SEED0
+            );
+            let (mean, std, tr, blocks) = settle_probe(&proton.make, 90.0, 2.0 / 3.0, f_a, f_s, 600_000, SEED0, true, 10);
+            print_blocks(&blocks);
+            println!("  tail(last 20%) mean={:.6} std={:.6} transmuted={}", mean, std, tr);
+        }
+
+        // --- B1: theta=180, electron, pure stream ---
+        println!("\n-- B1: electron pure stream F_a=0 F_s=200 p_s=1.0 theta=180, seed=0x{:X} (steps={}) --", SEED0, STEPS);
+        let (mean_b1, std_b1, tr_b1, _blocks) = settle_probe(&electron.make, 180.0, 1.0, 0.0, 200.0, STEPS, SEED0, true, 1);
+        println!(
+            "  settled_mean={:.6} tail_std={:.6} transmuted={}",
+            mean_b1, std_b1, tr_b1
+        );
+
+        // --- B2: theta = 1, 5, 15, 30 degrees, electron, pure stream ---
+        println!("\n-- B2: electron pure stream F_a=0 F_s=200 p_s=1.0, off-axis sweep, seed=0x{:X} (steps={}) --", SEED0, STEPS);
+        println!("{:>10} {:>16} {:>12} {:>12}", "theta_deg", "settled_mean", "tail_std", "transmuted");
+        for &theta in &[1.0, 5.0, 15.0, 30.0] {
+            let (mean, std, tr, _blocks) = settle_probe(&electron.make, theta, 1.0, 0.0, 200.0, STEPS, SEED0, true, 1);
+            println!(
+                "{:>10.1} {:>16.6} {:>12.6} {:>12}",
+                theta,
+                mean,
+                std,
+                if tr { "YES" } else { "no" }
+            );
+        }
+
+        // --- B3: direct apply_photon unit probe (plain code, not a sim) ---
+        println!("\n-- B3: direct apply_photon unit probe -- fresh electron at rest, chirality=+1, momentum=0.02 --");
+        let probe_pole = (electron.make)().pole_axis();
+        // Same Gram-Schmidt e1 construction settle_probe uses.
+        let mut probe_e1 = DVec3::X - probe_pole * probe_pole.dot(DVec3::X);
+        if probe_e1.length_squared() < 1e-6 {
+            probe_e1 = DVec3::Y - probe_pole * probe_pole.dot(DVec3::Y);
+        }
+        let probe_e1 = probe_e1.normalize_or_zero();
+
+        let apply_probe = |dir: DVec3| -> f64 {
+            let mut p = (electron.make)();
+            let contact = p.world_points()[0];
+            let before = p.outer_spin;
+            p.apply_photon(contact, dir, 1.0, 0.02);
+            p.outer_spin - before
+        };
+
+        let eps = 1e-6_f64;
+        let dir_exact = probe_pole;
+        let dir_plus = (probe_pole * eps.cos() + probe_e1 * eps.sin()).normalize_or_zero();
+        let dir_minus = (probe_pole * eps.cos() - probe_e1 * eps.sin()).normalize_or_zero();
+
+        println!("{:<32} {:>16} {:>6}", "dir", "delta_outer_spin", "sign");
+        for (label, dir) in [
+            ("exact pole (dir == pole)", dir_exact),
+            ("+1e-6 rad toward +e1", dir_plus),
+            ("-1e-6 rad toward -e1", dir_minus),
+        ] {
+            let delta = apply_probe(dir);
+            println!("{:<32} {:>16.6e} {:>6.1}", label, delta, delta.signum());
+        }
+    }
+
+    /// Natural log of `exp(a) + exp(b)` without overflow — the log-sum-exp
+    /// trick, used throughout `report_neutron_first_passage`'s MFPT
+    /// integral so the astronomically large `Phi(y)` never gets exponentiated
+    /// directly. `f64::NEG_INFINITY` (log of zero) is handled explicitly so
+    /// the empty-integral base case (`Inner(0) = 0`) composes cleanly.
+    fn logaddexp(a: f64, b: f64) -> f64 {
+        if a == f64::NEG_INFINITY {
+            return b;
+        }
+        if b == f64::NEG_INFINITY {
+            return a;
+        }
+        let m = a.max(b);
+        m + ((a - m).exp() + (b - m).exp()).ln()
+    }
+
+    /// Measures the per-contact drift `mu` and variance `sigma2` of
+    /// `outer_spin` at a fixed value `s`, over `n` independent photon
+    /// contacts drawn from Earth-ambient statistics (isotropic direction,
+    /// chirality +1 w.p. 2/3, contact chosen via `field.sample_contact`'s
+    /// occlusion-weighted rejection sampling). Each trial restores
+    /// `(outer_spin, lin_velocity, ang_velocity, transmuted)` afterward so
+    /// the `n` trials are i.i.d. draws from the SAME starting state (`s`),
+    /// not a running walk — this is what makes `mu`/`sigma2` a per-contact
+    /// statistic usable in the Fokker-Planck escape formula rather than an
+    /// accumulated trajectory.
+    fn measure_drift(
+        p: &mut CalibrationParticle,
+        pts: &[DVec3],
+        field: &AmbientField,
+        s: f64,
+        momentum: f64,
+        rng: &mut u64,
+        n: u64,
+    ) -> (f64, f64) {
+        let mut sum = 0.0;
+        let mut sumsq = 0.0;
+        for _ in 0..n {
+            let saved_spin = p.outer_spin;
+            let saved_lin = p.lin_velocity;
+            let saved_ang = p.ang_velocity;
+            let saved_transmuted = p.transmuted;
+            p.outer_spin = s;
+            let dir = rand_unit_vec(rng);
+            let chirality = if xorshift64(rng) < 2.0 / 3.0 { 1.0 } else { -1.0 };
+            let idx = field.sample_contact(pts, p.position, dir, rng);
+            let contact = pts[idx];
+            p.apply_photon(contact, dir, chirality, momentum);
+            let delta = p.outer_spin - s;
+            sum += delta;
+            sumsq += delta * delta;
+            p.outer_spin = saved_spin;
+            p.lin_velocity = saved_lin;
+            p.ang_velocity = saved_ang;
+            p.transmuted = saved_transmuted;
+        }
+        let mean = sum / n as f64;
+        let var = (sumsq / n as f64 - mean * mean).max(0.0);
+        (mean, var)
+    }
+
+    /// REPORT (ignored by default): can ambient bombardment ALONE pump the
+    /// neutron's live swing from rest to the c barrier (transmutation) on the
+    /// 15-minute free-neutron lifetime scale — and does the answer
+    /// discriminate the `1/1025` vs `1/16385` ladder rung?
+    ///
+    /// Direct simulation is impossible (~1e14 real contacts at the true
+    /// recycle flux), so this measures the per-contact drift/diffusion of
+    /// `outer_spin` at 20 fixed points s ∈ {0.00, 0.05, ..., 0.95} and
+    /// computes the mean first-passage time (MFPT) via the standard 1-D
+    /// Fokker-Planck escape formula (reflecting at s=0, absorbing at s=1):
+    /// `Phi(y) = -∫_0^y 2·mu(s)/sigma2(s) ds`,
+    /// `Inner(y) = ∫_0^y exp(-Phi(z))·(2/sigma2(z)) dz`,
+    /// `T = ∫_0^1 exp(Phi(y))·Inner(y) dy` (trapezoid on the grid, holding
+    /// mu/sigma2 constant from s=0.95 out to s=1.0). `Phi` reaches
+    /// astronomical magnitude (the ladder-scaled per-photon kick is minute
+    /// against the baryon's geometric inertia), so every exponential in the
+    /// integral is carried in log space via `logaddexp` — never
+    /// exponentiated directly — until the very end.
+    ///
+    /// IMPORTANT (why this is the right test of the model, not a bug if T is
+    /// huge): Mathis says beta decay is NOT spontaneous ambient diffusion —
+    /// quark.html: the neutron "gets hit by a positron in a glancing blow,
+    /// reversing the z-spin"; weak2.html: beta decay is a discrete collision
+    /// event, the charge field only mediates the after-effects; deut.pdf
+    /// says the same. So if MFPT >> 15 min for BOTH ladder rungs, the model
+    /// AGREES with the papers (ambient diffusion cannot decay a neutron on
+    /// its own; decay requires the discrete resonant hit) and the 15-minute
+    /// lifetime CANNOT be used to discriminate the two rung candidates — this
+    /// verdict is printed explicitly either way, it is not assumed.
+    #[test]
+    #[ignore]
+    fn report_neutron_first_passage() {
+        let neutron_mass_kg = units::NEUTRON_MASS_KG;
+        let momentum = units::photon_momentum_natural(neutron_mass_kg);
+        let flux_hz = units::recycle_flux_hz(neutron_mass_kg);
+        println!("\n=== report_neutron_first_passage ===");
+        println!(
+            "per-photon momentum (natural, true, from photon_momentum_natural(neutron_mass_kg)) = {:.6e}",
+            momentum
+        );
+        println!("neutron recycle flux (Earth/Room density) = {:.6e} contacts/s", flux_hz);
+        println!(
+            "15-minute line: 900 s => log10(seconds) = {:.4}, contacts at that flux = {:.4e} (log10 = {:.4})",
+            900f64.log10(),
+            900.0 * flux_hz,
+            (900.0 * flux_hz).log10()
+        );
+
+        // Earth-ambient statistics: isotropic direction, chirality +1 w.p.
+        // 2/3. `sample_contact`'s occlusion path is invoked via a throwaway
+        // field (flux/momentum/time_scale unused by that call).
+        let occ_field = AmbientField {
+            flux: 0.0,
+            photon_fraction: 2.0 / 3.0,
+            direction_bias: None,
+            momentum,
+            time_scale: 1.0,
+            occlusion: true,
+        };
+
+        let s_grid: Vec<f64> = (0..20).map(|i| i as f64 * 0.05).collect(); // 0.00 .. 0.95
+
+        let gears: [(&str, f64); 2] = [("1/1025", 1.0 / 1025.0), ("1/16385", 1.0 / 16385.0)];
+
+        let mut verdict_rows: Vec<(String, f64, f64)> = Vec::new(); // (gear_label, log10_T_contacts, log10_T_seconds)
+
+        for &(gear_label, gear) in &gears {
+            let mut p = CalibrationParticle::new(bake_loop(11, 256), 1.0);
+            p.gear_efficiency = gear;
+            // Geometry is constant across the whole grid: p.position stays
+            // ZERO, p.orientation stays IDENTITY, p.swing_phase stays 0.0
+            // (apply_photon never touches it; measure_drift restores
+            // everything else it touches) for the entire run, so computing
+            // world_points() once here is exact, not an approximation.
+            let pts = p.world_points();
+
+            let mut rng: u64 = 0xF125_7A55_A9E0_7017u64 ^ (gear.to_bits());
+
+            let mut mus = Vec::with_capacity(s_grid.len());
+            let mut sigma2s = Vec::with_capacity(s_grid.len());
+            let mut reran = Vec::with_capacity(s_grid.len());
+
+            println!("\n-- neutron, gear_efficiency = {} ({:.6e}) --", gear_label, gear);
+            println!("{:>6} {:>16} {:>16} {:>16} {:>10} {:>10}", "s", "mu", "sigma2", "SEM", "|mu|/sigma", "note");
+
+            for &s in &s_grid {
+                let n: u64 = 1_000_000;
+                let (mut mu, mut sigma2) = measure_drift(&mut p, &pts, &occ_field, s, momentum, &mut rng, n);
+                let mut sem = (sigma2 / n as f64).sqrt();
+                let mut note = "";
+                if s >= 0.2 && mu.abs() < 3.0 * sem {
+                    let n2: u64 = 4_000_000;
+                    let (mu2, sigma2_2) = measure_drift(&mut p, &pts, &occ_field, s, momentum, &mut rng, n2);
+                    mu = mu2;
+                    sigma2 = sigma2_2;
+                    sem = (sigma2 / n2 as f64).sqrt();
+                    note = "re-run @ N=4e6";
+                }
+                assert!(sigma2 > 0.0, "sigma2 should be > 0 at s={}, got {}", s, sigma2);
+                if s == 0.0 {
+                    assert!(
+                        mu.abs() < 3.0 * sem,
+                        "mu(0)={} should be within 3*SEM={} of 0 (population cancellation at rest, DirRelSign)",
+                        mu, 3.0 * sem
+                    );
+                }
+                let sigma = sigma2.sqrt();
+                println!(
+                    "{:>6.2} {:>16.6e} {:>16.6e} {:>16.6e} {:>10.4} {:>10}",
+                    s, mu, sigma2, sem, mu.abs() / sigma, note
+                );
+                mus.push(mu);
+                sigma2s.push(sigma2);
+                reran.push(note.to_string());
+            }
+
+            // Extend to s=1.0 holding mu/sigma2 constant from s=0.95.
+            let mut s_ext = s_grid.clone();
+            s_ext.push(1.0);
+            let mut mu_ext = mus.clone();
+            mu_ext.push(*mus.last().unwrap());
+            let mut sigma2_ext = sigma2s.clone();
+            sigma2_ext.push(*sigma2s.last().unwrap());
+
+            let m = s_ext.len();
+            // Phi(y_i) via cumulative trapezoid of g(s) = 2*mu(s)/sigma2(s);
+            // plain f64 (not log-space) since Phi is a SUM, not a product —
+            // only the exponentials of it need log-space handling.
+            let mut phi = vec![0.0f64; m];
+            for i in 1..m {
+                let g_prev = 2.0 * mu_ext[i - 1] / sigma2_ext[i - 1];
+                let g_cur = 2.0 * mu_ext[i] / sigma2_ext[i];
+                let width = s_ext[i] - s_ext[i - 1];
+                phi[i] = phi[i - 1] - 0.5 * width * (g_prev + g_cur);
+            }
+
+            // log(Inner(y_i)) via cumulative trapezoid in log space.
+            // term_log[i] = log( exp(-Phi(z_i)) * 2/sigma2(z_i) ).
+            let term_log: Vec<f64> = (0..m).map(|i| -phi[i] + (2.0 / sigma2_ext[i]).ln()).collect();
+            let mut log_inner = vec![f64::NEG_INFINITY; m];
+            for i in 1..m {
+                let width = s_ext[i] - s_ext[i - 1];
+                let contrib = (0.5 * width).ln() + logaddexp(term_log[i - 1], term_log[i]);
+                log_inner[i] = logaddexp(log_inner[i - 1], contrib);
+            }
+
+            // log(T) via cumulative trapezoid in log space of
+            // exp(Phi(y))*Inner(y).
+            let log_outer_term: Vec<f64> = (0..m).map(|i| phi[i] + log_inner[i]).collect();
+            let mut log_t = f64::NEG_INFINITY;
+            for i in 1..m {
+                let width = s_ext[i] - s_ext[i - 1];
+                let contrib = (0.5 * width).ln() + logaddexp(log_outer_term[i - 1], log_outer_term[i]);
+                log_t = logaddexp(log_t, contrib);
+            }
+
+            let log10_t_contacts = log_t / std::f64::consts::LN_10;
+            let log10_flux = flux_hz.log10();
+            let log10_t_seconds = log10_t_contacts - log10_flux;
+
+            // Zero-drift diffusion floor: T_floor ~= 1 / mean(sigma2).
+            let mean_sigma2 = sigma2s.iter().sum::<f64>() / sigma2s.len() as f64;
+            let log10_t_floor_contacts = -mean_sigma2.log10();
+
+            println!(
+                "\n{} verdict: log10(T_contacts) = {:.4}   log10(T_seconds) = {:.4}   log10(T_floor_contacts, zero-drift) = {:.4}",
+                gear_label, log10_t_contacts, log10_t_seconds, log10_t_floor_contacts
+            );
+            verdict_rows.push((gear_label.to_string(), log10_t_contacts, log10_t_seconds));
+        }
+
+        println!("\n-- summary --");
+        println!("15-minute line: log10(T_seconds) ≈ {:.4} (900 s)", 900f64.log10());
+        for (label, log10_c, log10_s) in &verdict_rows {
+            println!("  gear {:>8}: log10(T_contacts) = {:>10.4}  log10(T_seconds) = {:>10.4}", label, log10_c, log10_s);
+        }
+
+        const MARGIN: f64 = 1.0; // one order of magnitude either side of the 15-min line
+        let line = 900f64.log10();
+        let side = |log10_s: f64| -> i32 {
+            if log10_s > line + MARGIN {
+                1 // above (slower than 15 min)
+            } else if log10_s < line - MARGIN {
+                -1 // below (faster than 15 min)
+            } else {
+                0 // borderline
+            }
+        };
+        let sides: Vec<i32> = verdict_rows.iter().map(|(_, _, s)| side(*s)).collect();
+        let verdict = if sides.iter().all(|&x| x == 1) {
+            "BOTH >> 15 min: ambient diffusion cannot decay the neutron -- consistent with Mathis positron-hit mechanism (quark.html/weak2.html); lifetime does NOT discriminate the rungs"
+        } else if sides.iter().all(|&x| x == -1) {
+            "BOTH << 15 min: model pumps too hot"
+        } else if sides.contains(&1) && sides.contains(&-1) {
+            "DISCRIMINATES (one side each)"
+        } else {
+            "BORDERLINE: at least one rung lands within an order of magnitude of the 15-minute line -- inconclusive at this grid resolution"
+        };
+        println!("\nVERDICT: {}", verdict);
+    }
 }
