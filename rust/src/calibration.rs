@@ -25,6 +25,25 @@ use crate::hitbox::{bake_loop, recommended_samples, BakedLoop};
 use crate::types::level_amplitude;
 use crate::units;
 
+/// CM-2 self-limiter, spin-energy-ladder rung efficiencies (elecpro.html /
+/// higgs3.pdf: the stacked-spin energy ladder `1, 9, 65, 1025, 16385` for
+/// no-spin -> axial -> x -> y -> z; a photon meshing with a target far up the
+/// ladder transfers `E_photon / E_target`). Measured and locked by the CM-2
+/// self-limiter campaign (commits 663d8d8 "Pump self-limiter measured:
+/// ladder efficiency x direction-relative sign wins" and 6301db2 "Critical
+/// gear efficiency measured: baryon rest is a TRUE zero"): under the
+/// locked-platform reading (the baked levels are locked in and deliver the
+/// full force of THEIR ladder rung; only the live top swing is the free
+/// variable), the electron's rung is the axial term (1/9), the proton's is
+/// the full stacked sum (1/16385), and the neutron's is the next rung down
+/// (1/1025) — a locked-platform CANDIDATE, discriminable from 1/16385 later
+/// by a decay first-passage test (see docs/FIELD_CALIBRATION_MODE.md).
+pub const GEAR_LADDER_ELECTRON: f64 = 1.0 / 9.0;
+/// See [`GEAR_LADDER_ELECTRON`].
+pub const GEAR_LADDER_PROTON: f64 = 1.0 / 16385.0;
+/// See [`GEAR_LADDER_ELECTRON`].
+pub const GEAR_LADDER_NEUTRON: f64 = 1.0 / 1025.0;
+
 pub struct CalibrationParticle {
     pub hitbox: BakedLoop,
     /// Center of mass, natural units.
@@ -44,6 +63,16 @@ pub struct CalibrationParticle {
     /// Lumped coefficient routing pole-axis torque into `outer_spin`. MEASURED
     /// by the calibration mode (decision 1); 1.0 is a scaffold placeholder.
     pub spin_coupling: f64,
+    /// Dimensionless `E_photon / E_platform` gear coupling for `apply_photon`
+    /// term 2 (the DirRelSign gear pump). `1.0` is the raw/per-unit value
+    /// (kept by `new` so diagnostics measuring the bare geometric channel are
+    /// unaffected); the `proton`/`neutron`/`electron` constructors install
+    /// the sourced spin-energy-ladder rung (`GEAR_LADDER_*`, see their doc
+    /// comment) instead. This is a property of the TARGET particle's own
+    /// locked platform — not the field — which is why it lives here and not
+    /// on `AmbientField` (CM-2 self-limiter campaign, commits 663d8d8 /
+    /// 6301db2).
+    pub gear_efficiency: f64,
     /// Set once `|outer_spin|` reaches c — the next spin level would unlock.
     pub transmuted: bool,
     /// orbit_radius of the swing level, used to convert `outer_spin` (fraction
@@ -55,24 +84,33 @@ pub struct CalibrationParticle {
     i_transverse: f64,
 }
 
-/// CM-2 gear-pump SELF-LIMITER candidates under measurement (see the session
-/// task this was written for; sourced docs: elecpro.html/higgs3.pdf/elecrad.pdf
-/// for the spin-energy ladder that motivates `gear_efficiency` values fed to
-/// `apply_photon`; pole.pdf/grav4.pdf/bright.pdf for direction-relative
-/// chirality). These variants do NOT change `apply_photon` — they are read
-/// through [`CalibrationParticle::gear_pump_variant_torque`] only, to measure
-/// which (if any) makes the gear pump self-limit against the drag channel
-/// (`swing_drag_torque`) at Earth mix without an externally-imposed ladder
-/// efficiency.
+/// CM-2 gear-pump SELF-LIMITER candidates (see the measurement campaign this
+/// was written for; sourced docs: elecpro.html/higgs3.pdf/elecrad.pdf for the
+/// spin-energy ladder that motivates `CalibrationParticle::gear_efficiency`
+/// values fed to `apply_photon`; pole.pdf/grav4.pdf/bright.pdf for
+/// direction-relative chirality). This machinery stays measurement-only —
+/// `gear_pump_variant_torque` reads it but does not itself drive
+/// `apply_photon` — even though the campaign's VERDICT (`DirRelSign` × ladder
+/// efficiency, commits 663d8d8/6301db2) IS now wired into `apply_photon`
+/// directly (see that method's doc comment). Kept around so future rule
+/// candidates can still be measured against the wired one without touching
+/// the collision code.
 #[derive(Clone, Copy)]
 pub enum PumpRule {
-    /// Today's `apply_photon` rule: `w_sign = χ`, `w_mag = 1`. Reproduces
-    /// `swing_pump_torque · (2·photon_fraction − 1)` exactly.
+    /// The PRE-WIRING `apply_photon` rule (superseded by `DirRelSign`, now
+    /// wired — see `apply_photon`'s doc comment): `w_sign = χ`, `w_mag = 1`.
+    /// Reproduces `swing_pump_torque · (2·photon_fraction − 1)` exactly.
+    /// `swing_pump_torque` itself measures term 2's UNSIGNED geometric
+    /// channel only (no chirality, no DirRelSign sign flip) — a diagnostic
+    /// primitive, not a claim about which rule is live.
     Baseline,
     /// Model B, b1 (sign only): chirality becomes DIRECTION-RELATIVE —
     /// `w_sign = χ·sgn(−dir·t̂)`, `w_mag = 1`. `t̂` is the ACTUAL signed swing
     /// tangent (`swing_tangent`), falling back to the geometric positive
     /// tangent `t_pos` at rest (documented in `gear_pump_variant_torque`).
+    /// NOW WIRED into `apply_photon` term 2 (CM-2 self-limiter campaign,
+    /// commits 663d8d8/6301db2) — this variant is kept here as the
+    /// measurement-only twin used by the reports below.
     DirRelSign,
     /// Model B, b2 (magnitude only): `w_sign = χ`, `w_mag = |dir − v_surf|`
     /// (`v_surf` = swing surface velocity, same as `swing_drag_torque`'s `v`).
@@ -105,6 +143,7 @@ impl CalibrationParticle {
             swing_phase: 0.0,
             mass,
             spin_coupling: 1.0,
+            gear_efficiency: 1.0,
             transmuted: false,
             swing_orbit_radius,
             i_spin,
@@ -112,19 +151,29 @@ impl CalibrationParticle {
         }
     }
 
-    /// Convenience: a proton (L12 loop, L13 precession swing).
+    /// Convenience: a proton (L12 loop, L13 precession swing). Installs the
+    /// sourced ladder efficiency [`GEAR_LADDER_PROTON`] (see that const's doc
+    /// comment) in place of the raw/per-unit default `new` ships.
     pub fn proton(mass: f64) -> Self {
-        Self::new(bake_loop(12, recommended_samples(12)), mass)
+        let mut p = Self::new(bake_loop(12, recommended_samples(12)), mass);
+        p.gear_efficiency = GEAR_LADDER_PROTON;
+        p
     }
 
     /// Convenience: a neutron (L11 loop, non-relativistic L12 orbital swing).
+    /// Installs [`GEAR_LADDER_NEUTRON`].
     pub fn neutron(mass: f64) -> Self {
-        Self::new(bake_loop(11, recommended_samples(11)), mass)
+        let mut p = Self::new(bake_loop(11, recommended_samples(11)), mass);
+        p.gear_efficiency = GEAR_LADDER_NEUTRON;
+        p
     }
 
-    /// Convenience: an electron (L8 loop, L9 precession swing).
+    /// Convenience: an electron (L8 loop, L9 precession swing). Installs
+    /// [`GEAR_LADDER_ELECTRON`].
     pub fn electron(mass: f64) -> Self {
-        Self::new(bake_loop(8, recommended_samples(8)), mass)
+        let mut p = Self::new(bake_loop(8, recommended_samples(8)), mass);
+        p.gear_efficiency = GEAR_LADDER_ELECTRON;
+        p
     }
 
     /// Inertia about the pole axis and about a transverse COM axis, computed
@@ -222,17 +271,35 @@ impl CalibrationParticle {
     ///      (swing, tumble, drift) feels a drag toward the field rest frame.
     ///      This term IS model A.
     ///   2. Gear tangential transfer — the photon's own momentum redirected
-    ///      along the surface tangent, signed by the chirality mesh and
-    ///      scaled by the catch factor `f`. This term IS the chirality pump,
-    ///      now carrying its own lever (`r × t̂`) rather than a lumped gain.
-    ///
-    /// `gear_efficiency` (dimensionless, ships 1.0 = the uran.pdf-sourced
-    /// value) is kept as a parameter ONLY for ablation experiments — it is
-    /// not a free constant to be tuned, it's a knob to turn the gear term off
-    /// (0.0) for isolation tests.
+    ///      along the surface tangent, scaled by the catch factor `f` and
+    ///      signed by the CM-2 self-limiter rule: DirRelSign × per-particle
+    ///      ladder efficiency (measurement campaign, commits 663d8d8 /
+    ///      6301db2). Chirality alone is no longer the sign channel — the
+    ///      EFFECTIVE chirality is direction-relative
+    ///      (`chi_eff = chirality * (-dir·t̂).signum()`, `t̂` = the actual
+    ///      signed swing tangent, falling back to the geometric positive
+    ///      tangent `t_pos` at rest; pole.pdf/bright.pdf: "a photon going in
+    ///      reverse is automatically an antiphoton"). This exactly mirrors
+    ///      `gear_pump_variant_torque`'s `PumpRule::DirRelSign` arm — see that
+    ///      enum's doc comment for the derivation. Two load-bearing
+    ///      properties fall out of it, both measured, not assumed: the pump
+    ///      is EXACTLY zero at rest in an isotropic field (population
+    ///      cancellation — half the isotropic photons see the fallback
+    ///      tangent as opposing, half as co-moving, in equal measure), and it
+    ///      PLATEAUS once spinning rather than growing without bound. The
+    ///      magnitude channel is `self.gear_efficiency`, the per-particle
+    ///      `E_photon / E_platform` spin-energy-ladder rung (elecpro.html /
+    ///      higgs3.pdf, locked-platform reading — see `GEAR_LADDER_*`'s doc
+    ///      comment): `proton`/`neutron`/`electron` install the sourced
+    ///      value; measured consequence (6301db2) is that the proton and
+    ///      neutron rungs (1/16385, 1/1025) sit BELOW `eff_crit`, the
+    ///      structural threshold below which net torque is negative at every
+    ///      `s > 0` — baryon rest is a TRUE zero, not a value too small to
+    ///      print, at every ambient mix up to and including pure photon for
+    ///      the proton.
     ///
     /// `dir` is the photon travel direction; `chirality` ∈ {+1, −1}.
-    pub fn apply_photon(&mut self, contact: DVec3, dir: DVec3, chirality: f64, momentum: f64, gear_efficiency: f64) {
+    pub fn apply_photon(&mut self, contact: DVec3, dir: DVec3, chirality: f64, momentum: f64) {
         let dir = dir.normalize_or_zero();
         let r = contact - self.position;
         let pole = self.pole_axis();
@@ -259,11 +326,15 @@ impl CalibrationParticle {
         // (2) Gear tangential transfer (the chirality pump, uran.pdf): the
         // photon's edge spin delivers a tangential impulse of the SAME
         // momentum magnitude as the linear hit (edge speed = c = travel
-        // speed), along the pole-positive surface tangent, signed by
-        // chirality (inverse-Compton mesh = augment, Compton = cancel),
-        // scaled by the catch factor f (opposing surface catches, co-moving
-        // slips). gear_efficiency ships 1.0 (sourced); parameter kept for
-        // ablation only.
+        // speed), along the pole-positive surface tangent, scaled by the
+        // catch factor f (opposing surface catches, co-moving slips) and
+        // signed by the DirRelSign effective chirality (CM-2 self-limiter,
+        // pole.pdf/bright.pdf, commits 663d8d8/6301db2): `chi_eff = chirality
+        // * (-dir·t_hat).signum()`, t_hat = the actual signed swing tangent
+        // if nonzero, else the geometric positive tangent t_pos (same
+        // fallback `f` uses, mirrors `gear_pump_variant_torque`'s
+        // PumpRule::DirRelSign arm exactly). Magnitude carries
+        // `self.gear_efficiency`, the per-particle ladder rung.
         let rp = r - pole * r.dot(pole);
         let t_pos = pole.cross(rp).normalize_or_zero(); // positive-rotation tangent (NOT signed by current spin)
         if t_pos.length_squared() > 1e-18 {
@@ -273,7 +344,9 @@ impl CalibrationParticle {
             } else {
                 0.5
             };
-            let j_tan = t_pos * (momentum * f * chirality * gear_efficiency);
+            let t_hat = if t_actual.length_squared() > 1e-18 { t_actual } else { t_pos };
+            let chi_eff = chirality * (-dir.dot(t_hat)).signum();
+            let j_tan = t_pos * (momentum * f * chi_eff * self.gear_efficiency);
             let tau_g = r.cross(j_tan);
             let tau_g_pole = tau_g.dot(pole);
             let tau_g_perp = tau_g - pole * tau_g_pole;
@@ -912,9 +985,10 @@ impl FieldPreset {
 /// `photon_fraction` is the photon:antiphoton mix (Earth ≈ 2/3 photon per
 /// PHYSICS_REFERENCE §5; 0.5 = balanced void), and `direction_bias` makes the
 /// field directional (None = isotropic). `momentum` is the sourced per-photon
-/// impulse magnitude (SI-anchored, see `from_si`); `gear_efficiency` is the
-/// dimensionless uran.pdf-sourced gear-tangent coupling (ships 1.0 — CM-2
-/// paid off the last scaffold constant).
+/// impulse magnitude (SI-anchored, see `from_si`). The CM-2 gear-tangent
+/// coupling no longer lives here — it's `CalibrationParticle::gear_efficiency`
+/// now, a property of the TARGET's locked platform (spin-energy-ladder rung),
+/// not the field (self-limiter campaign, commits 663d8d8/6301db2).
 pub struct AmbientField {
     /// Expected photon contacts per unit time.
     pub flux: f64,
@@ -924,10 +998,6 @@ pub struct AmbientField {
     pub direction_bias: Option<DVec3>,
     /// Per-photon momentum (natural units, placeholder).
     pub momentum: f64,
-    /// Dimensionless gear-tangent efficiency (CM-2, uran.pdf-sourced; ships
-    /// 1.0). Kept as a knob for ablation experiments only — NOT a free
-    /// scaffold constant to be tuned; see `CalibrationParticle::apply_photon`.
-    pub gear_efficiency: f64,
     /// Swing-rate time_scale, matching `CalibrationParticle::integrate`.
     pub time_scale: f64,
     /// When true, `tick` samples contact points by upstream exposure (Lambert
@@ -942,13 +1012,14 @@ pub struct AmbientField {
 /// SI anchoring for an AmbientField (CM-1 second half). The sim can't deliver
 /// ~1e11 contacts/s, so one sim photon stands in for `aggregation` (K) real
 /// photons: `momentum` scales UP by K, the contact rate scales DOWN by K.
-/// `gear_efficiency` does NOT scale with K — it's the dimensionless CM-2
-/// coupling (ships 1.0), and both the pump and drag terms in `apply_photon`
-/// are linear in the SAME `momentum`, so the equilibrium outer_spin is
-/// K-invariant by construction (only noise granularity grows with K —
-/// report_si_calibration checks this empirically). `seconds_per_time_unit`
-/// converts sim time to SI: flux_sim contacts per natural time unit represent
-/// flux_si·density contacts per second.
+/// The CM-2 gear coupling (now `CalibrationParticle::gear_efficiency`, the
+/// particle's sourced ladder rung) does NOT scale with K either — it's
+/// dimensionless and doesn't depend on `momentum` at all — and both the pump
+/// and drag terms in `apply_photon` are linear in the SAME `momentum`, so the
+/// equilibrium outer_spin is K-invariant by construction (only noise
+/// granularity grows with K — report_si_calibration checks this empirically).
+/// `seconds_per_time_unit` converts sim time to SI: flux_sim contacts per
+/// natural time unit represent flux_si·density contacts per second.
 pub struct SiCalibration {
     pub flux_si_hz: f64,
     pub aggregation: f64,
@@ -965,7 +1036,6 @@ impl AmbientField {
             photon_fraction: 2.0 / 3.0,
             direction_bias: None,
             momentum: 0.02,
-            gear_efficiency: 1.0,
             time_scale,
             occlusion: true,
         }
@@ -974,12 +1044,13 @@ impl AmbientField {
     /// Build a field whose magnitudes derive from the sourced SI anchors.
     /// `sim_momentum` picks the working macro-photon impulse (K = sim_momentum
     /// / true momentum); `sim_flux` picks the working contact rate per
-    /// natural time unit. `gear_efficiency` is set to 1.0 (the uran.pdf-sourced
-    /// value) — under the unified apply_photon the gear pump scales with the
-    /// SAME per-photon momentum as everything else, so it needs no separate
-    /// K-scaling: the settled equilibrium is K-invariant BY CONSTRUCTION, not
-    /// by tuning a second aggregated coupling (contrast the old
-    /// `spin_gain_per_photon * aggregation` scheme this replaces).
+    /// natural time unit. The CM-2 gear coupling lives on the particle now
+    /// (`CalibrationParticle::gear_efficiency`, the sourced ladder rung) and
+    /// doesn't scale with K either — under the unified apply_photon the gear
+    /// pump scales with the SAME per-photon momentum as everything else, so
+    /// it needs no separate K-scaling: the settled equilibrium is K-invariant
+    /// BY CONSTRUCTION, not by tuning a second aggregated coupling (contrast
+    /// the old `spin_gain_per_photon * aggregation` scheme this replaces).
     pub fn from_si(
         preset: FieldPreset,
         particle_mass_kg: f64,
@@ -997,7 +1068,6 @@ impl AmbientField {
             photon_fraction: preset.photon_fraction(),
             direction_bias: None,
             momentum: sim_momentum,
-            gear_efficiency: 1.0,
             time_scale,
             occlusion: true,
         };
@@ -1073,7 +1143,7 @@ impl AmbientField {
                 let idx = self.sample_contact(&pts, p.position, dir, rng);
                 let contact = pts[idx];
                 let chirality = if xorshift64(rng) < self.photon_fraction { 1.0 } else { -1.0 };
-                p.apply_photon(contact, dir, chirality, self.momentum, self.gear_efficiency);
+                p.apply_photon(contact, dir, chirality, self.momentum);
             } else {
                 // Exact pre-occlusion draw order — bit-identical to the old
                 // code path (idx, then dir, then chirality).
@@ -1084,7 +1154,7 @@ impl AmbientField {
                     None => rand_unit_vec(rng),
                 };
                 let chirality = if xorshift64(rng) < self.photon_fraction { 1.0 } else { -1.0 };
-                p.apply_photon(contact, dir, chirality, self.momentum, self.gear_efficiency);
+                p.apply_photon(contact, dir, chirality, self.momentum);
             }
         }
     }
@@ -1280,15 +1350,20 @@ mod tests {
     /// A photon opposing the surface motion (gears catch, f≈1) pumps far more
     /// spin than one co-moving with it (slips, f≈0).
     ///
-    /// NOTE (CM-2 landed): the pump now carries the lever AND rides on
-    /// `momentum` (term 2 is `momentum · f · chirality · gear_efficiency`), so
-    /// the old `momentum=0.0` isolation trick would zero the pump too, not
-    /// just the drag. Isolate the GEAR term instead by differencing
-    /// `gear_efficiency=1` against `gear_efficiency=0` at the SAME `momentum`
-    /// and contact/dir: term 1 (the catch-weighted Newtonian transfer) is
-    /// identical in both runs since it never reads `gear_efficiency`, so it
-    /// cancels exactly in the subtraction, leaving only the gear term's
-    /// contribution. Same spirit as the original test: opposing ≫ co-moving.
+    /// NOTE (CM-2 landed, DirRelSign now wired): the pump now carries the
+    /// lever AND rides on `momentum` (term 2 is
+    /// `momentum · f · chi_eff · gear_efficiency`), so the old `momentum=0.0`
+    /// isolation trick would zero the pump too, not just the drag. Isolate
+    /// the GEAR term instead by differencing `gear_efficiency=1` against
+    /// `gear_efficiency=0` (now set explicitly on each particle, since the
+    /// `proton`/`neutron`/`electron` ctors install a ladder value but
+    /// `z_pole_particle`'s raw `new()` still defaults to 1.0 — set both
+    /// anyway per the "always set explicitly" convention) at the SAME
+    /// `momentum` and contact/dir: term 1 (the catch-weighted Newtonian
+    /// transfer) is identical in both runs since it never reads
+    /// `gear_efficiency`, so it cancels exactly in the subtraction, leaving
+    /// only the gear term's contribution. Same spirit as the original test:
+    /// opposing ≫ co-moving.
     #[test]
     fn opposing_photon_catches_comoving_slips() {
         // Z-pole particle spinning +; at contact +X the surface moves +Y.
@@ -1297,9 +1372,11 @@ mod tests {
             let mut off = z_pole_particle();
             on.outer_spin = 0.5;
             off.outer_spin = 0.5;
+            on.gear_efficiency = 1.0;
+            off.gear_efficiency = 0.0;
             let contact = on.position + DVec3::X;
-            on.apply_photon(contact, dir, 1.0, 0.02, 1.0);
-            off.apply_photon(contact, dir, 1.0, 0.02, 0.0);
+            on.apply_photon(contact, dir, 1.0, 0.02);
+            off.apply_photon(contact, dir, 1.0, 0.02);
             on.outer_spin - off.outer_spin
         };
         // opposing surface (+Y) → dir -Y; co-moving → dir +Y.
@@ -1322,9 +1399,11 @@ mod tests {
             let mut off = z_pole_particle();
             on.outer_spin = 0.5;
             off.outer_spin = 0.5;
+            on.gear_efficiency = 1.0;
+            off.gear_efficiency = 0.0;
             let c = DVec3::X;
-            on.apply_photon(on.position + c, -DVec3::Y, chirality, 0.02, 1.0);
-            off.apply_photon(off.position + c, -DVec3::Y, chirality, 0.02, 0.0);
+            on.apply_photon(on.position + c, -DVec3::Y, chirality, 0.02);
+            off.apply_photon(off.position + c, -DVec3::Y, chirality, 0.02);
             on.outer_spin - off.outer_spin
         };
         let d_pho = gear_delta(1.0);
@@ -1348,21 +1427,41 @@ mod tests {
         let make = || CalibrationParticle::new(bake_loop(3, 32), 1.0);
         let ts = 1.0;
 
-        let run = |photon_fraction: f64| -> f64 {
+        let run_seed = |photon_fraction: f64, seed: u64| -> f64 {
             let mut p = make();
+            p.gear_efficiency = 1.0; // raw/per-unit — this test measures the geometric channel, not a ladder-scaled one.
             // occlusion: false — isolate the chirality augment/cancel
             // statistic from the shadow-sampling channel, matching the
             // other pump-isolation tests in this module.
             let field = AmbientField {
                 flux: 500.0, photon_fraction, direction_bias: None,
-                momentum: 0.02, gear_efficiency: 1.0, time_scale: ts, occlusion: false,
+                momentum: 0.02, time_scale: ts, occlusion: false,
             };
-            let mut rng = 0x1234_5678_9abc_def0u64;
+            let mut rng = seed;
             for _ in 0..400 {
                 field.tick(&mut p, 0.01, &mut rng);
                 p.integrate(0.01, ts);
             }
             p.outer_spin
+        };
+        // DirRelSign now wired (CM-2 self-limiter): a single-seed comparison
+        // is noisy (each photon draws ONE chirality, not the analytic p/1-p
+        // split `gear_pump_variant_torque` averages over — see
+        // `dirrel_sign_rule_at_rest`'s doc comment on population
+        // cancellation being an ensemble property, not a per-photon one), so
+        // this now averages over several independent seeds to recover the
+        // same signal `momentum=0.0`/single-seed isolation used to give for
+        // free under the old Baseline rule. Guards the same physics
+        // (photon-rich clearly spins up more than balanced), adapted for the
+        // wired rule's lower coherent signal (measurement campaign,
+        // 663d8d8/6301db2: DirRelSign self-limits, so its raw pump signal is
+        // structurally weaker/noisier than Baseline's by design).
+        let seeds: [u64; 8] = [
+            0x1234_5678_9abc_def0, 0x2234_5678_9abc_def0, 0x3234_5678_9abc_def0, 0x4234_5678_9abc_def0,
+            0x5234_5678_9abc_def0, 0x6234_5678_9abc_def0, 0x7234_5678_9abc_def0, 0x8234_5678_9abc_def0,
+        ];
+        let run = |photon_fraction: f64| -> f64 {
+            seeds.iter().map(|&s| run_seed(photon_fraction, s)).sum::<f64>() / seeds.len() as f64
         };
 
         let balanced = run(0.5);
@@ -1378,13 +1477,14 @@ mod tests {
     #[test]
     fn directional_field_drives_drift() {
         let mut p = CalibrationParticle::new(bake_loop(3, 32), 1.0);
+        p.gear_efficiency = 0.0; // ablate the gear term — isolate term 1's plain drift.
         // occlusion: true — the drag vector is always along the fixed `dir`
         // (direction_bias = Some(X)), same as the base Newtonian impulse, so
         // its sign can't flip regardless of which contact point occlusion
         // picks; exercising the shadowed default here is free.
         let field = AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: Some(DVec3::X),
-            momentum: 0.02, gear_efficiency: 0.0, time_scale: 1.0, occlusion: true,
+            momentum: 0.02, time_scale: 1.0, occlusion: true,
         };
         let mut rng = 0xABCD_1234_5678_9012u64;
         for _ in 0..200 {
@@ -1442,12 +1542,12 @@ mod tests {
     fn tumble_damps_in_balanced_field() {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         p.ang_velocity = DVec3::X * 0.3;
+        p.gear_efficiency = 0.0; // ablate the gear pump — isolate term 1's drag.
         let field = AmbientField {
             flux: 200.0,
             photon_fraction: 0.5,
             direction_bias: None,
             momentum: 0.02,
-            gear_efficiency: 0.0,
             time_scale: 1.0,
             occlusion: true,
         };
@@ -1471,12 +1571,12 @@ mod tests {
     fn drift_damps_in_balanced_field() {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         p.lin_velocity = DVec3::X * 0.3;
+        p.gear_efficiency = 0.0; // ablate the gear pump — isolate term 1's drag.
         let field = AmbientField {
             flux: 200.0,
             photon_fraction: 0.5,
             direction_bias: None,
             momentum: 0.02,
-            gear_efficiency: 0.0,
             time_scale: 1.0,
             occlusion: true,
         };
@@ -1660,12 +1760,13 @@ mod tests {
     fn bal_like(ts: f64) -> AmbientField {
         // occlusion: false — momentum=0.0 makes BOTH apply_photon transfer
         // terms inert (term 1 scales with momentum directly; term 2 scales
-        // with momentum·gear_efficiency), so this is purely a contact-sampling
-        // helper (used by `occlusion_biases_contacts_upstream`, which only
-        // reads WHERE contacts land, not the physics applied there).
+        // with momentum·gear_efficiency, now the particle's own field), so
+        // this is purely a contact-sampling helper (used by
+        // `occlusion_biases_contacts_upstream`, which only reads WHERE
+        // contacts land, not the physics applied there).
         AmbientField {
             flux: 500.0, photon_fraction: 0.5, direction_bias: None,
-            momentum: 0.0, gear_efficiency: 1.0, time_scale: ts, occlusion: false,
+            momentum: 0.0, time_scale: ts, occlusion: false,
         }
     }
 
@@ -1706,7 +1807,8 @@ mod tests {
             for &dir in &dirs {
                 let mut p = CalibrationParticle::new(bake_loop(3, 128), 1.0);
                 assert_eq!(p.outer_spin, 0.0);
-                p.apply_photon(contact, dir, 1.0, momentum, 0.0);
+                p.gear_efficiency = 0.0; // ablate the gear pump — isolate term 1's drag.
+                p.apply_photon(contact, dir, 1.0, momentum);
                 let d = p.outer_spin; // delta from the rest state
                 sum += d;
                 sum_sq += d * d;
@@ -1729,6 +1831,7 @@ mod tests {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         assert!((p.pole_axis() - DVec3::Z).length() < 1e-9);
         p.outer_spin = 0.8;
+        p.gear_efficiency = 0.0; // ablate the gear pump — isolate term 1's drag.
         // occlusion: false — this is a basic-mechanism validation of the
         // drag term proper (same family as report_spin_equilibrium, whose
         // predictions bisect the UNSHADOWED swing_drag_torque channel); keep
@@ -1738,7 +1841,6 @@ mod tests {
             photon_fraction: 0.5,
             direction_bias: None,
             momentum: 0.02,
-            gear_efficiency: 0.0,
             time_scale: 1.0,
             occlusion: false,
         };
@@ -1763,13 +1865,13 @@ mod tests {
     fn drag_restores_negative_spin_toward_zero() {
         let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
         p.outer_spin = -0.8;
+        p.gear_efficiency = 0.0; // ablate the gear pump — isolate term 1's drag.
         // occlusion: false — mirrors balanced_field_drags_spin_down's choice.
         let field = AmbientField {
             flux: 200.0,
             photon_fraction: 0.5,
             direction_bias: None,
             momentum: 0.02,
-            gear_efficiency: 0.0,
             time_scale: 1.0,
             occlusion: false,
         };
@@ -1799,23 +1901,12 @@ mod tests {
         t
     }
 
-    /// Evaluate `swing_pump_torque` at a trial `outer_spin` without permanently
-    /// disturbing the particle (restores afterward). Returns torque per unit
-    /// `momentum · chirality · gear_efficiency` (see the diagnostic's doc
-    /// comment).
-    fn pump_at_spin(p: &mut CalibrationParticle, s: f64, occluded: bool) -> f64 {
-        let saved = p.outer_spin;
-        p.outer_spin = s;
-        let t = p.swing_pump_torque(48, 16, occluded);
-        p.outer_spin = saved;
-        t
-    }
-
     /// Evaluate `gear_pump_variant_torque` at a trial `outer_spin` without
     /// permanently disturbing the particle (restores afterward). Same
-    /// save/restore convention as `pump_at_spin`/`drag_at_spin`, generalized
-    /// to a [`PumpRule`] and a `photon_fraction`. Used by
-    /// `report_pump_self_limiter`.
+    /// save/restore convention as `drag_at_spin`, generalized to a
+    /// [`PumpRule`] and a `photon_fraction`. Used by
+    /// `report_pump_self_limiter`/`report_critical_gear_efficiency`/
+    /// `predict_equilibrium_dirrelsign`.
     fn gear_pump_at_spin(
         p: &mut CalibrationParticle,
         s: f64,
@@ -1831,62 +1922,94 @@ mod tests {
         t
     }
 
-    /// Bisect for the equilibrium `outer_spin` where the gear pump balances the
-    /// velocity-channel drag: `mix·pump_at_spin(s) + drag_at_spin(s) == 0`,
-    /// `mix = 2·photon_fraction − 1` (the field's ⟨chirality⟩ expectation).
+    /// Predict the SETTLING `outer_spin` under the wired CM-2 rule:
+    /// `net(s) = p.gear_efficiency · gear_pump_at_spin(s, photon_fraction,
+    /// DirRelSign, ...) + drag_at_spin(s, occluded)`. This REPLACES the old
+    /// `mix·Baseline_pump(s) + drag(s)` bisection (CM-2 self-limiter
+    /// campaign, commits 663d8d8/6301db2 — see `apply_photon`'s doc comment):
+    /// `gear_pump_variant_torque` already mixes the two chirality
+    /// populations by `photon_fraction` internally (unlike the old
+    /// `swing_pump_torque`, which only measured a single chirality's channel
+    /// and needed an external `mix` factor), and `PumpRule::DirRelSign`'s
+    /// population-cancellation finding means `net(0) ≈ 0` ALWAYS — s=0 is a
+    /// root of `net` regardless of whether the true equilibrium is rest or a
+    /// live swing, so plain bisection from a bracket including s=0 can't
+    /// distinguish them (it just returns the s=0 endpoint). This scans a grid
+    /// for the first DOWNWARD (stable) crossing instead — same convention as
+    /// `find_equilibrium_label`, whose doc comment explains why an upward
+    /// crossing at s=0 is a repeller, not an answer — and falls back to 0.995
+    /// (runaway) or 0.0 (true rest, no downward crossing anywhere and net
+    /// never goes positive) when no interior crossing exists. Assumes a
+    /// photon-rich-or-balanced field (`photon_fraction >= 0.5`, the only
+    /// domain this report's sweep exercises) so the search stays on `s >= 0`.
     ///
-    /// Under CM-2's unified `apply_photon`, BOTH transfer terms are scaled by
-    /// the SAME `spin_coupling / i_spin` and (for the pump) `momentum ·
-    /// gear_efficiency` / (for the drag) `momentum` — since `gear_efficiency`
-    /// ships 1.0, momentum and the inertia coupling cancel out of the
-    /// equilibrium condition entirely (they multiply both terms identically).
-    /// What's left is pure geometry (`pump`/`drag`, both measured "per unit
-    /// momentum/chirality/gear") and the field's photon:antiphoton mix — the
-    /// equilibrium is momentum-free BY CONSTRUCTION, not by cancellation of
-    /// two independently-tuned scaffold magnitudes as the old model required.
-    /// `mix` is signed (positive for a photon-rich field); the drag term is
-    /// negative-growing for positive spin (see `swing_drag_torque`'s doc), so
-    /// for a photon-rich field the root sits at positive `s`.
-    fn bisect_equilibrium(p: &mut CalibrationParticle, mix: f64, occluded: bool) -> f64 {
-        let g = |p: &mut CalibrationParticle, s: f64| -> f64 {
-            mix * pump_at_spin(p, s, occluded) + drag_at_spin(p, s, occluded)
-        };
-        let sign = mix.signum();
-        let (mut lo, mut hi) = if sign >= 0.0 { (0.0, 0.995) } else { (-0.995, 0.0) };
-        let mut glo = g(p, lo);
-        let ghi = g(p, hi);
-        if glo == 0.0 {
-            return lo;
-        }
-        if glo.signum() == ghi.signum() {
-            // No sign change in range (drag never catches the pump) — report the
-            // boundary closest to balance so the caller can see it's saturating.
-            return if ghi.abs() < glo.abs() { hi } else { lo };
-        }
-        for _ in 0..60 {
-            let mid = 0.5 * (lo + hi);
-            let gmid = g(p, mid);
-            if gmid.signum() == glo.signum() {
-                lo = mid;
-                glo = gmid;
-            } else {
-                hi = mid;
+    /// NOTE: `gear_pump_variant_torque` (unlike `swing_pump_torque`) takes no
+    /// `occluded` parameter, so the pump side of `net` is always the
+    /// unshadowed channel; only `drag_at_spin`'s `occluded` flag differs
+    /// between the "unshadowed"/"shadowed" prediction columns below — a
+    /// pre-existing asymmetry in the diagnostic surface, not new here.
+    ///
+    /// Grid: fine near-zero points prepended to the uniform body, same
+    /// reasoning as `report_critical_gear_efficiency`'s grid — a borderline
+    /// particle's live equilibrium can sit far closer to s=0 than a uniform
+    /// 200-point grid over `[0, 0.995]` resolves (observed: the neutron's
+    /// pure-photon live swing sits at s ≈ 0.0007, invisible to a ~0.005
+    /// uniform step and misreported as "true rest").
+    fn predict_equilibrium_dirrelsign(p: &mut CalibrationParticle, photon_fraction: f64, occluded: bool) -> f64 {
+        let eff = p.gear_efficiency;
+        let mut grid: Vec<f64> =
+            vec![0.0, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.007, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075];
+        const N: usize = 200;
+        grid.extend((2..=N).map(|i| 0.995 * i as f64 / N as f64));
+        let net: Vec<f64> = grid
+            .iter()
+            .map(|&s| eff * gear_pump_at_spin(p, s, photon_fraction, PumpRule::DirRelSign, 48, 16) + drag_at_spin(p, s, occluded))
+            .collect();
+        let mut prev = net[0];
+        let mut saw_upward = prev > 0.0;
+        for i in 1..grid.len() {
+            let cur = net[i];
+            if prev >= 0.0 && cur < 0.0 {
+                let s0 = grid[i - 1];
+                let s1 = grid[i];
+                return (s0 - prev * (s1 - s0) / (cur - prev)).clamp(s0, s1);
             }
+            if prev < 0.0 && cur >= 0.0 {
+                saw_upward = true;
+            }
+            prev = cur;
         }
-        0.5 * (lo + hi)
+        if saw_upward || prev > 0.0 {
+            0.995 // runaway (transmutes)
+        } else {
+            0.0 // true rest — see GEAR_LADDER_*/eff_crit doc comments
+        }
     }
 
     /// REPORT (ignored by default): THE PRESETS TABLE. Validates the CM-2
-    /// unified `apply_photon` scaling law end to end, per particle. Predicted
-    /// equilibrium (bisecting `(2p−1)·swing_pump_torque(s*) +
-    /// swing_drag_torque(s*) == 0`, both unshadowed and shadowed) against the
-    /// actual settled `outer_spin` of a ticked `AmbientField` simulation
-    /// (occlusion off and on), swept over field imbalance for proton, neutron,
-    /// and electron. Also a small density block confirming density-independence
-    /// survives the rewrite. Prints tables; no hard physics asserts (see
-    /// `report_*` convention elsewhere in the repo) beyond basic sanity. Ends
-    /// with the PRESETS CANDIDATE line — the numbers destined for
-    /// `godot/config/particle_presets.json` (not edited here).
+    /// unified `apply_photon` scaling law end to end, per particle, now under
+    /// the WIRED CM-2 self-limiter rule (DirRelSign × per-particle ladder
+    /// efficiency, commits 663d8d8/6301db2). Predicted equilibrium
+    /// (`predict_equilibrium_dirrelsign`, both unshadowed and shadowed)
+    /// against the actual settled `outer_spin` of a ticked `AmbientField`
+    /// simulation (occlusion off and on), swept over field imbalance for
+    /// proton, neutron, and electron. Also a small density block confirming
+    /// density-independence survives the rewrite. Prints tables; the only
+    /// hard asserts are the rest-noise-floor checks (spec point 8: where the
+    /// prediction is a TRUE zero, a relative-error comparison against exactly
+    /// 0.0 is undefined, so the sim's settled value is checked against a
+    /// small noise floor instead) — everything else is print-only (see
+    /// `report_*` convention elsewhere in the repo). Ends with the PRESETS
+    /// CANDIDATE line — the numbers destined for
+    /// `godot/config/particle_presets.json` (not edited here). K-invariance
+    /// and density-independence checks live in `report_si_calibration` and
+    /// this report's density block respectively; both key off the PROTON
+    /// there historically, but since the proton now rests (TRUE zero) at
+    /// Earth mix under its wired ladder rung, a settled `outer_spin ≈ 0` is
+    /// exactly what K-invariance/density-independence predict too (0 is
+    /// K-invariant and density-invariant trivially) — the electron remains
+    /// the more informative live-equilibrium anchor if a nonzero check is
+    /// wanted (see `report_si_calibration`'s doc comment).
     #[test]
     #[ignore]
     fn report_spin_equilibrium() {
@@ -1898,10 +2021,37 @@ mod tests {
         // bake_loop's swing_offset/swing_axis/swing_is_precession depend only
         // on `loop_level`, not `samples`, so `bake_loop(11, 256)` already
         // reproduces `CalibrationParticle::neutron`'s kite offset exactly.
+        // Each `make` installs the sourced GEAR_LADDER_* rung explicitly
+        // (rather than routing through the `proton`/`neutron`/`electron`
+        // ctors) so this report stays independent of ctor sample-count
+        // choices, per the comment above — but the ladder value itself must
+        // still be set, since `CalibrationParticle::new` defaults to 1.0
+        // (raw/per-unit).
         let specs: Vec<ParticleSpec> = vec![
-            ParticleSpec { label: "proton", make: Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0)) },
-            ParticleSpec { label: "neutron", make: Box::new(|| CalibrationParticle::new(bake_loop(11, 256), 1.0)) },
-            ParticleSpec { label: "electron", make: Box::new(|| CalibrationParticle::new(bake_loop(8, 256), 1.0)) },
+            ParticleSpec {
+                label: "proton",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_PROTON;
+                    p
+                }),
+            },
+            ParticleSpec {
+                label: "neutron",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(11, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_NEUTRON;
+                    p
+                }),
+            },
+            ParticleSpec {
+                label: "electron",
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_ELECTRON;
+                    p
+                }),
+            },
         ];
 
         let momentum = 0.02;
@@ -1923,7 +2073,6 @@ mod tests {
                 photon_fraction,
                 direction_bias: None,
                 momentum,
-                gear_efficiency: 1.0,
                 time_scale: 1.0,
                 occlusion,
             };
@@ -1947,11 +2096,10 @@ mod tests {
                 spec.label, flux, "p_photon", "pred_s*_unshad", "pred_s*_shad", "sim_s_occ=false", "sim_s_occ=true", "transmuted"
             );
             for &pf in &photon_fractions {
-                let mix = 2.0 * pf - 1.0;
                 let mut p_u = (spec.make)();
-                let predicted_unshadowed = bisect_equilibrium(&mut p_u, mix, false);
+                let predicted_unshadowed = predict_equilibrium_dirrelsign(&mut p_u, pf, false);
                 let mut p_s = (spec.make)();
-                let predicted_shadowed = bisect_equilibrium(&mut p_s, mix, true);
+                let predicted_shadowed = predict_equilibrium_dirrelsign(&mut p_s, pf, true);
 
                 let (sim_false, tr_false) = settle(&spec.make, pf, flux, false);
                 let (sim_true, tr_true) = settle(&spec.make, pf, flux, true);
@@ -1966,17 +2114,44 @@ mod tests {
                     sim_true,
                     if transmuted { "YES" } else { "no" }
                 );
+
+                // Where the DirRelSign prediction is a TRUE zero (baryon
+                // rest under the locked-platform ladder, or the always-zero
+                // balanced-mix case — see GEAR_LADDER_*/eff_crit doc
+                // comments), a relative-error comparison against exactly 0.0
+                // is undefined; assert the sim's settled spin stayed below a
+                // small noise floor instead (spec point 8).
+                const REST_NOISE_FLOOR: f64 = 0.05;
+                if predicted_shadowed == 0.0 {
+                    assert!(
+                        sim_true.abs() < REST_NOISE_FLOOR,
+                        "{} @ p={:.3}: predicted TRUE rest (shadowed) but sim (occlusion=true) settled at {:.4}",
+                        spec.label, pf, sim_true
+                    );
+                }
+                if predicted_unshadowed == 0.0 {
+                    assert!(
+                        sim_false.abs() < REST_NOISE_FLOOR,
+                        "{} @ p={:.3}: predicted TRUE rest (unshadowed) but sim (occlusion=false) settled at {:.4}",
+                        spec.label, pf, sim_false
+                    );
+                }
             }
         }
 
         // Density block: flux 50/200/800 at photon_fraction=2/3, occlusion=true
-        // — density-independence should survive the rewrite (proton only, kept
-        // small per the report's original scope).
-        println!("\n== density block (proton, photon_fraction=2/3, occlusion=true) ==");
+        // — density-independence should survive the rewrite. Keyed off the
+        // ELECTRON, not the proton (spec point 8): under the wired ladder the
+        // proton rests at a TRUE zero at Earth mix (see the rest-noise-floor
+        // asserts above), so a proton density check would trivially compare
+        // ~0 against ~0 at every flux — density-invariant, but uninformative.
+        // The electron has a finite live equilibrium (s* ≈ 0.05) and is the
+        // particle this check can actually discriminate on.
+        println!("\n== density block (electron, photon_fraction=2/3, occlusion=true) ==");
         println!("{:>8} {:>14} {:>12}", "flux", "settled_s*", "transmuted");
-        let proton_make = &specs[0].make;
+        let electron_make = &specs[2].make;
         for &flux_d in &[50.0, 200.0, 800.0] {
-            let (settled, transmuted) = settle(proton_make, 2.0 / 3.0, flux_d, true);
+            let (settled, transmuted) = settle(electron_make, 2.0 / 3.0, flux_d, true);
             println!("{:>8.1} {:>14.4} {:>12}", flux_d, settled, if transmuted { "YES" } else { "no" });
         }
 
@@ -2022,6 +2197,33 @@ mod tests {
         (settled, settle_step, dt, sim.transmuted)
     }
 
+    /// Average `run_settle` over several independent `seeds`, reducing the
+    /// tail-window sampling noise a single seed carries (see Table 3's
+    /// comment in `report_si_calibration` — the electron K-invariance anchor
+    /// has a small, noisy live equilibrium unlike the old near-saturated
+    /// proton anchor). Returns the mean settled value; `settle_step`/`dt`
+    /// are taken from the LAST seed (display only, not part of the averaged
+    /// quantity); `transmuted` is true if ANY seed transmuted.
+    fn run_settle_avg(
+        make: &dyn Fn() -> CalibrationParticle,
+        field: &AmbientField,
+        seeds: &[u64],
+        steps: usize,
+    ) -> (f64, usize, f64, bool) {
+        let mut sum = 0.0;
+        let mut any_transmuted = false;
+        let mut last_step = 0;
+        let mut last_dt = 0.0;
+        for &seed in seeds {
+            let (settled, settle_step, dt, transmuted) = run_settle(make, field, seed, steps);
+            sum += settled;
+            any_transmuted |= transmuted;
+            last_step = settle_step;
+            last_dt = dt;
+        }
+        (sum / seeds.len() as f64, last_step, last_dt, any_transmuted)
+    }
+
     /// REPORT (ignored by default): the natural↔SI flux calibration end to end.
     /// Table 1 prints the sourced anchors per particle (mass, true recycle flux,
     /// true per-photon momentum, the macro-photon aggregation K, and the sim↔SI
@@ -2029,16 +2231,22 @@ mod tests {
     /// Table 2 runs the same settle loop as `report_spin_equilibrium` through
     /// `from_si`, converting settle time to SI seconds — under CM-2's unified
     /// `apply_photon` this table is now fully physical: `from_si` no longer
-    /// takes a `spin_gain_per_photon` scaffold to solve for, `gear_efficiency`
-    /// is just 1.0 (the uran.pdf-sourced value), so there's no "per_photon_gain"
-    /// column left to print. Table 3 checks that the settled equilibrium is
-    /// K-invariant — quartering `sim_momentum` (and quadrupling `sim_flux` to
-    /// hold the represented physical density fixed) must reproduce the same
-    /// settled `outer_spin` within noise. This should now pass close to
-    /// trivially: `gear_efficiency` doesn't scale with K at all (see
-    /// `SiCalibration`'s doc comment), so K-invariance is a near-tautology of
-    /// the construction — the empirical check is kept anyway as a guard
-    /// against a wiring regression. Run B gets 2× the steps so both runs
+    /// takes a `spin_gain_per_photon` scaffold to solve for, and the gear
+    /// coupling is each particle's sourced `GEAR_LADDER_*` rung (set
+    /// explicitly on each Table-2 `make`, same reasoning as
+    /// `report_spin_equilibrium`'s ParticleSpec — installed directly rather
+    /// than via the `proton`/`neutron`/`electron` ctors so this report stays
+    /// independent of ctor sample-count choices), so there's no
+    /// "per_photon_gain" column left to print. Table 3 checks that the
+    /// settled equilibrium is K-invariant — quartering `sim_momentum` (and
+    /// quadrupling `sim_flux` to hold the represented physical density fixed)
+    /// must reproduce the same settled `outer_spin` within noise. Keyed off
+    /// the ELECTRON, not the proton (spec point 8): under the wired ladder
+    /// the proton rests at a TRUE zero at Room mix (`GEAR_LADDER_PROTON` sits
+    /// far below `eff_crit`), so a proton K-invariance check would trivially
+    /// compare ~0 against ~0 — K-invariant, but uninformative. The electron
+    /// has a finite live equilibrium and is the particle this check can
+    /// actually discriminate on. Run B gets 2× the steps so both runs
     /// receive the same physical photon dose (see the inline comment at the
     /// run_settle calls).
     #[test]
@@ -2075,17 +2283,29 @@ mod tests {
             ParticleSpec {
                 label: "proton",
                 mass_kg: units::PROTON_MASS_KG,
-                make: Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0)),
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_PROTON;
+                    p
+                }),
             },
             ParticleSpec {
                 label: "neutron",
                 mass_kg: units::NEUTRON_MASS_KG,
-                make: Box::new(|| CalibrationParticle::new(bake_loop(11, 256), 1.0)),
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(11, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_NEUTRON;
+                    p
+                }),
             },
             ParticleSpec {
                 label: "electron",
                 mass_kg: units::ELECTRON_MASS_KG,
-                make: Box::new(|| CalibrationParticle::new(bake_loop(8, 256), 1.0)),
+                make: Box::new(|| {
+                    let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
+                    p.gear_efficiency = GEAR_LADDER_ELECTRON;
+                    p
+                }),
             },
         ];
 
@@ -2114,9 +2334,14 @@ mod tests {
             );
         }
 
-        // --- Table 3: K-invariance (proton, Room) ---
-        println!("\n== Table 3: K-invariance (proton, Room) ==");
-        let mass_kg = units::PROTON_MASS_KG;
+        // --- Table 3: K-invariance (electron, Room) ---
+        // Keyed off the electron, not the proton — see this test's doc
+        // comment (spec point 8): the proton rests at a TRUE zero at Room
+        // mix under its wired ladder rung, which would make a K-invariance
+        // check here compare ~0 against ~0 at every K, trivially "passing"
+        // without exercising the momentum-scaling identity at all.
+        println!("\n== Table 3: K-invariance (electron, Room) ==");
+        let mass_kg = units::ELECTRON_MASS_KG;
 
         let (mut field_a, cal_a) = AmbientField::from_si(FieldPreset::Room293K, mass_kg, 0.02, 200.0, 1.0);
         let (mut field_b, cal_b) = AmbientField::from_si(FieldPreset::Room293K, mass_kg, 0.005, 800.0, 1.0);
@@ -2125,18 +2350,48 @@ mod tests {
         field_a.occlusion = false;
         field_b.occlusion = false;
 
-        let make_proton: Box<dyn Fn() -> CalibrationParticle> =
-            Box::new(|| CalibrationParticle::new(bake_loop(12, 256), 1.0));
+        let make_electron: Box<dyn Fn() -> CalibrationParticle> = Box::new(|| {
+            let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
+            p.gear_efficiency = GEAR_LADDER_ELECTRON;
+            p
+        });
         // Equal PHYSICAL photon dose, not equal step count: per step, run A
         // delivers dt·flux·K = 0.01·200·K = 2K real photons while run B
         // delivers 0.005·800·(K/4) = 1K — half the dose. With equal steps run
         // B is still converging when the tail window opens, which shows up as
         // a spurious ~15% "K-dependence" (seen 2026-07-16). Doubling B's steps
         // equalizes the represented physical exposure.
-        let (settled_a, step_a, _dt_a, _tr_a) =
-            run_settle(&*make_proton, &field_a, 0xC0FF_EE12_3456_789Au64, 150_000);
-        let (settled_b, step_b, _dt_b, _tr_b) =
-            run_settle(&*make_proton, &field_b, 0xC0FF_EE12_3456_789Au64, 300_000);
+        //
+        // Multi-seed average (new, electron anchor): the electron's live
+        // equilibrium is a small, noisy live swing (unlike the old proton
+        // anchor's near-saturated s* ≈ 0.9996, where the same absolute noise
+        // floor was a tiny relative error) — a single seed pair showed 5.6%
+        // spurious "K-dependence" from tail-window sampling noise alone, just
+        // over the 5% tolerance, and a 4-seed average (150k/300k steps) was
+        // WORSE at 11.6% (confirming it's noise, not a systematic K bias —
+        // more seeds explored more of the real spread, they didn't converge
+        // toward a stable nonzero gap). 16 seeds at 300k/600k steps (double
+        // both, for the same physical-dose-doubling reason as the original
+        // step-doubling comment above) converges to 2.2%, comfortably inside
+        // tolerance — confirming K-invariance genuinely holds under the
+        // wired rule too, it just takes more averaging to see it on the
+        // electron's smaller-amplitude anchor than it did on the proton's
+        // near-saturated one. Same fix as the fast-suite
+        // `imbalanced_field_spins_up_balanced_does_not` adaptation.
+        let seeds_a: [u64; 16] = [
+            0xC0FF_EE12_3456_7801, 0xC0FF_EE12_3456_7802, 0xC0FF_EE12_3456_7803, 0xC0FF_EE12_3456_7804,
+            0xC0FF_EE12_3456_7805, 0xC0FF_EE12_3456_7806, 0xC0FF_EE12_3456_7807, 0xC0FF_EE12_3456_7808,
+            0xC0FF_EE12_3456_7809, 0xC0FF_EE12_3456_780A, 0xC0FF_EE12_3456_780B, 0xC0FF_EE12_3456_780C,
+            0xC0FF_EE12_3456_780D, 0xC0FF_EE12_3456_780E, 0xC0FF_EE12_3456_780F, 0xC0FF_EE12_3456_7810,
+        ];
+        let seeds_b: [u64; 16] = [
+            0xB0FF_EE12_3456_7801, 0xB0FF_EE12_3456_7802, 0xB0FF_EE12_3456_7803, 0xB0FF_EE12_3456_7804,
+            0xB0FF_EE12_3456_7805, 0xB0FF_EE12_3456_7806, 0xB0FF_EE12_3456_7807, 0xB0FF_EE12_3456_7808,
+            0xB0FF_EE12_3456_7809, 0xB0FF_EE12_3456_780A, 0xB0FF_EE12_3456_780B, 0xB0FF_EE12_3456_780C,
+            0xB0FF_EE12_3456_780D, 0xB0FF_EE12_3456_780E, 0xB0FF_EE12_3456_780F, 0xB0FF_EE12_3456_7810,
+        ];
+        let (settled_a, step_a, _dt_a, _tr_a) = run_settle_avg(&*make_electron, &field_a, &seeds_a, 300_000);
+        let (settled_b, step_b, _dt_b, _tr_b) = run_settle_avg(&*make_electron, &field_b, &seeds_b, 600_000);
 
         let rel_diff = (settled_a - settled_b).abs() / settled_a.abs().max(settled_b.abs()).max(1e-12);
         println!(
@@ -2405,29 +2660,33 @@ mod tests {
         let make = || {
             let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0); // proton
             p.orientation = DQuat::from_axis_angle(DVec3::X, 45f64.to_radians());
+            // Ablate the gear pump on the PARTICLE now (gear_efficiency moved
+            // off AmbientField in the CM-2 self-limiter wiring) — this report
+            // isolates the alignment+damping channels (Change 1's shadow
+            // torque + Change 2's full-velocity drag, both term 1 of
+            // `apply_photon`) from the chirality gear pump (term 2), which
+            // this report isn't about.
+            p.gear_efficiency = 0.0;
             p
         };
 
-        // Knobs: Room-like mix (2/3 photon), occlusion on. gear_efficiency=0 to
-        // isolate the alignment+damping channels (Change 1's shadow torque +
-        // Change 2's full-velocity drag, both now term 1 of `apply_photon`)
-        // from the chirality gear pump (term 2), which this report isn't
-        // about. Cranking momentum ABOVE this hits an explicit-Euler
-        // instability in the velocity-dependent catch (NaN, not physics).
-        // Knob history: the pre-unification bookkeeping (5793cda) stacked a
-        // redundant catch-weighted impulse on the plain one, ~doubling the
-        // coherent alignment torque per hit — momentum 0.001 / flux 2000
-        // converged then, but does NOT under the honest single transfer
-        // (verified 2M and 10M steps: tilt parks in the 35-49° band; the
-        // static attractor per report_alignment_channels is intact, the
-        // stochastic descent just stalls). Since coherent drift scales with
-        // momentum and diffusion with momentum², halving momentum while
-        // doubling flux keeps the same physical momentum current but restores
-        // the old drift/noise ratio — many smaller photons, physically MORE
-        // honest (real counts are ~1e11/s at ~1.6e-10 momentum).
+        // Knobs: Room-like mix (2/3 photon), occlusion on. Cranking momentum
+        // ABOVE this hits an explicit-Euler instability in the
+        // velocity-dependent catch (NaN, not physics). Knob history: the
+        // pre-unification bookkeeping (5793cda) stacked a redundant
+        // catch-weighted impulse on the plain one, ~doubling the coherent
+        // alignment torque per hit — momentum 0.001 / flux 2000 converged
+        // then, but does NOT under the honest single transfer (verified 2M
+        // and 10M steps: tilt parks in the 35-49° band; the static attractor
+        // per report_alignment_channels is intact, the stochastic descent
+        // just stalls). Since coherent drift scales with momentum and
+        // diffusion with momentum², halving momentum while doubling flux
+        // keeps the same physical momentum current but restores the old
+        // drift/noise ratio — many smaller photons, physically MORE honest
+        // (real counts are ~1e11/s at ~1.6e-10 momentum).
         let flux = 4000.0;
         let momentum = 0.0005;
-        let gear_efficiency = 0.0;
+        let gear_efficiency = 0.0; // display-only, mirrors the particle's ablated value in the printed knobs line.
         let photon_fraction = 2.0 / 3.0;
         let dt = 0.005;
         let steps = 2_000_000usize;
@@ -2445,7 +2704,6 @@ mod tests {
             photon_fraction,
             direction_bias: Some(d),
             momentum,
-            gear_efficiency,
             time_scale: 1.0,
             occlusion: true,
         };
@@ -2521,7 +2779,6 @@ mod tests {
             photon_fraction,
             direction_bias: None,
             momentum,
-            gear_efficiency,
             time_scale: 1.0,
             occlusion: true,
         };

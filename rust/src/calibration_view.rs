@@ -76,15 +76,14 @@ impl CalibrationView {
         (p, display_scale, baked_max_r, time_scale)
     }
 
-    /// Display-tuned ambient field: gear_efficiency scaled by pole inertia so
-    /// every particle spins up on a watchable timescale (physically it's
-    /// trillions of hits; here we accelerate it for the eyeball). Under CM-2
-    /// the sourced value is 1.0 (dimensionless), but this display view keeps
-    /// the old scaffold's inertia-cancelling trick as an explicit ablation
-    /// knob purely for watchability — NOT a claim about the physical value.
-    /// Magnitudes are placeholders.
+    /// Display-tuned ambient field. The CM-2 gear coupling no longer lives
+    /// here — it's `CalibrationParticle::gear_efficiency` now, and the
+    /// `proton`/`neutron`/`electron` ctors (used by `build`) already install
+    /// the sourced spin-energy-ladder rung, so this eyeball view shows the
+    /// honest physics rather than a display-tuned scaffold value (the old
+    /// inertia-cancelling trick this replaced was explicitly NOT a claim
+    /// about the physical value). Magnitudes are otherwise placeholders.
     fn make_field(
-        p: &CalibrationParticle,
         preset: FieldPreset,
         balanced: bool,
         directional: bool,
@@ -96,7 +95,6 @@ impl CalibrationView {
             photon_fraction: if balanced { 0.5 } else { preset.photon_fraction() },
             direction_bias: if directional { Some(DVec3::X) } else { None },
             momentum: max_r * 0.0005,
-            gear_efficiency: p.i_spin() * 0.005,
             time_scale: ts,
             // Shadow occlusion on: this eyeball view should show the real
             // (measured) collision physics, not the analytic-only unshadowed
@@ -108,7 +106,7 @@ impl CalibrationView {
     fn rebuild(&mut self, kind: i32) {
         let (p, ds, mr, ts) = Self::build(kind);
         self.field =
-            Self::make_field(&p, self.preset, self.field_balanced, self.field_directional, ts, mr);
+            Self::make_field(self.preset, self.field_balanced, self.field_directional, ts, mr);
         self.particle = p;
         self.kind = kind;
         self.display_scale = ds;
@@ -144,7 +142,7 @@ impl INode3D for CalibrationView {
     fn init(base: Base<Node3D>) -> Self {
         let (particle, display_scale, baked_max_r, time_scale) = Self::build(0);
         let preset = FieldPreset::Room293K;
-        let field = Self::make_field(&particle, preset, false, false, time_scale, baked_max_r);
+        let field = Self::make_field(preset, false, false, time_scale, baked_max_r);
         Self {
             base,
             particle,

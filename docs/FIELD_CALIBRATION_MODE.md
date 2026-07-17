@@ -532,3 +532,84 @@ axisymmetric precession swings do; flagged for follow-up, not patched here.
 geometrically now, not probabilistically: `f` (catch factor), the lever `r × t̂`, and occlusion's
 exposure weighting are all measured from the baked geometry directly — nothing hardcodes which
 particle "should" catch more.
+
+## CM-2 self-limiter wired: DirRelSign × ladder (2026-07-16, session 36)
+
+The gear-tangent pump above was momentum-free but NOT self-limiting: at `gear_efficiency = 1.0`
+it overruns the catch-weighted Newtonian drag at Earth mix and both proton and electron transmute
+under an ordinary ambient field (flagged, above) — falsified, since real matter is stable in
+ordinary starlight. A measurement campaign (commits 663d8d8 "Pump self-limiter measured: ladder
+efficiency x direction-relative sign wins" and 6301db2 "Critical gear efficiency measured: baryon
+rest is a TRUE zero") tried two independent families of fix — (A) an externally-imposed
+spin-energy-ladder efficiency, (B) making the gear rule itself direction-relative — crossed
+against each other, and the user signed off on the combined rule. It is now wired into
+`apply_photon` directly (no longer measurement-only).
+
+**The rule.** `apply_photon` term 2's chirality sign is no longer `chirality` alone; it's the
+DirRelSign EFFECTIVE chirality, `chi_eff = chirality * (-dir·t_hat).signum()`, where `t_hat` is
+the actual signed swing tangent at the contact if the body is spinning, else the geometric
+positive tangent `t_pos` at rest (pole.pdf/bright.pdf: "a photon going in reverse is automatically
+an antiphoton"). This exactly mirrors the measurement diagnostic `gear_pump_variant_torque`'s
+`PumpRule::DirRelSign` arm. Two properties fall out of it, both measured not assumed: the pump is
+EXACTLY zero at rest in an isotropic field (population cancellation — half the isotropic photons
+see the fallback tangent as opposing, half as co-moving, in equal measure, to machine epsilon),
+and it plateaus once spinning rather than growing without bound — a structural self-limiter that
+owes nothing to an externally-tuned magnitude.
+
+The magnitude channel is a new per-particle field, `CalibrationParticle::gear_efficiency`
+(dimensionless `E_photon / E_platform`, elecpro.html/higgs3.pdf's spin-energy ladder
+`1, 9, 65, 1025, 16385` for no-spin → axial → x → y → z). Under the **locked-platform reading**
+— the baked levels are locked in and deliver the full force of THEIR ladder rung; only the live
+top swing is the free variable — the sourced constants are:
+
+| Particle | `GEAR_LADDER_*` | Ladder rung |
+|---|---|---|
+| Electron | `1/9`     | axial term |
+| Proton   | `1/16385` | full stacked sum |
+| Neutron  | `1/1025`  | one named rung below the proton's (candidate) |
+
+This is a property of the TARGET particle's own locked platform, not the field, so it lives on
+`CalibrationParticle` (installed by the `proton`/`neutron`/`electron` constructors), not on
+`AmbientField` — `AmbientField::gear_efficiency` is gone.
+
+**Baryon rest is a TRUE zero, not a small number.** Because both the DirRelSign pump and the
+drag vanish at rest, whether a particle spins up at all is a threshold contest:
+`eff_crit := min over s>0 of -drag(s)/pump(s)`. Below `eff_crit` the net torque is negative at
+EVERY `s > 0`, so the deterministic equilibrium is exactly zero. Measured (6301db2), Earth mix
+(`p=2/3`) | pure photon (`p=1.0`): proton `eff_crit = 1/908 | 1/2723`, neutron `eff_crit =
+1/454 | 1/1361` (roughly 2x easier to pump than the proton), electron `eff_crit = 1/908 | 1/2723`
+(identical to the proton to 4 digits — the proton==electron normalized-curve finding again). Both
+`1/16385` (proton) and `1/1025` (neutron) sit far below their respective `eff_crit` at every
+mix — the proton rests at TRUE zero at every ambient mix up to and including pure photon; the
+neutron rests at Earth mix but crosses into a tiny live equilibrium (`s* ≈ 0.0007`, needs a
+fine near-zero grid to resolve — a uniform 200-point scan over `[0, 0.995]` is too coarse) only
+at `photon_fraction = 1.0`, where `1/1025 > eff_crit(1/1361)`.
+
+**Electron anchor holds.** At Earth mix, occlusion off: `s* ≈ 0.0504` (predicted, bisected against
+the analytic `gear_pump_variant_torque`/`swing_drag_torque` channels) vs `s* ≈ 0.0498` (simulated
+`AmbientField` settle) — within 1.2% of each other, and both within ~6% of the `~0.055c` outer
+structure measured in the M2-era traces, with zero fitted constants (Mathis's `~0.0057c` is the
+electron's LINEAR speed — a different observable, not the right anchor for the swing rate).
+
+**Verification.** `report_spin_equilibrium`'s bisection helper (`predict_equilibrium_dirrelsign`)
+now scans for the first DOWNWARD (stable) crossing of `gear_efficiency · gear_pump_at_spin(s, p,
+DirRelSign) + drag_at_spin(s)` rather than plain-bisecting `mix · Baseline_pump(s) + drag(s)`,
+since population cancellation makes `net(0) ≈ 0` ALWAYS true under DirRelSign — an upward
+crossing at `s = 0` is a repeller, not the answer (same convention `find_equilibrium_label`
+already used for `report_pump_self_limiter`/`report_critical_gear_efficiency`). Where the
+prediction is a true zero, the report asserts the simulation's settled `|outer_spin|` against a
+small noise floor rather than a relative error against exactly 0.0. K-invariance and
+density-independence checks (`report_si_calibration` Table 3, `report_spin_equilibrium`'s density
+block) now key off the ELECTRON rather than the proton — the proton's settled value is ~0 at
+every K/density under its wired ladder rung, which would make either check trivially "pass"
+without exercising the momentum-scaling identity at all; the electron's finite live equilibrium
+is the particle these checks can actually discriminate on (and needed averaging over ~16
+independent seeds to separate real K-invariance, confirmed at 2.2% relative difference, from the
+noisier single-seed estimate a smaller-amplitude live equilibrium carries).
+
+**Open question (unchanged from 663d8d8).** Which named rung governs the neutron's live L12
+swing — the full `1/16385` or the rung below its bake, `1/1025` — decides the neutron decay
+first-passage rate (β-decay as a ~1e14-contact rarity crossing L12 to c). `1/1025` is the
+locked-platform CANDIDATE adopted here (one rung below the proton's full stack), not a settled
+answer; discriminable later by a decay first-passage test comparing predicted mean lifetimes
+under each candidate against the measured ~15 minutes.
