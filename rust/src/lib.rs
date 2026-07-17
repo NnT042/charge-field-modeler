@@ -10,6 +10,7 @@ mod field_sim;
 mod focus_particle;
 pub mod hitbox;
 mod path_trace;
+pub mod recycling;
 mod spin_stack;
 mod types;
 mod units;
