@@ -1,4 +1,4 @@
-//! CM-3: the disc-to-pole recycling loop (diagnostic) — v2.
+//! CM-3: the disc-to-pole recycling loop (diagnostic) — v3.
 //!
 //! The claim under test (per the papers, driving everything from local atomic
 //! fields to the solar system): the roughly disc-shaped emission profile
@@ -84,6 +84,59 @@
 //!      mean collisions per ambient near-zone photon and per emitted photon
 //!      for every sweep cell, and prints a loud WARNING when they are far
 //!      from O(TAU) instead of proceeding silently.
+//!
+//! ## v3: same-population collisions — the photon gas gets pressure
+//!
+//! v2's verdict (commit bf5beb0): every PIECE of the loop is real and
+//! monotonic in TAU (screening, deflection-capture intake, 1.2% emitted
+//! recycling, the geometric near-surface polar inflow window) — but the cell
+//! does NOT self-organize: captured flux funnels onto the emission disc,
+//! equator-aim→polar redirection stays <1%, and large-r polar columns drift
+//! OUTWARD with collisions on. Diagnosis: only CROSS-population binary
+//! collisions exist, so the gas is ballistic and aurora.pdf's actual intake
+//! mechanism ("any spinning sphere creates field potentials with lows at the
+//! poles") has no mechanical carrier. Pressure requires a gas that pushes on
+//! ITSELF. v3 adds the self-collision channel:
+//!
+//!   1. **Two channels per photon.** Each photon marches through BOTH the
+//!      other population's field (cross — sigma_e/sigma_a from TAU, exactly
+//!      as v2) and its OWN population's field (self — sigma_ee/sigma_aa from
+//!      the new TAU_SELF knob). Per step the two rates add; on a collision
+//!      the partner population is chosen proportional to its local rate.
+//!      With TAU_SELF = 0 the RNG draw sequence is bit-identical to v2, so
+//!      the (TAU=3, TAU_SELF=0) sweep cell is a live v2 regression anchor.
+//!   2. **TAU_SELF calibration mirrors v2 fix #3**: sigma_ee such that an
+//!      equatorial emitted photon accumulates TAU_SELF expected self-hits
+//!      through its own analytic profile over r = 1.05 → R_OUT; sigma_aa
+//!      such that a b=0 ambient photon accumulates TAU_SELF expected
+//!      self-hits crossing the near zone (r = B_MAX → 1, path B_MAX − 1)
+//!      through n_a = 1. Both sigmas printed.
+//!   3. **Ambient-ambient far-zone gate (r ≤ B_MAX only).** A uniform
+//!      isotropic gas scattering off itself is ensemble-invariant (isotropic
+//!      in → isotropic out, detailed balance), so far-zone self-collisions
+//!      carry no signal — but they WOULD destroy the importance-sampled aim
+//!      bookkeeping and lengthen every path. Self-collisions therefore act
+//!      only where the near zone's gradients make them meaningful. The
+//!      emitted population needs no gate (its tally is complete everywhere
+//!      and its density dies as 1/r² anyway).
+//!   4. **Knob verification per channel** (v1→v2 lesson, extended): the
+//!      report prints MEASURED mean cross-collisions AND self-collisions per
+//!      photon for every cell, and shouts when either active channel is far
+//!      off its target. Note the shared ricochet cap truncates both channels
+//!      jointly when TAU + TAU_SELF exceeds it.
+//!   5. **New observables for circulation**: a meridional-flux accumulator
+//!      (dir·θ̂_local — the loop signature is poleward drift, antisymmetric
+//!      about the equator) and a printed PRESSURE map (the local collision
+//!      rate per unit length an ambient photon feels) so the disc-ridge-high
+//!      / polar-low landscape and any flow down its gradient are visible
+//!      directly.
+//!
+//! Mechanism note (why this is not just more noise): partner sampling uses
+//! the cell's mean direction and coherence, and the glancing exchange
+//! transfers nothing when photon and partner co-move — so coherent streams
+//! do not jostle themselves (pole.pdf gearing: "co-moving photons jostle,
+//! opposing gears catch"). Pressure emerges only where flows cross or pile
+//! up, which is exactly the disc ridge meeting the ambient inflow.
 //!
 //! ## Deliberate deviations / disambiguations from the literal spec (v1,
 //! still in force)
@@ -243,6 +296,20 @@ fn tau_out_integral() -> f64 {
     R_OUT - R_IN
 }
 
+/// ∫ analytic n_e dr for an equatorial EMITTED photon through its OWN
+/// population, r = TAU_IN_R_MIN → R_OUT (skin excluded, v1 lesson):
+/// profile(0°)·(1/TAU_IN_R_MIN − 1/R_OUT). sigma_ee = TAU_SELF / this.
+fn tau_self_emitted_integral() -> f64 {
+    bimodal_lat_profile(0.0) * (1.0 / TAU_IN_R_MIN - 1.0 / R_OUT)
+}
+
+/// ∫ analytic n_a dr for a b=0 AMBIENT photon through its own population
+/// across the near zone where the self channel is active (see module doc,
+/// v3 fix #3): 1·(B_MAX − R_IN). sigma_aa = TAU_SELF / this.
+fn tau_self_ambient_integral() -> f64 {
+    B_MAX - R_IN
+}
+
 // ---------------------------------------------------------------------
 // Density field (track-length estimator)
 // ---------------------------------------------------------------------
@@ -258,6 +325,10 @@ struct DensityField {
     /// Σ weight*ds*(dir·r̂_local) per cell, r̂_local evaluated at each
     /// photon's own position — the circulation-matrix radial-flow source.
     radial_flux: Vec<f64>,
+    /// Σ weight*ds*(dir·θ̂_local) per cell — meridional flow (v3). θ̂ points
+    /// toward INCREASING colatitude (southward), so poleward drift shows as
+    /// negative in the northern hemisphere and positive in the southern.
+    theta_flux: Vec<f64>,
 }
 
 impl DensityField {
@@ -266,6 +337,7 @@ impl DensityField {
             track_weight: vec![0.0; GRID_CELLS],
             dir_accum: vec![DVec3::ZERO; GRID_CELLS],
             radial_flux: vec![0.0; GRID_CELLS],
+            theta_flux: vec![0.0; GRID_CELLS],
         }
     }
 
@@ -274,10 +346,19 @@ impl DensityField {
         let theta = colatitude_of(pos, r);
         let idx = grid_index(r, theta);
         let r_hat = pos / r;
+        let phi = DVec3::Z.cross(r_hat);
+        // θ̂ = φ̂ × r̂ (southward); on the polar axis φ̂ degenerates and the
+        // meridional component is geometrically undefined — deposit 0 there.
+        let theta_hat = if phi.length_squared() < 1e-18 {
+            DVec3::ZERO
+        } else {
+            phi.normalize().cross(r_hat)
+        };
         let w = weight * ds;
         self.track_weight[idx] += w;
         self.dir_accum[idx] += dir * w;
         self.radial_flux[idx] += w * dir.dot(r_hat);
+        self.theta_flux[idx] += w * dir.dot(theta_hat);
     }
 
     fn density_by_idx(&self, idx: usize) -> f64 {
@@ -314,6 +395,8 @@ impl DensityField {
                 self.dir_accum[idx] * alpha + measured.dir_accum[idx] * (1.0 - alpha);
             out.radial_flux[idx] =
                 alpha * self.radial_flux[idx] + (1.0 - alpha) * measured.radial_flux[idx];
+            out.theta_flux[idx] =
+                alpha * self.theta_flux[idx] + (1.0 - alpha) * measured.theta_flux[idx];
         }
         out
     }
@@ -605,20 +688,58 @@ fn sample_contact_normal(rel_hat: DVec3, rng: &mut u64) -> DVec3 {
     }
 }
 
-/// Ray-marches one photon through the OTHER population's regularized
-/// collision field (`other`, with coupling `sigma`), depositing its own
+/// One glancing hard-sphere exchange against a partner sampled from
+/// `field`'s local mean direction + coherence at (r, theta). Returns the
+/// photon's new direction (unchanged when the pair is exactly co-moving or
+/// the exchange degenerates — co-moving photons don't jostle).
+fn scatter_off(field: &CollisionField, dir: DVec3, r: f64, theta: f64, rng: &mut u64) -> DVec3 {
+    let (mean_dir, coherence) = field.tally.mean_dir_and_coherence_at(r, theta);
+    let mut partner_dir = mean_dir * coherence + rand_unit_vec(rng);
+    if partner_dir.length_squared() < 1e-12 {
+        partner_dir = rand_unit_vec(rng);
+    }
+    partner_dir = partner_dir.normalize();
+
+    let rel = dir - partner_dir;
+    if rel.length_squared() > 1e-12 {
+        let rel_hat = rel.normalize();
+        for _ in 0..4 {
+            let nhat = sample_contact_normal(rel_hat, rng);
+            let candidate = dir - dir.dot(nhat) * nhat + partner_dir.dot(nhat) * nhat;
+            if candidate.length_squared() > 1e-8 {
+                return candidate.normalize();
+            }
+        }
+    }
+    dir
+}
+
+/// Ray-marches one photon through TWO regularized collision fields — the
+/// other population's (`cross`, coupling `sigma_cross`) and its own
+/// population's (`selff`, coupling `sigma_self`; v3) — depositing its own
 /// track-length into `own_field`, until absorbed (r<R_IN), escaped
-/// (r>R_OUT), or lost (safety path-length cap). Returns the termination and
-/// the photon's final collision (bounce) count.
+/// (r>R_OUT), or lost (safety path-length cap). The two channels' rates add
+/// per step; on a collision the partner population is chosen proportional
+/// to its local rate. Returns the termination and the photon's final
+/// (cross, self) collision counts; `n_ricochet` caps their SUM.
+///
+/// With sigma_self = 0 the RNG draw sequence is identical to v2's
+/// single-channel march (no extra draws are consumed), so TAU_SELF = 0
+/// sweep cells reproduce v2 bit-for-bit at equal seeds.
+#[allow(clippy::too_many_arguments)]
 fn march(
     mut photon: Photon,
-    other: &CollisionField,
-    sigma: f64,
+    cross: &CollisionField,
+    sigma_cross: f64,
+    selff: &CollisionField,
+    sigma_self: f64,
     n_ricochet: u32,
     rng: &mut u64,
     own_field: &mut DensityField,
-) -> (Termination, u32) {
+) -> (Termination, u32, u32) {
     let mut path_length = 0.0;
+    let mut cross_bounces = 0u32;
+    let mut self_bounces = 0u32;
     let term = loop {
         let r = photon.pos.length();
         if r < R_IN {
@@ -641,42 +762,52 @@ fn march(
         let theta = colatitude_of(photon.pos, r);
         own_field.deposit(photon.pos, photon.dir, photon.weight, ds);
 
-        if sigma > 0.0 && photon.bounces < n_ricochet {
-            let n_density = other.effective_density_at(r, theta);
-            let p_collide = 1.0 - (-sigma * n_density * ds).exp();
-            if xorshift64(rng) < p_collide {
-                let (mean_dir, coherence) = other.tally.mean_dir_and_coherence_at(r, theta);
-                let mut partner_dir = mean_dir * coherence + rand_unit_vec(rng);
-                if partner_dir.length_squared() < 1e-12 {
-                    partner_dir = rand_unit_vec(rng);
-                }
-                partner_dir = partner_dir.normalize();
-
-                let rel = photon.dir - partner_dir;
-                if rel.length_squared() > 1e-12 {
-                    let rel_hat = rel.normalize();
-                    let mut new_dir = None;
-                    for _ in 0..4 {
-                        let nhat = sample_contact_normal(rel_hat, rng);
-                        let candidate = photon.dir - photon.dir.dot(nhat) * nhat
-                            + partner_dir.dot(nhat) * nhat;
-                        if candidate.length_squared() > 1e-8 {
-                            new_dir = Some(candidate.normalize());
-                            break;
-                        }
+        if (sigma_cross > 0.0 || sigma_self > 0.0) && photon.bounces < n_ricochet {
+            let lam_cross = if sigma_cross > 0.0 {
+                sigma_cross * cross.effective_density_at(r, theta)
+            } else {
+                0.0
+            };
+            // Ambient-ambient far-zone gate (module doc, v3 fix #3): a
+            // uniform isotropic gas is invariant under self-scattering, so
+            // outside the near zone the self channel carries no signal and
+            // is switched off to preserve the aim bookkeeping.
+            let lam_self = if sigma_self > 0.0
+                && !(selff.kind == PhotonKind::Ambient && r > B_MAX)
+            {
+                sigma_self * selff.effective_density_at(r, theta)
+            } else {
+                0.0
+            };
+            let lam = lam_cross + lam_self;
+            if lam > 0.0 {
+                let p_collide = 1.0 - (-lam * ds).exp();
+                if xorshift64(rng) < p_collide {
+                    // Channel pick draws randomness ONLY when both channels
+                    // compete (keeps the sigma_self=0 stream v2-identical).
+                    let use_self = if lam_cross <= 0.0 {
+                        true
+                    } else if lam_self <= 0.0 {
+                        false
+                    } else {
+                        xorshift64(rng) < lam_self / lam
+                    };
+                    let field = if use_self { selff } else { cross };
+                    photon.dir = scatter_off(field, photon.dir, r, theta, rng);
+                    photon.bounces += 1;
+                    if use_self {
+                        self_bounces += 1;
+                    } else {
+                        cross_bounces += 1;
                     }
-                    if let Some(dir) = new_dir {
-                        photon.dir = dir;
-                    }
                 }
-                photon.bounces += 1;
             }
         }
 
         photon.pos += photon.dir * ds;
         path_length += ds;
     };
-    (term, photon.bounces)
+    (term, cross_bounces, self_bounces)
 }
 
 // ---------------------------------------------------------------------
@@ -692,10 +823,13 @@ struct PassTally {
     lost: f64,
     lz_arrived: f64,
     lz_escaped: f64,
-    /// Σ collision (bounce) events over ALL photons — knob verification.
-    collisions_sum: f64,
-    /// Σ bounces over ABSORBED photons — "are arrivals the multiply-
-    /// scattered ones?"
+    /// Σ CROSS-channel collision events over ALL photons — knob verification.
+    collisions_cross_sum: f64,
+    /// Σ SELF-channel collision events over ALL photons (v3) — knob
+    /// verification for TAU_SELF.
+    collisions_self_sum: f64,
+    /// Σ bounces (both channels) over ABSORBED photons — "are arrivals the
+    /// multiply-scattered ones?"
     arrived_bounce_sum: f64,
     // ambient-only:
     aim_eq_count: f64,
@@ -707,9 +841,11 @@ struct PassTally {
 }
 
 impl PassTally {
-    fn record_emitted(&mut self, term: &Termination, bounces: u32) {
+    fn record_emitted(&mut self, term: &Termination, cross_bounces: u32, self_bounces: u32) {
+        let bounces = cross_bounces + self_bounces;
         self.total += 1.0;
-        self.collisions_sum += bounces as f64;
+        self.collisions_cross_sum += cross_bounces as f64;
+        self.collisions_self_sum += self_bounces as f64;
         match term {
             Termination::Absorbed { pos, dir } => {
                 self.arrived += 1.0;
@@ -726,9 +862,17 @@ impl PassTally {
         }
     }
 
-    fn record_ambient(&mut self, term: &Termination, bounces: u32, aim_lat: Option<f64>) {
+    fn record_ambient(
+        &mut self,
+        term: &Termination,
+        cross_bounces: u32,
+        self_bounces: u32,
+        aim_lat: Option<f64>,
+    ) {
+        let bounces = cross_bounces + self_bounces;
         self.total += 1.0;
-        self.collisions_sum += bounces as f64;
+        self.collisions_cross_sum += cross_bounces as f64;
+        self.collisions_self_sum += self_bounces as f64;
         let aim_band = aim_lat.map(lat_band);
         match aim_band {
             Some(Band::Equatorial) => self.aim_eq_count += 1.0,
@@ -765,12 +909,15 @@ impl PassTally {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_pass(
     kind: PhotonKind,
     n: usize,
     swing_boost: f64,
-    other: &CollisionField,
-    sigma: f64,
+    cross: &CollisionField,
+    sigma_cross: f64,
+    selff: &CollisionField,
+    sigma_self: f64,
     n_ricochet: u32,
     rng: &mut u64,
 ) -> (DensityField, PassTally, f64) {
@@ -782,13 +929,17 @@ fn run_pass(
             PhotonKind::Emitted => {
                 let photon = spawn_emitted(rng, swing_boost);
                 lz_source_total += photon.pos.cross(photon.dir).z * photon.weight;
-                let (term, bounces) = march(photon, other, sigma, n_ricochet, rng, &mut field);
-                tally.record_emitted(&term, bounces);
+                let (term, cb, sb) = march(
+                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, rng, &mut field,
+                );
+                tally.record_emitted(&term, cb, sb);
             }
             PhotonKind::Ambient => {
                 let (photon, aim_lat) = spawn_ambient(rng);
-                let (term, bounces) = march(photon, other, sigma, n_ricochet, rng, &mut field);
-                tally.record_ambient(&term, bounces, aim_lat);
+                let (term, cb, sb) = march(
+                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, rng, &mut field,
+                );
+                tally.record_ambient(&term, cb, sb, aim_lat);
             }
         }
     }
@@ -808,6 +959,8 @@ fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, D
         swing_boost,
         &pure_ambient,
         0.0,
+        &pure_emitted,
+        0.0,
         0,
         rng,
     );
@@ -817,6 +970,8 @@ fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, D
         swing_boost,
         &pure_emitted,
         0.0,
+        &pure_ambient,
+        0.0,
         0,
         rng,
     );
@@ -825,9 +980,15 @@ fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, D
 
 struct ReportCell {
     tau_target: f64,
+    /// v3 self-collision optical-depth target (0 = v2 behavior).
+    tau_self: f64,
     n_ricochet: u32,
     sigma_e: f64,
     sigma_a: f64,
+    /// Emitted-through-emitted self coupling (v3).
+    sigma_ee: f64,
+    /// Ambient-through-ambient self coupling (v3, near-zone gated).
+    sigma_aa: f64,
     /// Per-iteration L2 relative change of the (regularized) density fields,
     /// as (emitted, ambient) pairs.
     convergence: Vec<(f64, f64)>,
@@ -843,6 +1004,7 @@ fn run_self_consistent(
     n: usize,
     swing_boost: f64,
     tau_target: f64,
+    tau_self: f64,
     n_ricochet: u32,
     iters: usize,
     emitted0: &DensityField,
@@ -853,6 +1015,15 @@ fn run_self_consistent(
     // derived from the one swept TAU.
     let (sigma_e, sigma_a) = if tau_target > 0.0 {
         (tau_target / tau_in_integral(), tau_target / tau_out_integral())
+    } else {
+        (0.0, 0.0)
+    };
+    // v3: the self channel's couplings from the one swept TAU_SELF.
+    let (sigma_ee, sigma_aa) = if tau_self > 0.0 {
+        (
+            tau_self / tau_self_emitted_integral(),
+            tau_self / tau_self_ambient_integral(),
+        )
     } else {
         (0.0, 0.0)
     };
@@ -871,14 +1042,17 @@ fn run_self_consistent(
         let field_emitted = CollisionField::from_tally(PhotonKind::Emitted, tally_emitted.clone());
         let field_ambient = CollisionField::from_tally(PhotonKind::Ambient, tally_ambient.clone());
 
-        // Emitted march through the AMBIENT field with sigma_a; ambient
-        // march through the EMITTED field with sigma_e.
+        // Emitted march through the AMBIENT field with sigma_a (cross) and
+        // their OWN field with sigma_ee (self); ambient march through the
+        // EMITTED field with sigma_e (cross) and their own with sigma_aa.
         let (measured_emitted, e_tally, lz_src) = run_pass(
             PhotonKind::Emitted,
             n,
             swing_boost,
             &field_ambient,
             sigma_a,
+            &field_emitted,
+            sigma_ee,
             n_ricochet,
             &mut rng,
         );
@@ -888,6 +1062,8 @@ fn run_self_consistent(
             swing_boost,
             &field_emitted,
             sigma_e,
+            &field_ambient,
+            sigma_aa,
             n_ricochet,
             &mut rng,
         );
@@ -915,9 +1091,12 @@ fn run_self_consistent(
 
     ReportCell {
         tau_target,
+        tau_self,
         n_ricochet,
         sigma_e,
         sigma_a,
+        sigma_ee,
+        sigma_aa,
         convergence,
         emitted_tally,
         ambient_tally,
@@ -961,8 +1140,17 @@ mod tests {
         for _ in 0..n {
             let (photon, aim_lat) = spawn_ambient(&mut rng);
             let mut field = DensityField::new();
-            let (term, bounces) = march(photon, &pure_emitted, 0.0, 0, &mut rng, &mut field);
-            assert_eq!(bounces, 0, "collision recorded with sigma=0");
+            let (term, cb, sb) = march(
+                photon,
+                &pure_emitted,
+                0.0,
+                &pure_ambient,
+                0.0,
+                0,
+                &mut rng,
+                &mut field,
+            );
+            assert_eq!(cb + sb, 0, "collision recorded with sigma=0");
             match (aim_lat, &term) {
                 (Some(aim), Termination::Absorbed { pos, .. }) => {
                     let arrival = arrival_latitude(*pos);
@@ -1008,8 +1196,17 @@ mod tests {
         for _ in 0..n {
             let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST);
             let mut field = DensityField::new();
-            let (term, bounces) = march(photon, &pure_ambient, 0.0, 0, &mut rng, &mut field);
-            assert_eq!(bounces, 0, "collision recorded with sigma=0");
+            let (term, cb, sb) = march(
+                photon,
+                &pure_ambient,
+                0.0,
+                &pure_emitted,
+                0.0,
+                0,
+                &mut rng,
+                &mut field,
+            );
+            assert_eq!(cb + sb, 0, "collision recorded with sigma=0");
             if matches!(term, Termination::Absorbed { .. }) {
                 reentries += 1;
             }
@@ -1043,11 +1240,14 @@ mod tests {
     fn free_streaming_emitted_density_falls_like_inverse_r_squared_on_equator() {
         let mut rng = 0x1357_2468_ABCD_EF01u64;
         let pure_ambient = CollisionField::pure_analytic(PhotonKind::Ambient);
+        let pure_emitted = CollisionField::pure_analytic(PhotonKind::Emitted);
         let (field, _tally, _lz) = run_pass(
             PhotonKind::Emitted,
             300_000,
             DEFAULT_SWING_BOOST,
             &pure_ambient,
+            0.0,
+            &pure_emitted,
             0.0,
             0,
             &mut rng,
@@ -1099,10 +1299,28 @@ mod tests {
         let n = 20_000usize;
         let pure_emitted = CollisionField::pure_analytic(PhotonKind::Emitted);
         let pure_ambient = CollisionField::pure_analytic(PhotonKind::Ambient);
-        let (_field_e, emitted_tally, _lz_src) =
-            run_pass(PhotonKind::Emitted, n, 0.0, &pure_ambient, 0.0, 0, &mut rng);
-        let (_field_a, ambient_tally, _) =
-            run_pass(PhotonKind::Ambient, n, 0.0, &pure_emitted, 0.0, 0, &mut rng);
+        let (_field_e, emitted_tally, _lz_src) = run_pass(
+            PhotonKind::Emitted,
+            n,
+            0.0,
+            &pure_ambient,
+            0.0,
+            &pure_emitted,
+            0.0,
+            0,
+            &mut rng,
+        );
+        let (_field_a, ambient_tally, _) = run_pass(
+            PhotonKind::Ambient,
+            n,
+            0.0,
+            &pure_emitted,
+            0.0,
+            &pure_ambient,
+            0.0,
+            0,
+            &mut rng,
+        );
 
         let delivered = ambient_tally.lz_arrived + emitted_tally.lz_arrived;
         let carried_off = ambient_tally.lz_escaped + emitted_tally.lz_escaped;
@@ -1114,12 +1332,103 @@ mod tests {
         );
     }
 
-    /// The CM-3 v2 report: sweeps TAU (symmetric optical-depth target, v2
-    /// fix #3) x N_RICOCHET (max bounces), self-consistently settles both
-    /// populations' regularized density fields for ITERS passes, and prints
-    /// the screening, redirection, recycling, circulation, and
-    /// spin-sustenance evidence for the disc-to-pole loop claim — plus the
-    /// v2 knob verification (measured vs target collision counts, printed
+    /// (d) v3 self-collision channel: wiring, the shared ricochet cap, and
+    /// the ambient-ambient far-zone gate.
+    #[test]
+    fn self_collision_channel_wires_caps_and_gates() {
+        let mut rng = 0xDEAD_BEEF_CAFE_0001u64;
+        let pure_ambient = CollisionField::pure_analytic(PhotonKind::Ambient);
+        let pure_emitted = CollisionField::pure_analytic(PhotonKind::Emitted);
+
+        // Emitted photons, cross channel OFF, self coupling enormous: every
+        // collision must land on the self channel, capped by n_ricochet.
+        // (Launch latitudes sit on the profile peaks where the analytic
+        // self-density is ~0.25, so sigma_ee=1000 collides within a step.)
+        let cap = 5u32;
+        let mut any_self = false;
+        for _ in 0..200 {
+            let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST);
+            let mut field = DensityField::new();
+            let (_term, cb, sb) = march(
+                photon,
+                &pure_ambient,
+                0.0,
+                &pure_emitted,
+                1000.0,
+                cap,
+                &mut rng,
+                &mut field,
+            );
+            assert_eq!(cb, 0, "cross collision recorded with sigma_cross=0");
+            assert!(sb <= cap, "self bounces {sb} exceeded the shared ricochet cap {cap}");
+            if sb > 0 {
+                any_self = true;
+            }
+        }
+        assert!(
+            any_self,
+            "huge sigma_ee produced zero self collisions — self channel not wired"
+        );
+
+        // Ambient far-zone gate: a line entirely outside r = B_MAX must
+        // never self-collide, at ANY coupling.
+        let far = Photon {
+            pos: DVec3::new(B_MAX + 2.0, 0.0, 0.0),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+        };
+        let mut field = DensityField::new();
+        let (term, cb, sb) = march(
+            far,
+            &pure_emitted,
+            0.0,
+            &pure_ambient,
+            1000.0,
+            100,
+            &mut rng,
+            &mut field,
+        );
+        assert_eq!(cb, 0);
+        assert_eq!(
+            sb, 0,
+            "ambient self-collision fired outside the near zone — far-zone gate broken"
+        );
+        assert!(matches!(term, Termination::Escaped { .. }));
+
+        // Inside the near zone the same coupling must fire immediately.
+        let near = Photon {
+            pos: DVec3::new(2.0, 0.0, 0.0),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+        };
+        let mut field = DensityField::new();
+        let (_term, _cb, sb) = march(
+            near,
+            &pure_emitted,
+            0.0,
+            &pure_ambient,
+            1000.0,
+            100,
+            &mut rng,
+            &mut field,
+        );
+        assert!(
+            sb > 0,
+            "ambient self-collision failed to fire inside the near zone"
+        );
+    }
+
+    /// The CM-3 v3 report: sweeps TAU (cross optical depth, v2 fix #3) x
+    /// TAU_SELF (same-population optical depth, v3) x N_RICOCHET,
+    /// self-consistently settles both populations' regularized density
+    /// fields for ITERS passes, and prints the screening, redirection,
+    /// recycling, circulation, PRESSURE, and spin-sustenance evidence for
+    /// the disc-to-pole loop claim — plus per-channel knob verification
+    /// (measured vs target collision counts for BOTH channels, printed
     /// loudly when off). All ambient statistics are CONDITIONAL on the
     /// importance-sampled near-zone ensemble (lines with impact parameter
     /// b ≤ B_MAX=6; see module doc, v2 fix #1).
@@ -1133,7 +1442,7 @@ mod tests {
         let swing_boost = DEFAULT_SWING_BOOST;
         let mut seed = 0x9E37_79B9_7F4A_7C15u64;
 
-        println!("=== CM-3 Recycling Loop Report (v2: importance-sampled ambient, analytic regularized fields, symmetric TAU) ===");
+        println!("=== CM-3 Recycling Loop Report (v3: v2 + same-population collisions = photon-gas pressure) ===");
         println!(
             "N per population = {n}, ITERS = {ITERS}, grid = {N_R}x{N_THETA} (r,theta), R_OUT = {R_OUT}, swing_boost = {swing_boost}, B_MAX = {B_MAX}"
         );
@@ -1141,46 +1450,49 @@ mod tests {
             "AMBIENT ENSEMBLE IS CONDITIONAL: all ambient photons are straight-line launches with impact parameter b <= {B_MAX} (area-weighted = correct relative flux within the near zone). Absolute capture fractions are conditional on this ensemble."
         );
         println!(
-            "TAU calibration (analytic): TAU_in integral (b=0 equatorial, r={TAU_IN_R_MIN}->{TAU_IN_R_MAX}, profile(0)={:.6}) = {:.6}; TAU_out integral (equatorial emitted, r=1->{R_OUT}, n_a=1) = {:.1}",
+            "TAU calibration (analytic, cross): TAU_in integral (b=0 equatorial, r={TAU_IN_R_MIN}->{TAU_IN_R_MAX}, profile(0)={:.6}) = {:.6}; TAU_out integral (equatorial emitted, r=1->{R_OUT}, n_a=1) = {:.1}",
             bimodal_lat_profile(0.0),
             tau_in_integral(),
             tau_out_integral()
         );
+        println!(
+            "TAU_SELF calibration (analytic, self): emitted-emitted integral (equatorial, r={TAU_IN_R_MIN}->{R_OUT}) = {:.6}; ambient-ambient integral (near-zone path, B_MAX-1) = {:.1}. Ambient self channel is GATED to r <= B_MAX (far-zone self-scattering of a uniform isotropic gas is ensemble-null).",
+            tau_self_emitted_integral(),
+            tau_self_ambient_integral()
+        );
 
         let (emitted0, ambient0) = run_iteration0(n, swing_boost, &mut seed);
 
-        let tau_values = [0.0, 1.0, 3.0, 10.0];
-        let ricochet_values = [3u32, 10, 30];
+        // (TAU, TAU_SELF, N_RICOCHET) sweep: the TAU_SELF=0 row at TAU=3 is
+        // the live v2 regression anchor; the TAU=0/TAU_SELF=3 cell isolates
+        // pure self-pressure with the cross channel off.
+        let mut specs: Vec<(f64, f64, u32)> = vec![(0.0, 0.0, 0)];
+        for &ts in &[0.0f64, 1.0, 3.0, 10.0] {
+            for &nr in &[10u32, 30] {
+                specs.push((3.0, ts, nr));
+            }
+        }
+        specs.push((0.0, 3.0, 30));
 
         let mut cells: Vec<ReportCell> = Vec::new();
-        for &tau in &tau_values {
-            if tau == 0.0 {
-                println!("TAU=0.0 -> sigma_e = 0, sigma_a = 0 (control, ricochet sweep skipped)");
-                seed = seed.wrapping_add(1);
-                cells.push(run_self_consistent(
-                    n, swing_boost, tau, 0, ITERS, &emitted0, &ambient0, seed,
-                ));
-            } else {
-                println!(
-                    "TAU={tau:.1} -> sigma_e (ambient-through-emitted) = {:.4}, sigma_a (emitted-through-ambient) = {:.6}",
-                    tau / tau_in_integral(),
-                    tau / tau_out_integral()
-                );
-                for &nr in &ricochet_values {
-                    seed = seed.wrapping_add(1);
-                    cells.push(run_self_consistent(
-                        n, swing_boost, tau, nr, ITERS, &emitted0, &ambient0, seed,
-                    ));
-                }
-            }
+        for &(tau, tau_self, nr) in &specs {
+            seed = seed.wrapping_add(1);
+            let cell = run_self_consistent(
+                n, swing_boost, tau, tau_self, nr, ITERS, &emitted0, &ambient0, seed,
+            );
+            println!(
+                "cell TAU={tau:.1} TAU_SELF={tau_self:.1} Nric={nr} -> sigma_e={:.4} sigma_a={:.6} sigma_ee={:.4} sigma_aa={:.6}",
+                cell.sigma_e, cell.sigma_a, cell.sigma_ee, cell.sigma_aa
+            );
+            cells.push(cell);
         }
 
         println!();
-        println!("KNOB VERIFICATION + main sweep table (per cell; cAmb/cEm = MEASURED mean collisions per ambient/emitted photon vs target TAU; bArr/bReent = mean ricochets among ambient arrivals / emitted re-entries):");
+        println!("KNOB VERIFICATION + main sweep table (per cell; cAmb/cEm = MEASURED mean CROSS collisions per ambient/emitted photon vs TAU; sAmb/sEm = MEASURED mean SELF collisions vs TAU_SELF; bArr/bReent = mean ricochets among ambient arrivals / emitted re-entries):");
         println!(
-            "{:>5} {:>4} | {:>7} {:>7} | {:>8} {:>8} {:>8} {:>8} | {:>9} {:>8} {:>8} {:>8} {:>8} | {:>8} {:>8} | {:>6} {:>7} | {:>11} {:>9} {:>5}",
-            "TAU", "Nric",
-            "cAmb", "cEm",
+            "{:>5} {:>5} {:>4} | {:>7} {:>7} {:>7} {:>7} | {:>8} {:>8} {:>8} {:>8} | {:>9} {:>8} {:>8} {:>8} {:>8} | {:>8} {:>8} | {:>6} {:>7} | {:>11} {:>9} {:>5}",
+            "TAU", "TAUs", "Nric",
+            "cAmb", "cEm", "sAmb", "sEm",
             "amb_arr", "polar", "mid", "equat",
             "redirEq>P", "missCapt", "missPol", "missMid", "missEq",
             "em_reent", "em_esc",
@@ -1192,8 +1504,10 @@ mod tests {
             let a = &cell.ambient_tally;
             let e = &cell.emitted_tally;
 
-            let c_amb = a.collisions_sum / a.total;
-            let c_em = e.collisions_sum / e.total;
+            let c_amb = a.collisions_cross_sum / a.total;
+            let c_em = e.collisions_cross_sum / e.total;
+            let s_amb = a.collisions_self_sum / a.total;
+            let s_em = e.collisions_self_sum / e.total;
 
             let amb_arr_frac = a.arrived / a.total;
             let polar_frac = a.arrived_band[Band::Polar as usize] / a.total;
@@ -1254,16 +1568,16 @@ mod tests {
             } else {
                 "FLIP"
             };
-            let nric_label = if cell.tau_target == 0.0 {
+            let nric_label = if cell.tau_target == 0.0 && cell.tau_self == 0.0 {
                 "n/a".to_string()
             } else {
                 cell.n_ricochet.to_string()
             };
 
             println!(
-                "{:>5.1} {:>4} | {:>7.3} {:>7.3} | {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>9.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>8.4} {:>8.4} | {:>6.2} {:>7.2} | {:>11.6} {:>9.4} {:>5}",
-                cell.tau_target, nric_label,
-                c_amb, c_em,
+                "{:>5.1} {:>5.1} {:>4} | {:>7.3} {:>7.3} {:>7.3} {:>7.3} | {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>9.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>8.4} {:>8.4} | {:>6.2} {:>7.2} | {:>11.6} {:>9.4} {:>5}",
+                cell.tau_target, cell.tau_self, nric_label,
+                c_amb, c_em, s_amb, s_em,
                 amb_arr_frac, polar_frac, mid_frac, eq_frac,
                 redirect, miss_capture, miss_pol, miss_mid, miss_eq,
                 em_reentry, em_escape,
@@ -1271,27 +1585,34 @@ mod tests {
                 net_per_photon, fb_ratio, sign_label
             );
 
-            // v2 fix #4: the knob must be PROVEN to work. The ricochet cap
-            // truncates the achievable count, so compare against
-            // min(TAU, N_RICOCHET); the ambient ensemble mean is further
-            // diluted below the b=0 equatorial calibration ray by latitude
-            // profile + impact-parameter spread, so use a generous O(1)
-            // band and shout only when the knob is broken by >5x.
-            if cell.tau_target > 0.0 {
-                let target = cell.tau_target.min(cell.n_ricochet as f64);
-                for (label, measured) in [("ambient", c_amb), ("emitted", c_em)] {
+            // v2 fix #4, extended per channel: each ACTIVE channel's knob
+            // must be PROVEN to work. The SHARED ricochet cap truncates both
+            // channels jointly, so each channel's effective target is
+            // min(its TAU, N_RICOCHET) and the band stays generous — shout
+            // only when a knob is broken by >5x. (When TAU + TAU_SELF
+            // exceeds the cap, both channels read low together; that shows
+            // up here as ratios sliding toward 0.2, by design.)
+            let checks = [
+                ("cross/ambient", cell.tau_target, c_amb),
+                ("cross/emitted", cell.tau_target, c_em),
+                ("self/ambient", cell.tau_self, s_amb),
+                ("self/emitted", cell.tau_self, s_em),
+            ];
+            for (label, tau_knob, measured) in checks {
+                if tau_knob > 0.0 {
+                    let target = tau_knob.min(cell.n_ricochet as f64);
                     let ratio = measured / target;
                     if !(0.2..=5.0).contains(&ratio) {
                         knob_warnings.push(format!(
-                            "WARNING: TAU={:.1} Nric={} {} measured mean collisions {:.3} vs effective target {:.1} (ratio {:.3}) — KNOB IS OFF, treat this cell's physics columns with suspicion",
-                            cell.tau_target, cell.n_ricochet, label, measured, target, ratio
+                            "WARNING: TAU={:.1} TAU_SELF={:.1} Nric={} {} measured mean collisions {:.3} vs effective target {:.1} (ratio {:.3}) — KNOB IS OFF, treat this cell's physics columns with suspicion",
+                            cell.tau_target, cell.tau_self, cell.n_ricochet, label, measured, target, ratio
                         ));
                     }
                 }
             }
         }
         if knob_warnings.is_empty() {
-            println!("\nKNOB CHECK: all sweep cells' measured collision counts are within [0.2, 5.0]x of min(TAU, N_RICOCHET) — the optical-depth knob is working.");
+            println!("\nKNOB CHECK: all active channels' measured collision counts are within [0.2, 5.0]x of min(their TAU, N_RICOCHET) — both optical-depth knobs are working.");
         } else {
             println!("\nKNOB CHECK FAILURES ({}):", knob_warnings.len());
             for w in &knob_warnings {
@@ -1299,48 +1620,94 @@ mod tests {
             }
         }
 
-        let control = cells
-            .iter()
-            .find(|c| c.tau_target == 0.0)
-            .expect("TAU=0 control cell present");
-        let flagship = cells
-            .iter()
-            .find(|c| c.tau_target == 3.0 && c.n_ricochet == 10)
-            .expect("TAU=3, N_RICOCHET=10 flagship cell present");
+        let find_cell = |tau: f64, tau_self: f64, nric: u32| -> &ReportCell {
+            cells
+                .iter()
+                .find(|c| c.tau_target == tau && c.tau_self == tau_self && c.n_ricochet == nric)
+                .expect("sweep cell present")
+        };
+        let highlighted = [
+            ("CONTROL (TAU=0, TAU_SELF=0)", find_cell(0.0, 0.0, 0)),
+            ("V2 ANCHOR (TAU=3, TAU_SELF=0, Nric=10)", find_cell(3.0, 0.0, 10)),
+            ("FLAGSHIP (TAU=3, TAU_SELF=3, Nric=30)", find_cell(3.0, 3.0, 30)),
+            ("SELF-ONLY (TAU=0, TAU_SELF=3, Nric=30)", find_cell(0.0, 3.0, 30)),
+        ];
 
-        for (label, cell) in [
-            ("CONTROL (TAU=0)", control),
-            ("FLAGSHIP (TAU=3, N_RICOCHET=10)", flagship),
-        ] {
+        for (label, cell) in highlighted {
             println!("\n--- {label}: per-iteration convergence (L2 relative change of regularized density fields, emitted / ambient) ---");
             for (k, (ce, ca)) in cell.convergence.iter().enumerate() {
                 println!("  iter {}: emitted {:.6}  ambient {:.6}", k + 1, ce, ca);
             }
 
-            println!("--- {label}: circulation matrix (rows = radial bin edge r, every 3rd bin; cols = theta bin edge in deg, every 2nd bin) ---");
-            println!("    value = mean radial-flow component of combined emitted+ambient flux in that cell, bounded [-1,1]; + = net outward, - = net inward, 0 = no net radial bias.");
-            print!("{:>10}", "r\\theta");
-            for j in (0..N_THETA).step_by(2) {
-                print!(" {:>7.0}", theta_edge(j).to_degrees());
-            }
-            println!();
-            for i in (0..N_R).step_by(3) {
-                print!("{:>10.3}", r_edge(i));
+            let print_matrix = |value_at: &dyn Fn(usize) -> f64| {
+                print!("{:>10}", "r\\theta");
                 for j in (0..N_THETA).step_by(2) {
-                    let idx = i * N_THETA + j;
-                    let combined_w = cell.final_emitted_field.track_weight[idx]
-                        + cell.final_ambient_field.track_weight[idx];
-                    let combined_flux = cell.final_emitted_field.radial_flux[idx]
-                        + cell.final_ambient_field.radial_flux[idx];
-                    let val = if combined_w > 1e-9 {
-                        combined_flux / combined_w
-                    } else {
-                        0.0
-                    };
-                    print!(" {val:>7.3}");
+                    print!(" {:>7.0}", theta_edge(j).to_degrees());
                 }
                 println!();
+                for i in (0..N_R).step_by(3) {
+                    print!("{:>10.3}", r_edge(i));
+                    for j in (0..N_THETA).step_by(2) {
+                        let val = value_at(i * N_THETA + j);
+                        print!(" {val:>7.3}");
+                    }
+                    println!();
+                }
+            };
+
+            // Combined matrices show the whole gas; the AMBIENT-ONLY split
+            // is the decisive intake readout — near the axis the combined
+            // numbers are dominated by the emitted population's outflow, so
+            // only the split can show whether ambient flows DOWN the polar
+            // column (the loop's intake limb).
+            let sources: [(&str, Vec<&DensityField>); 2] = [
+                (
+                    "combined emitted+ambient",
+                    vec![&cell.final_emitted_field, &cell.final_ambient_field],
+                ),
+                ("AMBIENT-ONLY", vec![&cell.final_ambient_field]),
+            ];
+            for (src_label, fields) in &sources {
+                let flow = |accessor: fn(&DensityField) -> &Vec<f64>, idx: usize| -> f64 {
+                    let w: f64 = fields.iter().map(|f| f.track_weight[idx]).sum();
+                    let flux: f64 = fields.iter().map(|f| accessor(f)[idx]).sum();
+                    if w > 1e-9 {
+                        flux / w
+                    } else {
+                        0.0
+                    }
+                };
+
+                println!("--- {label}: circulation matrix, {src_label} (rows = radial bin edge r, every 3rd bin; cols = theta bin edge in deg, every 2nd bin) ---");
+                println!("    value = mean radial-flow component of {src_label} flux in that cell, bounded [-1,1]; + = net outward, - = net inward, 0 = no net radial bias.");
+                print_matrix(&|idx| flow(|f| &f.radial_flux, idx));
+
+                println!("--- {label}: meridional matrix, {src_label} (same layout) ---");
+                println!("    value = mean theta-flow component (dir . theta_hat, theta_hat points SOUTHWARD/toward increasing colatitude). POLEWARD drift = negative at theta<90 and positive at theta>90 (antisymmetric about the equator); equatorward drift = the reverse.");
+                print_matrix(&|idx| flow(|f| &f.theta_flux, idx));
             }
+
+            println!("--- {label}: pressure map (same layout) ---");
+            println!("    value = local collision rate per unit path an AMBIENT photon feels: sigma_e*n_e_eff + [r<=B_MAX] sigma_aa*n_a_eff — the landscape whose gradient the gas should flow down (disc ridge high, polar axis low if the loop's intake mechanism is real).");
+            let f_e = CollisionField::from_tally(
+                PhotonKind::Emitted,
+                cell.final_emitted_field.clone(),
+            );
+            let f_a = CollisionField::from_tally(
+                PhotonKind::Ambient,
+                cell.final_ambient_field.clone(),
+            );
+            print_matrix(&|idx| {
+                let i = idx / N_THETA;
+                let j = idx % N_THETA;
+                let r_c = (r_edge(i) * r_edge(i + 1)).sqrt();
+                let th_c = 0.5 * (theta_edge(j) + theta_edge(j + 1));
+                let mut lam = cell.sigma_e * f_e.effective_density_at(r_c, th_c);
+                if r_c <= B_MAX {
+                    lam += cell.sigma_aa * f_a.effective_density_at(r_c, th_c);
+                }
+                lam
+            });
         }
 
         let elapsed = started.elapsed();
