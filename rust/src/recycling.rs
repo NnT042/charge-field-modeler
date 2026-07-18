@@ -138,6 +138,50 @@
 //! opposing gears catch"). Pressure emerges only where flows cross or pile
 //! up, which is exactly the disc ridge meeting the ambient inflow.
 //!
+//! ## v4: the pump surface + the charge-pause bubble
+//!
+//! v3's verdict (commit 1b66357): pressure is a REAL carrier — the polar-low
+//! landscape is measured and the gas responds down-gradient monotonically in
+//! TAU_SELF — but the cell still doesn't close: the poles stay exhaust.
+//! Diagnosis: the particle was an INFINITE ONE-WAY SOURCE (emission spawned
+//! unconditionally, absorption passive), so nothing coupled intake to output
+//! and pressure could only redirect a wind, never wrap it into a loop.
+//!
+//! v4 makes the particle an ENGINE (user decision, option (a)):
+//!
+//!   1. **Endogenous emission budget (the pump).** In pump mode the emitted
+//!      population's per-iteration launch count is no longer fixed at N — it
+//!      equals the PREVIOUS iteration's measured absorption (ambient
+//!      arrivals + emitted re-entries). Intake determines output; photon
+//!      number is conserved by the surface in steady state; the settled
+//!      budget is the engine's throughput and is printed per iteration.
+//!      Sources: eccen.html ("you have two winds... The Sun takes in this
+//!      wind at the poles, due to spin, and emits it at the equator");
+//!      pause.html ("charge goes in at the poles... all matter is an
+//!      engine"). Collision-field STRENGTH stays knob-set (TAU/TAU_SELF
+//!      against the analytic seeds, as v2/v3) — the pump changes the source
+//!      topology, not the coupling calibration; tying coupling strength to
+//!      measured throughput is a further rung, deliberately not taken yet.
+//!   2. **The charge-pause bubble (user's heliopause picture, 2026-07-18).**
+//!      The emitted wind meeting the ambient inflow should form a balance
+//!      boundary — pause.html's magnetopause IS "the boundary between the
+//!      charge field of the Earth and the charge field of the Sun"
+//!      ("the magnetopause is at the charge-pause"); startrek.pdf: two
+//!      photon fields meeting head to head "causes a boundary. There must be
+//!      some altitude at which the local energy (density) of one field
+//!      equals that of the other. We would expect to see special effects at
+//!      this boundary."; eccen.html: returning charge "will be compressed
+//!      and its density will be increased". New observables, all measured
+//!      not assumed: (i) the CROSSOVER SURFACE r_c(θ) — outermost radius
+//!      with net inward combined radial flow, per θ (prediction: bulged at
+//!      the disc where emission pushes ambient back, pinched at the poles =
+//!      the intake funnel); (ii) SHELL DENSITY PROFILES per latitude band
+//!      (looking for the compression ridge — note the correction cap bounds
+//!      any tally ridge at 4x analytic, so a stronger shell would be
+//!      under-reported; documented, revisit if the ridge saturates the
+//!      cap); (iii) the ambient ABSORPTION latitude split (does intake
+//!      shift poleward once the pump runs — the in-at-the-poles signature).
+//!
 //! ## Deliberate deviations / disambiguations from the literal spec (v1,
 //! still in force)
 //!
@@ -183,6 +227,10 @@ const GRID_CELLS: usize = N_R * N_THETA;
 
 /// Self-consistent field-iteration passes (feedback-loop settling).
 pub const ITERS: usize = 4;
+/// Pump-mode passes (v4): the endogenous emission budget needs extra
+/// iterations to settle (n_emit* = A/(1 − reabsorption_fraction) is reached
+/// geometrically; ~3 iters after the ambient field stabilizes).
+pub const ITERS_PUMP: usize = 8;
 /// Photons per population per pass (report default; unit tests use less).
 pub const DEFAULT_N: usize = 200_000;
 /// Tangential exit-direction boost — the settled proton-scale outer_spin
@@ -982,6 +1030,13 @@ struct ReportCell {
     tau_target: f64,
     /// v3 self-collision optical-depth target (0 = v2 behavior).
     tau_self: f64,
+    /// v4 pump mode: emitted budget = previous iteration's absorption.
+    pump: bool,
+    /// Per-iteration (ambient_absorbed, emitted_reabsorbed, next_budget);
+    /// empty in forced-source mode.
+    budget_track: Vec<(f64, f64, usize)>,
+    /// The final iteration's emitted launch count (== n in forced mode).
+    n_emit_final: usize,
     n_ricochet: u32,
     sigma_e: f64,
     sigma_a: f64,
@@ -1007,6 +1062,7 @@ fn run_self_consistent(
     tau_self: f64,
     n_ricochet: u32,
     iters: usize,
+    pump: bool,
     emitted0: &DensityField,
     ambient0: &DensityField,
     seed: u64,
@@ -1038,6 +1094,12 @@ fn run_self_consistent(
     let mut final_emitted_field = tally_emitted.clone();
     let mut final_ambient_field = tally_ambient.clone();
 
+    // v4 pump: emitted budget starts at 0 (nothing has been absorbed yet)
+    // and becomes the previous iteration's measured absorption. Forced
+    // mode keeps the fixed N source (v2/v3 behavior).
+    let mut n_emit = if pump { 0 } else { n };
+    let mut budget_track: Vec<(f64, f64, usize)> = Vec::new();
+
     for _ in 0..iters {
         let field_emitted = CollisionField::from_tally(PhotonKind::Emitted, tally_emitted.clone());
         let field_ambient = CollisionField::from_tally(PhotonKind::Ambient, tally_ambient.clone());
@@ -1047,7 +1109,7 @@ fn run_self_consistent(
         // EMITTED field with sigma_e (cross) and their own with sigma_aa.
         let (measured_emitted, e_tally, lz_src) = run_pass(
             PhotonKind::Emitted,
-            n,
+            n_emit,
             swing_boost,
             &field_ambient,
             sigma_a,
@@ -1067,6 +1129,12 @@ fn run_self_consistent(
             n_ricochet,
             &mut rng,
         );
+
+        if pump {
+            let next = (a_tally.arrived + e_tally.arrived).round() as usize;
+            budget_track.push((a_tally.arrived, e_tally.arrived, next));
+            n_emit = next;
+        }
 
         let new_emitted = tally_emitted.relax(&measured_emitted, 0.5);
         let new_ambient = tally_ambient.relax(&measured_ambient, 0.5);
@@ -1092,6 +1160,9 @@ fn run_self_consistent(
     ReportCell {
         tau_target,
         tau_self,
+        pump,
+        budget_track,
+        n_emit_final: emitted_tally.total as usize,
         n_ricochet,
         sigma_e,
         sigma_a,
@@ -1422,6 +1493,46 @@ mod tests {
         );
     }
 
+    /// (e) v4 pump mode at TAU=0: the endogenous emission budget must settle
+    /// to the pure geometric absorption rate (P(b<=1) = 1/36 of the
+    /// conditional ambient ensemble), and TAU=0 recycled photons never
+    /// re-enter (straight outward lines), so the budget is ambient-fed only.
+    #[test]
+    fn pump_budget_tracks_geometric_absorption_at_tau0() {
+        let mut rng = 0xBEE5_0000_1234_ABCDu64;
+        let n = 20_000usize;
+        let (emitted0, ambient0) = run_iteration0(n, DEFAULT_SWING_BOOST, &mut rng);
+        let cell = run_self_consistent(
+            n,
+            DEFAULT_SWING_BOOST,
+            0.0,
+            0.0,
+            0,
+            4,
+            true,
+            &emitted0,
+            &ambient0,
+            0x5eed_5eed_5eed_5eedu64,
+        );
+        assert_eq!(cell.budget_track.len(), 4);
+
+        let (a1, e1, next1) = cell.budget_track[0];
+        assert!(a1 > 0.0, "ambient absorption must be nonzero");
+        assert_eq!(e1, 0.0, "iteration 1 launches zero emitted photons");
+        assert_eq!(next1, a1 as usize);
+
+        let e = &cell.emitted_tally;
+        assert_eq!(e.arrived, 0.0, "TAU=0 recycled photons must never re-enter");
+        assert!(cell.n_emit_final > 0, "pump budget failed to spin up");
+
+        let a = &cell.ambient_tally;
+        let frac = a.arrived / a.total;
+        assert!(
+            (frac - 1.0 / 36.0).abs() < 0.01,
+            "geometric absorption fraction {frac:.4} far from 1/36"
+        );
+    }
+
     /// The CM-3 v3 report: sweeps TAU (cross optical depth, v2 fix #3) x
     /// TAU_SELF (same-population optical depth, v3) x N_RICOCHET,
     /// self-consistently settles both populations' regularized density
@@ -1442,7 +1553,7 @@ mod tests {
         let swing_boost = DEFAULT_SWING_BOOST;
         let mut seed = 0x9E37_79B9_7F4A_7C15u64;
 
-        println!("=== CM-3 Recycling Loop Report (v3: v2 + same-population collisions = photon-gas pressure) ===");
+        println!("=== CM-3 Recycling Loop Report (v4: v3 pressure gas + pump surface (endogenous emission budget) + charge-pause observables) ===");
         println!(
             "N per population = {n}, ITERS = {ITERS}, grid = {N_R}x{N_THETA} (r,theta), R_OUT = {R_OUT}, swing_boost = {swing_boost}, B_MAX = {B_MAX}"
         );
@@ -1463,35 +1574,44 @@ mod tests {
 
         let (emitted0, ambient0) = run_iteration0(n, swing_boost, &mut seed);
 
-        // (TAU, TAU_SELF, N_RICOCHET) sweep: the TAU_SELF=0 row at TAU=3 is
-        // the live v2 regression anchor; the TAU=0/TAU_SELF=3 cell isolates
-        // pure self-pressure with the cross channel off.
-        let mut specs: Vec<(f64, f64, u32)> = vec![(0.0, 0.0, 0)];
-        for &ts in &[0.0f64, 1.0, 3.0, 10.0] {
-            for &nr in &[10u32, 30] {
-                specs.push((3.0, ts, nr));
-            }
-        }
-        specs.push((0.0, 3.0, 30));
+        // (pump, TAU, TAU_SELF, N_RICOCHET, iters) sweep — v4. The forced
+        // flagship is the v3 regression anchor; every pump cell's emission
+        // budget is endogenous (= previous iteration's absorption). The
+        // pump null (TAU=0, TAU_SELF=0) measures the pure geometric engine;
+        // the self-only pump cell isolates pressure with cross off.
+        let specs: Vec<(bool, f64, f64, u32, usize)> = vec![
+            (false, 3.0, 3.0, 30, ITERS),
+            (true, 0.0, 0.0, 0, ITERS_PUMP),
+            (true, 3.0, 0.0, 30, ITERS_PUMP),
+            (true, 3.0, 1.0, 30, ITERS_PUMP),
+            (true, 3.0, 3.0, 30, ITERS_PUMP),
+            (true, 3.0, 10.0, 30, ITERS_PUMP),
+            (true, 0.0, 3.0, 30, ITERS_PUMP),
+        ];
 
         let mut cells: Vec<ReportCell> = Vec::new();
-        for &(tau, tau_self, nr) in &specs {
+        for &(pump, tau, tau_self, nr, iters) in &specs {
             seed = seed.wrapping_add(1);
             let cell = run_self_consistent(
-                n, swing_boost, tau, tau_self, nr, ITERS, &emitted0, &ambient0, seed,
+                n, swing_boost, tau, tau_self, nr, iters, pump, &emitted0, &ambient0, seed,
             );
             println!(
-                "cell TAU={tau:.1} TAU_SELF={tau_self:.1} Nric={nr} -> sigma_e={:.4} sigma_a={:.6} sigma_ee={:.4} sigma_aa={:.6}",
-                cell.sigma_e, cell.sigma_a, cell.sigma_ee, cell.sigma_aa
+                "cell {} TAU={tau:.1} TAU_SELF={tau_self:.1} Nric={nr} iters={iters} -> sigma_e={:.4} sigma_a={:.6} sigma_ee={:.4} sigma_aa={:.6} n_emit_final={}",
+                if pump { "PUMP" } else { "FORCED" },
+                cell.sigma_e,
+                cell.sigma_a,
+                cell.sigma_ee,
+                cell.sigma_aa,
+                cell.n_emit_final
             );
             cells.push(cell);
         }
 
         println!();
-        println!("KNOB VERIFICATION + main sweep table (per cell; cAmb/cEm = MEASURED mean CROSS collisions per ambient/emitted photon vs TAU; sAmb/sEm = MEASURED mean SELF collisions vs TAU_SELF; bArr/bReent = mean ricochets among ambient arrivals / emitted re-entries):");
+        println!("KNOB VERIFICATION + main sweep table (per cell; cAmb/cEm = MEASURED mean CROSS collisions per ambient/emitted photon vs TAU; sAmb/sEm = MEASURED mean SELF collisions vs TAU_SELF; bArr/bReent = mean ricochets among ambient arrivals / emitted re-entries; nEmit = final-iteration emitted budget — pump cells' emitted stats ride on this smaller sample):");
         println!(
-            "{:>5} {:>5} {:>4} | {:>7} {:>7} {:>7} {:>7} | {:>8} {:>8} {:>8} {:>8} | {:>9} {:>8} {:>8} {:>8} {:>8} | {:>8} {:>8} | {:>6} {:>7} | {:>11} {:>9} {:>5}",
-            "TAU", "TAUs", "Nric",
+            "{:>4} {:>5} {:>5} {:>4} {:>7} | {:>7} {:>7} {:>7} {:>7} | {:>8} {:>8} {:>8} {:>8} | {:>9} {:>8} {:>8} {:>8} {:>8} | {:>8} {:>8} | {:>6} {:>7} | {:>11} {:>9} {:>5}",
+            "mode", "TAU", "TAUs", "Nric", "nEmit",
             "cAmb", "cEm", "sAmb", "sEm",
             "amb_arr", "polar", "mid", "equat",
             "redirEq>P", "missCapt", "missPol", "missMid", "missEq",
@@ -1504,10 +1624,13 @@ mod tests {
             let a = &cell.ambient_tally;
             let e = &cell.emitted_tally;
 
+            // .max(1.0): a pump cell whose budget collapsed to zero would
+            // otherwise print NaN columns; 0/1 = 0 reads correctly as
+            // "no emitted photons, no collisions".
             let c_amb = a.collisions_cross_sum / a.total;
-            let c_em = e.collisions_cross_sum / e.total;
+            let c_em = e.collisions_cross_sum / e.total.max(1.0);
             let s_amb = a.collisions_self_sum / a.total;
-            let s_em = e.collisions_self_sum / e.total;
+            let s_em = e.collisions_self_sum / e.total.max(1.0);
 
             let amb_arr_frac = a.arrived / a.total;
             let polar_frac = a.arrived_band[Band::Polar as usize] / a.total;
@@ -1540,8 +1663,8 @@ mod tests {
                 f64::NAN
             };
 
-            let em_reentry = e.arrived / e.total;
-            let em_escape = e.escaped / e.total;
+            let em_reentry = e.arrived / e.total.max(1.0);
+            let em_escape = e.escaped / e.total.max(1.0);
 
             let b_arr = if a.arrived > 0.0 {
                 a.arrived_bounce_sum / a.arrived
@@ -1575,8 +1698,9 @@ mod tests {
             };
 
             println!(
-                "{:>5.1} {:>5.1} {:>4} | {:>7.3} {:>7.3} {:>7.3} {:>7.3} | {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>9.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>8.4} {:>8.4} | {:>6.2} {:>7.2} | {:>11.6} {:>9.4} {:>5}",
-                cell.tau_target, cell.tau_self, nric_label,
+                "{:>4} {:>5.1} {:>5.1} {:>4} {:>7} | {:>7.3} {:>7.3} {:>7.3} {:>7.3} | {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>9.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} | {:>8.4} {:>8.4} | {:>6.2} {:>7.2} | {:>11.6} {:>9.4} {:>5}",
+                if cell.pump { "pump" } else { "frc" },
+                cell.tau_target, cell.tau_self, nric_label, cell.n_emit_final,
                 c_amb, c_em, s_amb, s_em,
                 amb_arr_frac, polar_frac, mid_frac, eq_frac,
                 redirect, miss_capture, miss_pol, miss_mid, miss_eq,
@@ -1620,17 +1744,31 @@ mod tests {
             }
         }
 
-        let find_cell = |tau: f64, tau_self: f64, nric: u32| -> &ReportCell {
+        let find_cell = |pump: bool, tau: f64, tau_self: f64, nric: u32| -> &ReportCell {
             cells
                 .iter()
-                .find(|c| c.tau_target == tau && c.tau_self == tau_self && c.n_ricochet == nric)
+                .find(|c| {
+                    c.pump == pump
+                        && c.tau_target == tau
+                        && c.tau_self == tau_self
+                        && c.n_ricochet == nric
+                })
                 .expect("sweep cell present")
         };
         let highlighted = [
-            ("CONTROL (TAU=0, TAU_SELF=0)", find_cell(0.0, 0.0, 0)),
-            ("V2 ANCHOR (TAU=3, TAU_SELF=0, Nric=10)", find_cell(3.0, 0.0, 10)),
-            ("FLAGSHIP (TAU=3, TAU_SELF=3, Nric=30)", find_cell(3.0, 3.0, 30)),
-            ("SELF-ONLY (TAU=0, TAU_SELF=3, Nric=30)", find_cell(0.0, 3.0, 30)),
+            (
+                "FORCED FLAGSHIP (v3 anchor: TAU=3, TAU_SELF=3, Nric=30)",
+                find_cell(false, 3.0, 3.0, 30),
+            ),
+            ("PUMP NULL (TAU=0, TAU_SELF=0)", find_cell(true, 0.0, 0.0, 0)),
+            (
+                "PUMP FLAGSHIP (TAU=3, TAU_SELF=3, Nric=30)",
+                find_cell(true, 3.0, 3.0, 30),
+            ),
+            (
+                "PUMP HIGH-PRESSURE (TAU=3, TAU_SELF=10, Nric=30)",
+                find_cell(true, 3.0, 10.0, 30),
+            ),
         ];
 
         for (label, cell) in highlighted {
@@ -1708,6 +1846,83 @@ mod tests {
                 }
                 lam
             });
+
+            // v4: the charge-pause crossover surface (user's heliopause
+            // bubble; pause.html "the magnetopause is at the charge-pause").
+            // Prediction if the intake funnel is real: r_c bulges at the
+            // disc (emission pushes ambient back) and pinches at the poles.
+            let crossover_row = |fields: &[&DensityField]| {
+                for j in 0..N_THETA {
+                    let mut rc: Option<f64> = None;
+                    for i in (0..N_R).rev() {
+                        let idx = i * N_THETA + j;
+                        let w: f64 = fields.iter().map(|f| f.track_weight[idx]).sum();
+                        let fl: f64 = fields.iter().map(|f| f.radial_flux[idx]).sum();
+                        if w > 1e-9 && fl / w < -0.005 {
+                            rc = Some((r_edge(i) * r_edge(i + 1)).sqrt());
+                            break;
+                        }
+                    }
+                    match rc {
+                        Some(r) => print!(" {r:>6.2}"),
+                        None => print!(" {:>6}", "-"),
+                    }
+                }
+                println!();
+            };
+            println!("--- {label}: charge-pause crossover radius r_c(theta) — outermost radius whose net radial flow is INWARD (normalized < -0.005); '-' = none in column ---");
+            print!("{:>10}", "theta_c");
+            for j in 0..N_THETA {
+                print!(
+                    " {:>6.0}",
+                    (0.5 * (theta_edge(j) + theta_edge(j + 1))).to_degrees()
+                );
+            }
+            println!();
+            print!("{:>10}", "combined");
+            crossover_row(&[&cell.final_emitted_field, &cell.final_ambient_field]);
+            print!("{:>10}", "ambient");
+            crossover_row(&[&cell.final_ambient_field]);
+
+            // v4: shell density profile — eccen.html "charge that does make
+            // it back will be compressed and its density will be increased";
+            // a compression ridge shows as a non-monotonic bump vs radius.
+            // NOTE: the collision-field correction cap (4x analytic) bounds
+            // how strongly any tally ridge can act back on transport — if a
+            // ridge saturates the cap, revisit CORRECTION_MAX.
+            println!("--- {label}: shell density profile (combined emitted+ambient track density per radial bin, by latitude band) ---");
+            println!("{:>8} {:>12} {:>12} {:>12}", "r", "polar>60", "mid30-60", "equat<30");
+            for i in 0..N_R {
+                let mut tw = [0.0f64; 3];
+                let mut vol = [0.0f64; 3];
+                for j in 0..N_THETA {
+                    let band = if !(3..15).contains(&j) {
+                        0
+                    } else if !(6..12).contains(&j) {
+                        1
+                    } else {
+                        2
+                    };
+                    let idx = i * N_THETA + j;
+                    tw[band] += cell.final_emitted_field.track_weight[idx]
+                        + cell.final_ambient_field.track_weight[idx];
+                    vol[band] += cell_volumes()[idx];
+                }
+                println!(
+                    "{:>8.3} {:>12.6} {:>12.6} {:>12.6}",
+                    (r_edge(i) * r_edge(i + 1)).sqrt(),
+                    tw[0] / vol[0],
+                    tw[1] / vol[1],
+                    tw[2] / vol[2]
+                );
+            }
+
+            if cell.pump {
+                println!("--- {label}: pump budget trajectory (iter: ambient_absorbed + emitted_reabsorbed -> next emitted budget) ---");
+                for (k, (aab, eab, next)) in cell.budget_track.iter().enumerate() {
+                    println!("  iter {}: {aab:.0} + {eab:.0} -> {next}", k + 1);
+                }
+            }
         }
 
         let elapsed = started.elapsed();
