@@ -3909,4 +3909,301 @@ mod tests {
         };
         println!("\nVERDICT: {}", verdict);
     }
+
+    // --- Axial-channel geometry (loop-resolved DirRelSign knife-edge diagnostic) ---
+
+    /// Loop-frame position (`q_i = points[i] + swing_offset`) and unit loop
+    /// tangent (`t_i`, central difference with wraparound:
+    /// `swing_offset` is a constant added to every point, so it cancels out
+    /// of the difference) for every baked-loop sample. All samples carry
+    /// equal loop-time weight (`bake_loop` steps the base photon at uniform
+    /// `dt` in the loop parameter, see its doc comment).
+    fn axial_loop_geom(baked: &BakedLoop) -> (Vec<DVec3>, Vec<DVec3>) {
+        let n = baked.points.len();
+        let q: Vec<DVec3> = baked.points.iter().map(|&p| p + baked.swing_offset).collect();
+        let t: Vec<DVec3> = (0..n)
+            .map(|i| {
+                let next = baked.points[(i + 1) % n];
+                let prev = baked.points[(i + n - 1) % n];
+                (next - prev).normalize_or_zero()
+            })
+            .collect();
+        (q, t)
+    }
+
+    /// `v_hat_i` for baked motion (loop tangent, c=1) plus a swing rate `s`
+    /// about Z: `v_i = t_i + s * (Z x q_i)`, normalized. Plays the role
+    /// `CalibrationParticle::swing_tangent` plays inside `apply_photon`, but
+    /// resolved against the ACTUAL loop tangent rather than falling back to
+    /// the geometric positive tangent `t_pos` the way `apply_photon` does at
+    /// rest.
+    fn axial_v_hat(q: &[DVec3], t: &[DVec3], s: f64) -> Vec<DVec3> {
+        q.iter()
+            .zip(t.iter())
+            .map(|(&qi, &ti)| (ti + DVec3::Z.cross(qi) * s).normalize_or_zero())
+            .collect()
+    }
+
+    /// One photon strike against one loop-resolved surface velocity: catch
+    /// factor `f`, DirRelSign-mirrored sign `chi_eff`, gear impulse per unit
+    /// momentum `j`, and pole torque per strike `tau` -- the same four
+    /// quantities `apply_photon`'s gear term (see its doc comment and the
+    /// `chi_eff = chirality * (-dir.dot(t_hat)).signum()` line) computes per
+    /// contact, replayed here with `t_hat` = the loop tangent (never falling
+    /// back to `t_pos`, so there is no knife-edge to hide behind). Also
+    /// flags the degenerate set `|dir . v_hat| < 1e-9` -- `apply_photon`'s
+    /// actual knife-edge condition.
+    #[allow(dead_code)] // chi_eff is part of the measured quantity set (spec item 2); j/tau already fold it in
+    struct AxialHit {
+        f: f64,
+        chi_eff: f64,
+        tau: f64,
+        degenerate: bool,
+    }
+
+    fn axial_hit(dir: DVec3, chi: f64, q: DVec3, v_hat: DVec3) -> AxialHit {
+        let d = dir.dot(v_hat);
+        let f = ((1.0 - d) * 0.5).clamp(0.0, 1.0);
+        let chi_eff = chi * (-d).signum();
+        let j = v_hat * (f * chi_eff);
+        let tau = q.cross(j).dot(DVec3::Z);
+        AxialHit { f, chi_eff, tau, degenerate: d.abs() < 1e-9 }
+    }
+
+    /// REPORT (ignored by default): loop-resolved replay of `apply_photon`'s
+    /// DirRelSign gear-sign rule (`chi_eff = chirality *
+    /// (-dir.dot(t_hat)).signum()`), asking what the sign SHOULD be at exact
+    /// pole-axis incidence.
+    ///
+    /// `apply_photon`'s `t_hat` is the SWING tangent (`t_pos`, or the actual
+    /// swing tangent if spinning) -- a vector confined to the plane
+    /// perpendicular to the pole. At `dir = +/-Z` (exact axial incidence)
+    /// that tangent is EXACTLY perpendicular to `dir`, so
+    /// `dir.dot(t_hat) == +/-0.0` and `signum` reads IEEE signed-zero
+    /// bookkeeping, not geometry (documented at length on
+    /// `report_vortex_feedback`'s THETA=0 CAVEAT, above). This report
+    /// resolves the SAME collision against the LOOP tangent instead: the
+    /// baked loop is the base photon's actual closed path at c=1, and that
+    /// path is generically NOT confined to the plane perpendicular to Z --
+    /// an axial photon meeting a loop point whose tangent has a nonzero
+    /// Z-component gives a well-defined, non-degenerate dot product. This is
+    /// a MEASUREMENT of what the loop geometry says the sign channel should
+    /// look like; it does not touch `apply_photon`, `PumpRule`, or any wired
+    /// rule. Read alongside `report_critical_gear_efficiency`'s ladder rungs
+    /// and `report_vortex_feedback`'s stream report, not as a replacement
+    /// for either.
+    ///
+    /// EXPECTED MIRRORS (stated, not all asserted):
+    ///   - chirality antisymmetry is EXACT and not recomputed here: `f_i`
+    ///     does not depend on `chi`, so flipping `chi -> -chi` flips
+    ///     `chi_eff_i`, `j_i`, and `tau_i` at every point -- `T` flips sign
+    ///     while `W` (built from `f_i` alone) is unchanged. Only chi=+1 rows
+    ///     are printed below.
+    ///   - north (`dir=-Z`) vs south (`dir=+Z`) entry are NOT assumed to be
+    ///     exact mirrors of each other -- a chiral spin stack's loop tangent
+    ///     field has no a-priori reason to look the same swept forwards vs
+    ///     backwards along Z -- so both are measured and printed rather than
+    ///     derived from one another.
+    ///   - section 4's theta=0 row IS required to reproduce section 2's
+    ///     north-entry s=0 row exactly: both describe the same physical
+    ///     collision, and the axial case is invariant under the Z-rotation
+    ///     section 4 averages over (rotating `q`,`v_hat` by `R_z(a)` leaves
+    ///     `dir . v_hat` unchanged when `dir` is +/-Z, and pole torque
+    ///     `(q x j).Z` is invariant under simultaneous Z-rotation of `q` and
+    ///     `j`) -- this one IS asserted.
+    #[test]
+    #[ignore]
+    fn report_axial_channel_geometry() {
+        let specs: [(&str, u8); 3] = [("proton", 12), ("neutron", 11), ("electron", 8)];
+        const RHO_BINS: usize = 24;
+        const OCC_EPS: f64 = 1e-4;
+
+        println!("\n=== report_axial_channel_geometry (measurement only; apply_photon NOT touched) ===");
+
+        for (label, level) in specs {
+            let baked = bake_loop(level, recommended_samples(level));
+            assert!(
+                (baked.swing_axis - DVec3::Z).length() < 1e-9,
+                "{label}: expected swing_axis == Z, got {:?}",
+                baked.swing_axis
+            );
+            let (q, t) = axial_loop_geom(&baked);
+            let n = q.len();
+            let v_hat0 = axial_v_hat(&q, &t, 0.0); // s=0 loop-tangent surface velocity
+
+            println!("\n--- {label} (loop_level={level}, n={n}) ---");
+
+            // --- 1. DONUT OCCUPANCY ---
+            let rho: Vec<f64> = q.iter().map(|p| (p.x * p.x + p.y * p.y).sqrt()).collect();
+            let rho_min = rho.iter().cloned().fold(f64::INFINITY, f64::min);
+            let rho_max = rho.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mut occ = vec![0.0f64; RHO_BINS];
+            for &r in &rho {
+                let idx = if rho_max > 0.0 {
+                    (((r / rho_max) * RHO_BINS as f64) as usize).min(RHO_BINS - 1)
+                } else {
+                    0
+                };
+                occ[idx] += 1.0 / n as f64;
+            }
+            let mut hole_radius = 0.0;
+            for i in 0..RHO_BINS {
+                if occ[i] < OCC_EPS {
+                    hole_radius = rho_max * (i + 1) as f64 / RHO_BINS as f64;
+                } else {
+                    break;
+                }
+            }
+            println!(
+                "[1] donut occupancy: rho_min={:.6} rho_max={:.6} hole_radius(occ<{:.0e} up to)={:.6}",
+                rho_min, rho_max, OCC_EPS, hole_radius
+            );
+            println!("     bin  rho_lo   rho_hi   occupancy");
+            for i in 0..RHO_BINS {
+                let lo = rho_max * i as f64 / RHO_BINS as f64;
+                let hi = rho_max * (i + 1) as f64 / RHO_BINS as f64;
+                println!("     {:>3}  {:>7.4}  {:>7.4}  {:>10.6}", i, lo, hi, occ[i]);
+            }
+
+            // --- 2. AXIAL INCIDENCE (rotationally invariant about Z; no swing-phase sweep needed) ---
+            println!("[2] axial incidence (loop-resolved)");
+            println!("     entry     s      W          T              degenerate_frac");
+            // Stash north/s=0 per-point tau for section 3 and (W,T) for
+            // section 4's theta=0 sanity check.
+            let mut north_s0_tau = vec![0.0f64; n];
+            let mut north_s0_w = 0.0f64;
+            let mut north_s0_t = 0.0f64;
+            for (entry_label, dir) in [("north(-Z)", -DVec3::Z), ("south(+Z)", DVec3::Z)] {
+                for &s in &[0.0, 0.05] {
+                    let v_hat = if s == 0.0 { v_hat0.clone() } else { axial_v_hat(&q, &t, s) };
+                    let mut sum_f = 0.0;
+                    let mut sum_tau = 0.0;
+                    let mut degenerate = 0usize;
+                    let mut tau_row = vec![0.0f64; n];
+                    for i in 0..n {
+                        let hit = axial_hit(dir, 1.0, q[i], v_hat[i]);
+                        sum_f += hit.f;
+                        sum_tau += hit.tau;
+                        if hit.degenerate {
+                            degenerate += 1;
+                        }
+                        tau_row[i] = hit.tau;
+                    }
+                    let w = sum_f / n as f64;
+                    let tt = if sum_f.abs() > 1e-15 { sum_tau / sum_f } else { f64::NAN };
+                    let deg_frac = degenerate as f64 / n as f64;
+                    println!(
+                        "     {:<9} {:>5.2}  {:>9.6}  {:>13.6e}  {:>10.6}",
+                        entry_label, s, w, tt, deg_frac
+                    );
+                    if entry_label == "north(-Z)" && s == 0.0 {
+                        north_s0_tau = tau_row;
+                        north_s0_w = w;
+                        north_s0_t = tt;
+                    }
+                }
+            }
+
+            // --- 3. TORQUE BY ENTRY RADIUS (north(-Z), chi=+1, s=0) ---
+            println!("[3] torque by entry radius (north(-Z), chi=+1, s=0)");
+            println!("     bin  rho_lo   rho_hi   occupancy   sum(tau)");
+            let mut tau_bin = vec![0.0f64; RHO_BINS];
+            for i in 0..n {
+                let idx = if rho_max > 0.0 {
+                    (((rho[i] / rho_max) * RHO_BINS as f64) as usize).min(RHO_BINS - 1)
+                } else {
+                    0
+                };
+                tau_bin[idx] += north_s0_tau[i];
+            }
+            for i in 0..RHO_BINS {
+                let lo = rho_max * i as f64 / RHO_BINS as f64;
+                let hi = rho_max * (i + 1) as f64 / RHO_BINS as f64;
+                println!(
+                    "     {:>3}  {:>7.4}  {:>7.4}  {:>10.6}  {:>12.6e}",
+                    i, lo, hi, occ[i], tau_bin[i]
+                );
+            }
+
+            // --- 4. OFF-AXIS CONTINUITY (chi=+1, s=0; average over 32 swing phases) ---
+            println!("[4] off-axis continuity (chi=+1, s=0; dir tilted from -Z toward +X; 32-phase swing average)");
+            println!("     theta_deg      W          T");
+            const PHASES4: usize = 32;
+            for &theta_deg in &[0.0f64, 1.0, 5.0, 15.0, 30.0, 45.0, 60.0, 90.0] {
+                let theta: f64 = theta_deg.to_radians();
+                let dir = (-DVec3::Z * theta.cos() + DVec3::X * theta.sin()).normalize_or_zero();
+                let mut sum_f = 0.0;
+                let mut sum_tau = 0.0;
+                for k in 0..PHASES4 {
+                    let a = TAU * k as f64 / PHASES4 as f64;
+                    let rot = DQuat::from_axis_angle(DVec3::Z, a);
+                    for i in 0..n {
+                        let q_r = rot * q[i];
+                        let v_r = rot * v_hat0[i];
+                        let hit = axial_hit(dir, 1.0, q_r, v_r);
+                        sum_f += hit.f;
+                        sum_tau += hit.tau;
+                    }
+                }
+                let total = (n * PHASES4) as f64;
+                let w = sum_f / total;
+                let tt = if sum_f.abs() > 1e-15 { sum_tau / sum_f } else { f64::NAN };
+                println!("     {:>9.1}  {:>9.6}  {:>13.6e}", theta_deg, w, tt);
+                if theta_deg == 0.0 {
+                    assert!(
+                        (w - north_s0_w).abs() < 1e-6,
+                        "{label}: theta=0 W={} should match section 2 north-entry s=0 W={}",
+                        w,
+                        north_s0_w
+                    );
+                    assert!(
+                        (tt - north_s0_t).abs() < 1e-6 * north_s0_t.abs().max(1.0),
+                        "{label}: theta=0 T={} should match section 2 north-entry s=0 T={}",
+                        tt,
+                        north_s0_t
+                    );
+                }
+            }
+
+            // --- 5. ISOTROPIC SANITY (chi=+1, s=0; 48 Fibonacci-sphere dirs x 8 swing phases) ---
+            const DIRS5: usize = 48;
+            const PHASES5: usize = 8;
+            let mut sum_f = 0.0;
+            let mut sum_tau = 0.0;
+            for k in 0..DIRS5 {
+                // Deterministic Fibonacci-sphere sampling (same golden-angle
+                // convention as `orientation_participation`, above).
+                let z = 1.0 - 2.0 * (k as f64 + 0.5) / DIRS5 as f64;
+                let r = (1.0 - z * z).max(0.0).sqrt();
+                let phi = k as f64 * 2.399_963_229_728_653;
+                let dir = DVec3::new(r * phi.cos(), r * phi.sin(), z).normalize_or_zero();
+                for j in 0..PHASES5 {
+                    let a = TAU * j as f64 / PHASES5 as f64;
+                    let rot = DQuat::from_axis_angle(DVec3::Z, a);
+                    for i in 0..n {
+                        let q_r = rot * q[i];
+                        let v_r = rot * v_hat0[i];
+                        let hit = axial_hit(dir, 1.0, q_r, v_r);
+                        sum_f += hit.f;
+                        sum_tau += hit.tau;
+                    }
+                }
+            }
+            let total = (DIRS5 * PHASES5 * n) as f64;
+            let w = sum_f / total;
+            let tt = if sum_f.abs() > 1e-15 { sum_tau / sum_f } else { f64::NAN };
+            println!(
+                "[5] isotropic net pole torque, loop-resolved, chi=+1: W={:.6}  T={:.6e}",
+                w, tt
+            );
+        }
+
+        println!(
+            "\nNOTE (chirality antisymmetry, not recomputed): chi=-1 is the exact negative of every printed"
+        );
+        println!(
+            "T above by linearity (f_i is chirality-independent; chi_eff_i flips sign with chi, so j_i and"
+        );
+        println!("tau_i flip sign) -- W (built from f_i alone) is unchanged under chi -> -chi.");
+    }
 }
