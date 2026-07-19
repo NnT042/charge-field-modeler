@@ -613,3 +613,46 @@ first-passage rate (β-decay as a ~1e14-contact rarity crossing L12 to c). `1/10
 locked-platform CANDIDATE adopted here (one rung below the proton's full stack), not a settled
 answer; discriminable later by a decay first-passage test comparing predicted mean lifetimes
 under each candidate against the measured ~15 minutes.
+
+## The axial-cone intake branch (2026-07-19, commit 7516470)
+
+**The knife-edge.** `apply_photon` term 2's sign, `chi_eff = chirality * (-dir·t_hat).signum()`,
+reads `t_hat` (the swing tangent) against `dir` (the photon direction). At exact pole-axis
+incidence — `dir` parallel or antiparallel to the pole — `t_hat` lies exactly in the plane
+perpendicular to the pole, so `dir·t_hat == +/-0.0` and `signum` evaluates IEEE signed-zero
+bookkeeping instead of geometry. `report_vortex_feedback_probes` (B1-B3) confirmed the pathology
+directly: the sign at exact axial incidence is floating-point-bit-pattern-dependent, theta=180
+does not mirror to the opposite attractor, and theta=1/5 degrees do not connect continuously to
+the axial value.
+
+**The loop-resolved measurement.** `report_axial_channel_geometry` (commit 7516470) resolved what
+the sign SHOULD be by replaying the same collision against the baked loop's own tangent field
+(the base photon's actual closed path at c=1) instead of the swing tangent — a vector generically
+NOT confined to the pole-perpendicular plane, so the dot product against an axial `dir` is
+well-defined and non-degenerate. The result: axial incidence delivers a chirality-signed pole
+torque, per entry lane (north = photon travels toward `-pole`, i.e. enters at the north pole;
+south = travels toward `+pole`) and per particle, and the response is measured FLAT out to ~15
+degrees off-axis before the swing rule's own geometry takes over.
+
+**Lane constants.** Each pair is the section-[2] mean pole torque per caught photon at `s=0,
+chi=+1`, normalized so the stronger lane is exactly `±1.0`:
+
+| Particle | raw T (north / south) | `(AXIAL_GEAR_*)` north, south |
+|---|---|---|
+| Proton   | 22.264 / 35.002 | (0.636, 1.0) |
+| Electron |  1.082 /  4.799 | (0.226, 1.0) |
+| Neutron  |  5.048 / -3.798 | (1.0, -0.752) |
+
+The neutron's sign flip is real, not a normalization artifact — the kite torques OPPOSITELY per
+entry lane. Sourced from halbach.pdf (photons moving along the pole carry spin in the right
+plane; edge hits land at the tangent) and pole.pdf (the polar intake is a charge engine).
+
+**The cone.** `apply_photon` blends smoothstep-wise from the axial lane constant inside a 10
+degree half-angle cone around the pole to the untouched oblique `sign_oblique` swing rule outside
+a 20 degree half-angle cone, using `mu = dir·pole` to pick both the blend weight and the
+north/south lane. Beyond 20 degrees the blend weight is exactly `0.0`, so the oblique path is
+bit-identical to the pre-cone rule — this branch adds axial-incidence physics without perturbing
+anything the swing rule already covered. The axial branch's magnitude still rides the same
+`gear_efficiency` ladder rung as the oblique branch (see the table above the self-limiter
+section); only the sign/lane-ratio channel is new. `report_vortex_feedback`'s THETA=0 CAVEAT is
+resolved by this change; theta=0 rows produced before it remain untrustworthy history.

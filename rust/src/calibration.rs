@@ -44,6 +44,34 @@ pub const GEAR_LADDER_PROTON: f64 = 1.0 / 16385.0;
 /// See [`GEAR_LADDER_ELECTRON`].
 pub const GEAR_LADDER_NEUTRON: f64 = 1.0 / 1025.0;
 
+/// Per-particle axial-intake gear lanes, `(north, south)` — the lane-normalized
+/// mean pole torque per caught photon at exact axial incidence (`s=0`,
+/// `chi=+1`), measured loop-resolved (not through the swing-tangent
+/// fallback) by `report_axial_channel_geometry` section [2] and locked by
+/// commit 7516470. North (`dir` toward `-pole`, i.e. the photon enters at the
+/// particle's north pole) and south (`dir` toward `+pole`) are NOT assumed to
+/// mirror each other — a chiral spin stack's loop-tangent field has no
+/// a-priori reason to look the same swept forwards vs backwards along the
+/// pole — so both were measured directly. Each pair is normalized so the
+/// stronger lane is exactly `±1.0`:
+///
+///   - proton:   raw T = 22.264 (north) / 35.002 (south) -> (0.636, 1.0)
+///   - electron: raw T =  1.082 (north) /  4.799 (south) -> (0.226, 1.0)
+///   - neutron:  raw T =  5.048 (north) / -3.798 (south) -> (1.0, -0.752)
+///
+/// The neutron's sign flip is real, not a normalization artifact: the kite
+/// torques OPPOSITELY per entry lane (section [2]'s raw T changes sign
+/// between north and south for the neutron only). Sourced from halbach.pdf
+/// (photons moving along the pole carry spin in the right plane; edge hits
+/// land at the tangent) and pole.pdf (the polar intake is a charge engine).
+/// Consumed by `apply_photon`'s axial-cone branch, riding the same
+/// `gear_efficiency` ladder rung as the oblique/swing rule.
+pub const AXIAL_GEAR_PROTON: (f64, f64) = (0.636, 1.0);
+/// See [`AXIAL_GEAR_PROTON`].
+pub const AXIAL_GEAR_NEUTRON: (f64, f64) = (1.0, -0.752);
+/// See [`AXIAL_GEAR_PROTON`].
+pub const AXIAL_GEAR_ELECTRON: (f64, f64) = (0.226, 1.0);
+
 pub struct CalibrationParticle {
     pub hitbox: BakedLoop,
     /// Center of mass, natural units.
@@ -73,6 +101,18 @@ pub struct CalibrationParticle {
     /// on `AmbientField` (CM-2 self-limiter campaign, commits 663d8d8 /
     /// 6301db2).
     pub gear_efficiency: f64,
+    /// Lane-normalized axial-intake gear magnitude for photons entering at
+    /// the NORTH pole (`dir` toward `-pole`; see `apply_photon`'s cone
+    /// branch) — see [`AXIAL_GEAR_PROTON`] for the measurement and
+    /// normalization. `1.0` is the raw/per-unit default (`new` ships it,
+    /// meaning plain chirality sign — no lane asymmetry — inside the cone;
+    /// a raw test particle didn't earn a measured lane ratio). The
+    /// `proton`/`neutron`/`electron` constructors install the sourced
+    /// per-particle value.
+    pub axial_gear_north: f64,
+    /// South-pole-entry counterpart of [`Self::axial_gear_north`] (`dir`
+    /// toward `+pole`).
+    pub axial_gear_south: f64,
     /// Set once `|outer_spin|` reaches c — the next spin level would unlock.
     pub transmuted: bool,
     /// orbit_radius of the swing level, used to convert `outer_spin` (fraction
@@ -144,6 +184,8 @@ impl CalibrationParticle {
             mass,
             spin_coupling: 1.0,
             gear_efficiency: 1.0,
+            axial_gear_north: 1.0,
+            axial_gear_south: 1.0,
             transmuted: false,
             swing_orbit_radius,
             i_spin,
@@ -152,27 +194,31 @@ impl CalibrationParticle {
     }
 
     /// Convenience: a proton (L12 loop, L13 precession swing). Installs the
-    /// sourced ladder efficiency [`GEAR_LADDER_PROTON`] (see that const's doc
-    /// comment) in place of the raw/per-unit default `new` ships.
+    /// sourced ladder efficiency [`GEAR_LADDER_PROTON`] and axial-intake
+    /// lanes [`AXIAL_GEAR_PROTON`] (see those consts' doc comments) in place
+    /// of the raw/per-unit defaults `new` ships.
     pub fn proton(mass: f64) -> Self {
         let mut p = Self::new(bake_loop(12, recommended_samples(12)), mass);
         p.gear_efficiency = GEAR_LADDER_PROTON;
+        (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_PROTON;
         p
     }
 
     /// Convenience: a neutron (L11 loop, non-relativistic L12 orbital swing).
-    /// Installs [`GEAR_LADDER_NEUTRON`].
+    /// Installs [`GEAR_LADDER_NEUTRON`] and [`AXIAL_GEAR_NEUTRON`].
     pub fn neutron(mass: f64) -> Self {
         let mut p = Self::new(bake_loop(11, recommended_samples(11)), mass);
         p.gear_efficiency = GEAR_LADDER_NEUTRON;
+        (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_NEUTRON;
         p
     }
 
     /// Convenience: an electron (L8 loop, L9 precession swing). Installs
-    /// [`GEAR_LADDER_ELECTRON`].
+    /// [`GEAR_LADDER_ELECTRON`] and [`AXIAL_GEAR_ELECTRON`].
     pub fn electron(mass: f64) -> Self {
         let mut p = Self::new(bake_loop(8, recommended_samples(8)), mass);
         p.gear_efficiency = GEAR_LADDER_ELECTRON;
+        (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_ELECTRON;
         p
     }
 
@@ -298,11 +344,37 @@ impl CalibrationParticle {
     ///      print, at every ambient mix up to and including pure photon for
     ///      the proton.
     ///
+    /// **Axial-cone intake branch (dissolves the DirRelSign knife-edge).** At
+    /// exact pole-axis incidence (`dir` parallel/antiparallel to `pole`) the
+    /// swing tangent `t̂` lies exactly in the plane perpendicular to the
+    /// pole, so `dir·t̂ == ±0.0` and `sign_oblique = (-dir·t̂).signum()`
+    /// reads IEEE signed-zero bookkeeping, not geometry — a knife-edge
+    /// (documented at length on `report_vortex_feedback`'s THETA=0 CAVEAT).
+    /// `report_axial_channel_geometry` (commit 7516470) resolved this by
+    /// replaying the SAME collision against the baked loop's own tangent
+    /// field (never falling back to `t_pos`), which is generically NOT
+    /// confined to the pole-perpendicular plane: axial incidence gives a
+    /// well-defined, non-degenerate, chirality-signed pole torque, per
+    /// entry lane (north = `dir` toward `-pole`, south = `dir` toward
+    /// `+pole`) and per particle. The response is measured FLAT out to
+    /// ~15 degrees off-axis before the swing rule's own geometry takes
+    /// over, so term 2's sign channel now blends smoothstep-wise from the
+    /// axial lane constant (`self.axial_gear_north`/`axial_gear_south`, see
+    /// [`AXIAL_GEAR_PROTON`]) inside a 10 degree half-angle cone to the
+    /// untouched `sign_oblique` swing rule outside a 20 degree half-angle
+    /// cone. Beyond 20 degrees the blend weight `a` is exactly `0.0`, so the
+    /// oblique path is bit-identical to the pre-cone rule — this branch adds
+    /// axial-incidence physics without perturbing anything the swing rule
+    /// already covered. The axial branch's magnitude rides the same
+    /// `self.gear_efficiency` ladder rung as the oblique branch; only the
+    /// SIGN/lane-ratio channel is new.
+    ///
     /// `dir` is the photon travel direction; `chirality` ∈ {+1, −1}.
     pub fn apply_photon(&mut self, contact: DVec3, dir: DVec3, chirality: f64, momentum: f64) {
         let dir = dir.normalize_or_zero();
         let r = contact - self.position;
         let pole = self.pole_axis();
+        let mu = dir.dot(pole); // cos(angle off pole) -- drives the axial-cone blend in term 2
 
         // (1) Catch-weighted Newtonian transfer (replaces BOTH the old plain
         // impulse and the old stacked drag — no more double counting). catch =
@@ -334,7 +406,10 @@ impl CalibrationParticle {
         // if nonzero, else the geometric positive tangent t_pos (same
         // fallback `f` uses, mirrors `gear_pump_variant_torque`'s
         // PumpRule::DirRelSign arm exactly). Magnitude carries
-        // `self.gear_efficiency`, the per-particle ladder rung.
+        // `self.gear_efficiency`, the per-particle ladder rung. Below, this
+        // oblique/swing sign is blended against the lane-normalized AXIAL
+        // rule inside a 10-20 degree cone around the pole (see the doc
+        // comment above `apply_photon` for why).
         let rp = r - pole * r.dot(pole);
         let t_pos = pole.cross(rp).normalize_or_zero(); // positive-rotation tangent (NOT signed by current spin)
         if t_pos.length_squared() > 1e-18 {
@@ -345,7 +420,16 @@ impl CalibrationParticle {
                 0.5
             };
             let t_hat = if t_actual.length_squared() > 1e-18 { t_actual } else { t_pos };
-            let chi_eff = chirality * (-dir.dot(t_hat)).signum();
+            // Axial-cone blend (knife-edge fix, `report_axial_channel_geometry`,
+            // commit 7516470): fully axial inside 10 deg, untouched swing rule
+            // beyond 20 deg, smoothstepped between.
+            const COS_FULL: f64 = 0.98480775301220805; // cos(10 deg)
+            const COS_EDGE: f64 = 0.93969262078590838; // cos(20 deg)
+            let x = ((mu.abs() - COS_EDGE) / (COS_FULL - COS_EDGE)).clamp(0.0, 1.0);
+            let a = x * x * (3.0 - 2.0 * x); // smoothstep
+            let s_lane = if mu < 0.0 { self.axial_gear_north } else { self.axial_gear_south };
+            let sign_oblique = (-dir.dot(t_hat)).signum();
+            let chi_eff = chirality * ((1.0 - a) * sign_oblique + a * s_lane);
             let j_tan = t_pos * (momentum * f * chi_eff * self.gear_efficiency);
             let tau_g = r.cross(j_tan);
             let tau_g_pole = tau_g.dot(pole);
@@ -1492,6 +1576,132 @@ mod tests {
         }
         assert!(p.lin_velocity.x > 0.0, "field along +X should drift +X, got {:?}", p.lin_velocity);
         assert!(p.lin_velocity.x > p.lin_velocity.y.abs() * 5.0, "drift should be mostly along X");
+    }
+
+    // --- Axial-cone intake branch (knife-edge fix, `report_axial_channel_geometry`, commit 7516470) ---
+
+    /// Isolates `apply_photon` term 2 (the gear/axial pump) from term 1 (the
+    /// catch-weighted Newtonian transfer): differences `gear_efficiency = 1.0`
+    /// against `= 0.0` at the SAME contact/dir/chirality/momentum, same trick
+    /// `opposing_photon_catches_comoving_slips` uses — term 1 never reads
+    /// `gear_efficiency` (and is analytically zero for exact axial incidence
+    /// anyway, since `r x dir` has no pole component when `dir` is parallel to
+    /// `pole`), so it cancels exactly, leaving only term 2's contribution.
+    /// This also sidesteps the proton's own ladder rung (`1/16385`) being too
+    /// tiny a scale to read a clean percentage comparison against, without
+    /// touching the measured lane RATIO itself (`AXIAL_GEAR_PROTON`, still
+    /// installed by the `proton` ctor and left alone here).
+    #[test]
+    fn axial_cone_no_knife_edge() {
+        let gear_delta = |make: fn(f64) -> CalibrationParticle, dir: DVec3| -> f64 {
+            let mut on = make(1.0);
+            let mut off = make(1.0);
+            on.gear_efficiency = 1.0;
+            off.gear_efficiency = 0.0;
+            let contact = on.position + DVec3::X;
+            on.apply_photon(contact, dir, 1.0, 0.02);
+            off.apply_photon(contact, dir, 1.0, 0.02);
+            on.outer_spin - off.outer_spin
+        };
+
+        let pole = CalibrationParticle::proton(1.0).pole_axis();
+        assert!((pole - DVec3::Z).length() < 1e-9, "expected Z pole");
+
+        let dir_exact = -pole; // exact axial incidence, north entry
+        let eps = 0.001_f64; // 0.001 rad off-axis, arbitrary azimuth (+Y here)
+        let dir_tilt = (-pole * eps.cos() + DVec3::Y * eps.sin()).normalize_or_zero();
+
+        let d_exact = gear_delta(CalibrationParticle::proton, dir_exact);
+        let d_tilt = gear_delta(CalibrationParticle::proton, dir_tilt);
+
+        assert_eq!(d_exact.signum(), d_tilt.signum(),
+            "exact vs 0.001-rad-tilted axial incidence should have the same sign: {} vs {}", d_exact, d_tilt);
+        let rel = (d_exact - d_tilt).abs() / d_exact.abs();
+        assert!(rel < 0.05,
+            "exact vs tilted axial should differ by <5%, got {:.4}% ({} vs {})", rel * 100.0, d_exact, d_tilt);
+
+        // chi=+1 at exact axial incidence must spin UP for proton and
+        // electron, using each ctor's REAL (unablated) ladder rung: term 1
+        // is analytically zero at exact axial incidence, so the sign here is
+        // governed entirely by the axial lane, independent of how tiny
+        // gear_efficiency is.
+        let makers: [fn(f64) -> CalibrationParticle; 2] =
+            [CalibrationParticle::proton, CalibrationParticle::electron];
+        for make in makers {
+            let mut p = make(1.0);
+            let pole = p.pole_axis();
+            let contact = p.position + DVec3::X;
+            p.apply_photon(contact, -pole, 1.0, 0.02);
+            assert!(p.outer_spin > 0.0, "chi=+1 exact axial incidence should spin UP, got {}", p.outer_spin);
+        }
+    }
+
+    /// Lane asymmetry (measured, `report_axial_channel_geometry` section [2],
+    /// commit 7516470): the north/south axial gear lanes are not the same
+    /// magnitude, and for the neutron they don't even share a sign — the kite
+    /// torques OPPOSITELY per entry lane. Same gear-ablation isolation as
+    /// `axial_cone_no_knife_edge`.
+    #[test]
+    fn axial_lane_asymmetry() {
+        let gear_delta = |make: fn(f64) -> CalibrationParticle, dir: DVec3| -> f64 {
+            let mut on = make(1.0);
+            let mut off = make(1.0);
+            on.gear_efficiency = 1.0;
+            off.gear_efficiency = 0.0;
+            let contact = on.position + DVec3::X;
+            on.apply_photon(contact, dir, 1.0, 0.02);
+            off.apply_photon(contact, dir, 1.0, 0.02);
+            on.outer_spin - off.outer_spin
+        };
+
+        let pole = CalibrationParticle::proton(1.0).pole_axis();
+        assert!((pole - DVec3::Z).length() < 1e-9, "expected Z pole");
+        let dir_north = -pole; // enters at north pole (mu < 0)
+        let dir_south = pole; // enters at south pole (mu > 0)
+
+        let d_north_p = gear_delta(CalibrationParticle::proton, dir_north);
+        let d_south_p = gear_delta(CalibrationParticle::proton, dir_south);
+        let ratio = d_south_p / d_north_p;
+        let expected = 1.0 / 0.636;
+        assert!((ratio - expected).abs() / expected < 0.02,
+            "proton south/north lane ratio should be ~{:.4} (within 2%), got {:.4} (south={}, north={})",
+            expected, ratio, d_south_p, d_north_p);
+
+        let d_north_n = gear_delta(CalibrationParticle::neutron, dir_north);
+        let d_south_n = gear_delta(CalibrationParticle::neutron, dir_south);
+        assert_ne!(d_north_n.signum(), d_south_n.signum(),
+            "neutron north/south axial deltas should have OPPOSITE signs, got north={} south={}",
+            d_north_n, d_south_n);
+    }
+
+    /// Beyond the 20 degree cone edge, the axial blend weight `a` is exactly
+    /// `0.0`, so `axial_gear_north`/`axial_gear_south` must be completely
+    /// unreachable — the oblique/swing path is bit-identical to the
+    /// pre-cone rule. Proven here the simplest way: a twin particle with
+    /// garbage lane values (`77.0`) must produce EXACTLY the same result as
+    /// the real particle for a photon at 30 degrees off the pole.
+    #[test]
+    fn axial_oblique_path_unchanged() {
+        let theta = 30f64.to_radians();
+        let dir = (DVec3::Z * theta.cos() + DVec3::X * theta.sin()).normalize_or_zero();
+
+        let mut normal = CalibrationParticle::proton(1.0);
+        normal.outer_spin = 0.4; // non-trivial swing state, not just the at-rest fallback
+        let mut garbage = CalibrationParticle::proton(1.0);
+        garbage.outer_spin = 0.4;
+        garbage.axial_gear_north = 77.0;
+        garbage.axial_gear_south = 77.0;
+
+        let contact = normal.position + DVec3::X;
+        normal.apply_photon(contact, dir, 1.0, 0.02);
+        garbage.apply_photon(contact, dir, 1.0, 0.02);
+
+        assert_eq!(normal.outer_spin, garbage.outer_spin,
+            "beyond the 20 deg cone, axial_gear_* must be unreachable (outer_spin)");
+        assert_eq!(normal.lin_velocity, garbage.lin_velocity,
+            "beyond the 20 deg cone, axial_gear_* must be unreachable (lin_velocity)");
+        assert_eq!(normal.ang_velocity, garbage.ang_velocity,
+            "beyond the 20 deg cone, axial_gear_* must be unreachable (ang_velocity)");
     }
 
     // --- Shadow occlusion (Change 1) + full-velocity drag (Change 2) ---
@@ -3375,6 +3585,16 @@ mod tests {
     /// user physics decision, deliberately NOT wired here, because
     /// `apply_photon` is the signed-off CM-2 rule (commits 663d8d8/3814281)
     /// and this report only measures it.
+    ///
+    /// RESOLUTION (commit 7516470, wired into `apply_photon`): the knife-edge
+    /// is dissolved by the axial-cone branch — `report_axial_channel_geometry`
+    /// measured the loop-resolved answer (chirality-signed azimuthal push,
+    /// per-particle, per-entry-lane, with the neutron lane-flipping sign),
+    /// and `apply_photon` now blends to it smoothstep-wise inside a 10-20
+    /// degree cone around the pole (see `apply_photon`'s doc comment and
+    /// [`AXIAL_GEAR_PROTON`]). Any theta=0 rows produced by THIS report
+    /// BEFORE that change remain untrustworthy history, per the caveat
+    /// above; rows produced after it reflect the resolved rule.
     ///
     /// Grid: control row (`F_a=200, F_s=0`, theta/p_s irrelevant, run once)
     /// plus the 2 (theta) x 2 (p_s) x 3 (F_a,F_s) = 12 stream rows, per
