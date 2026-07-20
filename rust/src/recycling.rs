@@ -238,6 +238,24 @@ pub const DEFAULT_N: usize = 200_000;
 /// non-relativistic only" landed near 0.055c). Used only as this module's
 /// own default; not read from `calibration::CalibrationParticle`.
 pub const DEFAULT_SWING_BOOST: f64 = 0.05;
+/// Ambient photon fraction near Earth (magmom.pdf: local field ~2/3 photon,
+/// 1/3 antiphoton, the Sun's left-spin imbalance). This asymmetry is what
+/// breaks the chirality-gear symmetry: at 0.5 (balanced) proton and neutron
+/// mesh identically with the field (neutron.pdf "balanced field → near-total
+/// spin cancellation, neutron indistinguishable"); only the 2/3 imbalance
+/// makes the two classes diverge. Swept vs 0.5 as the control.
+pub const PHOTON_FRACTION: f64 = 2.0 / 3.0;
+/// Through-channel strength for the chirality gears. On an opposite-chirality
+/// ("single-negative", Compton) collision the charge is blocked from
+/// equatorial escape and "gets funneled back to the central spin axis... and
+/// from there it can only escape back out one of the poles" (neutron.pdf;
+/// PHYSICS_REFERENCE §5, halbach.pdf). We model that funnel by blending the
+/// exit direction toward the nearer pole axis: dir = lerp(dir, ±ẑ, k). 0 = no
+/// funnel (soft, like augment → disc escape); 1 = full axial redirect (out
+/// the pole). WHICH charge cancels is set by chirality × field imbalance, so
+/// the polar-exit RATE is emergent; only the pole DIRECTION is the sourced
+/// mechanism. Swept in the report as the through-channel knob.
+pub const DEFAULT_CANCEL_REDIRECT: f64 = 1.0;
 /// Maximum ambient-launch impact parameter (importance-sampling near zone).
 pub const B_MAX: f64 = 6.0;
 /// Safety cap on total path length before a photon is given up as lost.
@@ -555,6 +573,84 @@ enum PhotonKind {
     Ambient,
 }
 
+/// Baryon spin class for the recycling test. The ONLY thing that differs
+/// between the two here is the level-12 (z) spin sign — the survey's
+/// proton/neutron discriminator (commit 8b0d374: sub-c L12 settles proton
+/// outer_spin positive, neutron negative). Emission GEOMETRY is identical
+/// (every baryon-sized construction traces an equatorial disc); the z-sign
+/// enters as (a) the emitted charge's chirality tag and (b) the sign of the
+/// outer-spin swing. Whether that produces a distinct exit topology is the
+/// emergent question the photon-gas run answers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BaryonClass {
+    Proton,
+    Neutron,
+}
+
+impl BaryonClass {
+    /// Level-12 z-spin sign: proton +1, neutron −1.
+    fn z_sign(self) -> f64 {
+        match self {
+            BaryonClass::Proton => 1.0,
+            BaryonClass::Neutron => -1.0,
+        }
+    }
+}
+
+/// Chirality-gear collision physics (PHYSICS_REFERENCE §5). `enabled=false`
+/// is a strict no-op: no chirality is drawn or read, so the RNG stream and
+/// every result are bit-identical to the pre-chirality module (preserves the
+/// TAU_SELF=0 v2 anchor and all existing report/test seeds). When enabled,
+/// emitted charge carries χ = class.z_sign(), ambient partners are sampled at
+/// `photon_fraction`, and an opposite-chirality (cancel) collision reverses
+/// the outward radial component by `cancel_backscatter` (turn-around).
+#[derive(Clone, Copy)]
+struct GearConfig {
+    enabled: bool,
+    photon_fraction: f64,
+    /// Through-channel (axial funnel) strength — see DEFAULT_CANCEL_REDIRECT.
+    cancel_redirect: f64,
+    /// Species-split directed intake strength (venus2.pdf / neutron.pdf):
+    /// 0 = isotropic ambient (the original ensemble); as this rises, ambient
+    /// photons are steered along the pole axis by species (photon → enters
+    /// south, antiphoton → enters north), building the poleward intake flow
+    /// the isotropic gas lacked. This is the coupling that closes the pole
+    /// limb; swept in the report.
+    pole_intake_bias: f64,
+    class: BaryonClass,
+}
+
+impl GearConfig {
+    /// The regression-preserving no-op (class Proton is irrelevant while
+    /// disabled — z_sign is +1 so even the swing sign is unchanged).
+    fn off() -> Self {
+        Self {
+            enabled: false,
+            photon_fraction: PHOTON_FRACTION,
+            cancel_redirect: 0.0,
+            pole_intake_bias: 0.0,
+            class: BaryonClass::Proton,
+        }
+    }
+
+    /// Chirality of a partner drawn from `kind`'s population: ambient is a
+    /// 2/3-photon mix (sampled), the emitted population is monochiral at the
+    /// class z-sign (a particle's own emitted charge is all one chirality, so
+    /// emitted↔emitted self-collisions always augment).
+    fn partner_chirality(&self, kind: PhotonKind, rng: &mut u64) -> f64 {
+        match kind {
+            PhotonKind::Ambient => {
+                if xorshift64(rng) < self.photon_fraction {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            PhotonKind::Emitted => self.class.z_sign(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Photon {
     pos: DVec3,
@@ -562,6 +658,10 @@ struct Photon {
     weight: f64,
     kind: PhotonKind,
     bounces: u32,
+    /// Emitted charge's spin chirality (±1 = class z-sign); ambient photons
+    /// carry 0 here (their partner chirality is sampled at collision time,
+    /// not stored). Unused while gears are disabled.
+    chirality: f64,
 }
 
 enum Termination {
@@ -633,7 +733,7 @@ fn sample_exit_magnitude_deg(rng: &mut u64) -> f64 {
     rand_gaussian(rng, peak, EXIT_SIGMA_DEG).clamp(0.0, 89.0)
 }
 
-fn spawn_emitted(rng: &mut u64, swing_boost: f64) -> Photon {
+fn spawn_emitted(rng: &mut u64, swing_boost: f64, class: BaryonClass) -> Photon {
     let sign = if xorshift64(rng) < 0.5 { 1.0 } else { -1.0 };
     let lat0 = sign * sample_exit_magnitude_deg(rng);
     let az0 = xorshift64(rng) * TAU;
@@ -645,7 +745,11 @@ fn spawn_emitted(rng: &mut u64, swing_boost: f64) -> Photon {
     let lat1 = sign * sample_exit_magnitude_deg(rng);
     let dir_radial = latlon_to_unit(lat1, az0);
     let phi_hat = phi_hat_at(dir_radial);
-    let dir = (dir_radial + phi_hat * swing_boost).normalize();
+    // Swing sense follows the settled outer_spin sign, which the survey ties
+    // to the z-sign (proton +, neutron −). For a proton (z_sign=+1) this is
+    // bit-identical to the pre-chirality path (same RNG draws, same sign).
+    let swing = swing_boost * class.z_sign();
+    let dir = (dir_radial + phi_hat * swing).normalize();
 
     Photon {
         pos,
@@ -653,6 +757,7 @@ fn spawn_emitted(rng: &mut u64, swing_boost: f64) -> Photon {
         weight: 1.0,
         kind: PhotonKind::Emitted,
         bounces: 0,
+        chirality: class.z_sign(),
     }
 }
 
@@ -688,8 +793,33 @@ fn ray_sphere_aim_latitude(pos: DVec3, dir: DVec3) -> Option<f64> {
 /// uniform on the sphere, random unit e ⊥ d, line start = −d·R_OUT + e·b,
 /// direction d; the photon is then advanced along d to its entry into the
 /// tallied shell (r = R_OUT), where the march begins.
-fn spawn_ambient(rng: &mut u64) -> (Photon, Option<f64>) {
-    let d = rand_unit_vec(rng);
+///
+/// Species-split directed intake (gears on, pole_intake_bias > 0): the
+/// ambient photon is first assigned a chirality (±1 at photon_fraction), then
+/// its travel direction is tilted along the pole axis by species — a photon
+/// (χ=+1) travels +z so it enters the SOUTH pole; an antiphoton (χ=−1)
+/// travels −z so it enters the NORTH pole (venus2.pdf / neutron.pdf). This
+/// breaks the isotropic near-zone ensemble on purpose: it is the directed
+/// intake that builds the poleward flow the isotropic gas never had. With
+/// bias = 0 (or gears off) the launch is the original isotropic one and the
+/// RNG stream for the gears-off path is unchanged (no chirality is drawn).
+fn spawn_ambient(rng: &mut u64, gears: &GearConfig) -> (Photon, Option<f64>) {
+    let (chirality, d) = if gears.enabled {
+        let chi = if xorshift64(rng) < gears.photon_fraction {
+            1.0
+        } else {
+            -1.0
+        };
+        let base = rand_unit_vec(rng);
+        let d = if gears.pole_intake_bias > 0.0 {
+            (base + DVec3::Z * (gears.pole_intake_bias * chi)).normalize()
+        } else {
+            base
+        };
+        (chi, d)
+    } else {
+        (0.0, rand_unit_vec(rng))
+    };
     let helper = if d.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
     let t_perp = d.cross(helper).normalize();
     let b_perp = d.cross(t_perp);
@@ -711,6 +841,7 @@ fn spawn_ambient(rng: &mut u64) -> (Photon, Option<f64>) {
             weight: 1.0,
             kind: PhotonKind::Ambient,
             bounces: 0,
+            chirality,
         },
         aim_lat,
     )
@@ -740,7 +871,28 @@ fn sample_contact_normal(rel_hat: DVec3, rng: &mut u64) -> DVec3 {
 /// `field`'s local mean direction + coherence at (r, theta). Returns the
 /// photon's new direction (unchanged when the pair is exactly co-moving or
 /// the exchange degenerates — co-moving photons don't jostle).
-fn scatter_off(field: &CollisionField, dir: DVec3, r: f64, theta: f64, rng: &mut u64) -> DVec3 {
+///
+/// Chirality gears (PHYSICS_REFERENCE §5): when `gears.enabled`, a partner
+/// chirality is drawn from `field`'s population and meshed with the marching
+/// photon's `chirality`. Same-chirality (augment, mesh>0) is the soft glance
+/// above — the photon keeps its outward progress and tends to escape.
+/// Opposite-chirality (cancel, mesh<0) is a hard bounce: the outward radial
+/// component of the exit direction is partially reversed (the blocked charge
+/// "has to turn around"), sending the photon back into the near zone where
+/// the pressure gradient — not this rule — decides where it re-emerges.
+/// When disabled, no chirality is drawn (RNG stream preserved) and behavior
+/// is bit-identical to the pre-chirality module.
+#[allow(clippy::too_many_arguments)]
+fn scatter_off(
+    field: &CollisionField,
+    dir: DVec3,
+    pos: DVec3,
+    r: f64,
+    theta: f64,
+    chirality: f64,
+    gears: &GearConfig,
+    rng: &mut u64,
+) -> DVec3 {
     let (mean_dir, coherence) = field.tally.mean_dir_and_coherence_at(r, theta);
     let mut partner_dir = mean_dir * coherence + rand_unit_vec(rng);
     if partner_dir.length_squared() < 1e-12 {
@@ -748,6 +900,7 @@ fn scatter_off(field: &CollisionField, dir: DVec3, r: f64, theta: f64, rng: &mut
     }
     partner_dir = partner_dir.normalize();
 
+    let mut new_dir = dir;
     let rel = dir - partner_dir;
     if rel.length_squared() > 1e-12 {
         let rel_hat = rel.normalize();
@@ -755,11 +908,33 @@ fn scatter_off(field: &CollisionField, dir: DVec3, r: f64, theta: f64, rng: &mut
             let nhat = sample_contact_normal(rel_hat, rng);
             let candidate = dir - dir.dot(nhat) * nhat + partner_dir.dot(nhat) * nhat;
             if candidate.length_squared() > 1e-8 {
-                return candidate.normalize();
+                new_dir = candidate.normalize();
+                break;
             }
         }
     }
-    dir
+
+    if !gears.enabled {
+        return new_dir;
+    }
+
+    // Chirality mesh. The partner-chirality draw only happens here (gears on),
+    // so the disabled path never consumes it.
+    let chi_partner = gears.partner_chirality(field.kind, rng);
+    let mesh = chirality * chi_partner;
+    if mesh < 0.0 && gears.cancel_redirect > 0.0 {
+        // Cancel = blocked from equatorial escape → the through-channel: the
+        // charge is funneled to the central spin axis and out the nearer pole
+        // (neutron.pdf). Blend the exit direction toward ±ẑ; k=1 sends it
+        // fully axial. This is what turns a trapped-disc photon into a POLAR
+        // exit — the missing limb the disc-only pump never had.
+        let pole = if pos.z >= 0.0 { DVec3::Z } else { -DVec3::Z };
+        let blended = new_dir.lerp(pole, gears.cancel_redirect);
+        if blended.length_squared() > 1e-12 {
+            return blended.normalize();
+        }
+    }
+    new_dir
 }
 
 /// Ray-marches one photon through TWO regularized collision fields — the
@@ -782,6 +957,7 @@ fn march(
     selff: &CollisionField,
     sigma_self: f64,
     n_ricochet: u32,
+    gears: &GearConfig,
     rng: &mut u64,
     own_field: &mut DensityField,
 ) -> (Termination, u32, u32) {
@@ -841,7 +1017,16 @@ fn march(
                         xorshift64(rng) < lam_self / lam
                     };
                     let field = if use_self { selff } else { cross };
-                    photon.dir = scatter_off(field, photon.dir, r, theta, rng);
+                    photon.dir = scatter_off(
+                        field,
+                        photon.dir,
+                        photon.pos,
+                        r,
+                        theta,
+                        photon.chirality,
+                        gears,
+                        rng,
+                    );
                     photon.bounces += 1;
                     if use_self {
                         self_bounces += 1;
@@ -868,6 +1053,15 @@ struct PassTally {
     arrived: f64,
     arrived_band: [f64; 3],
     escaped: f64,
+    /// Escaped-photon count by latitude band of the escape point — the exit
+    /// TOPOLOGY. For emitted charge this is the emission profile the gas
+    /// actually produces: equatorial-dominated = proton disc, polar-dominated
+    /// = the neutron's axial channel (if it emerges).
+    escaped_band: [f64; 3],
+    /// Σ chirality over escaped EMITTED photons — the net magnetic (spin)
+    /// output. Neutron neutrality shows here as a collapse toward 0 (spin
+    /// cancellation) even while charge is still recycled (escaped > 0).
+    chi_escaped_sum: f64,
     lost: f64,
     lz_arrived: f64,
     lz_escaped: f64,
@@ -889,7 +1083,13 @@ struct PassTally {
 }
 
 impl PassTally {
-    fn record_emitted(&mut self, term: &Termination, cross_bounces: u32, self_bounces: u32) {
+    fn record_emitted(
+        &mut self,
+        term: &Termination,
+        cross_bounces: u32,
+        self_bounces: u32,
+        chirality: f64,
+    ) {
         let bounces = cross_bounces + self_bounces;
         self.total += 1.0;
         self.collisions_cross_sum += cross_bounces as f64;
@@ -904,6 +1104,9 @@ impl PassTally {
             }
             Termination::Escaped { pos, dir } => {
                 self.escaped += 1.0;
+                let band = lat_band(arrival_latitude(*pos));
+                self.escaped_band[band as usize] += 1.0;
+                self.chi_escaped_sum += chirality;
                 self.lz_escaped += pos.cross(*dir).z;
             }
             Termination::Lost => self.lost += 1.0,
@@ -950,6 +1153,8 @@ impl PassTally {
             }
             Termination::Escaped { pos, dir } => {
                 self.escaped += 1.0;
+                let band = lat_band(arrival_latitude(*pos));
+                self.escaped_band[band as usize] += 1.0;
                 self.lz_escaped += pos.cross(*dir).z;
             }
             Termination::Lost => self.lost += 1.0,
@@ -957,6 +1162,7 @@ impl PassTally {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn run_pass(
     kind: PhotonKind,
@@ -967,6 +1173,7 @@ fn run_pass(
     selff: &CollisionField,
     sigma_self: f64,
     n_ricochet: u32,
+    gears: &GearConfig,
     rng: &mut u64,
 ) -> (DensityField, PassTally, f64) {
     let mut field = DensityField::new();
@@ -975,17 +1182,19 @@ fn run_pass(
     for _ in 0..n {
         match kind {
             PhotonKind::Emitted => {
-                let photon = spawn_emitted(rng, swing_boost);
+                let photon = spawn_emitted(rng, swing_boost, gears.class);
                 lz_source_total += photon.pos.cross(photon.dir).z * photon.weight;
                 let (term, cb, sb) = march(
-                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, rng, &mut field,
+                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
+                    &mut field,
                 );
-                tally.record_emitted(&term, cb, sb);
+                tally.record_emitted(&term, cb, sb, photon.chirality);
             }
             PhotonKind::Ambient => {
-                let (photon, aim_lat) = spawn_ambient(rng);
+                let (photon, aim_lat) = spawn_ambient(rng, gears);
                 let (term, cb, sb) = march(
-                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, rng, &mut field,
+                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
+                    &mut field,
                 );
                 tally.record_ambient(&term, cb, sb, aim_lat);
             }
@@ -998,7 +1207,12 @@ fn run_pass(
 /// and mean-direction fields for iteration 1 of every sweep cell. The
 /// launch-shell density spike this produces near r=1.001 is harmless in v2:
 /// the correction cap bounds its effect on collisions at 4× analytic.
-fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, DensityField) {
+fn run_iteration0(
+    n: usize,
+    swing_boost: f64,
+    gears: &GearConfig,
+    rng: &mut u64,
+) -> (DensityField, DensityField) {
     let pure_ambient = CollisionField::pure_analytic(PhotonKind::Ambient);
     let pure_emitted = CollisionField::pure_analytic(PhotonKind::Emitted);
     let (emitted0, _, _) = run_pass(
@@ -1010,6 +1224,7 @@ fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, D
         &pure_emitted,
         0.0,
         0,
+        gears,
         rng,
     );
     let (ambient0, _, _) = run_pass(
@@ -1021,6 +1236,7 @@ fn run_iteration0(n: usize, swing_boost: f64, rng: &mut u64) -> (DensityField, D
         &pure_ambient,
         0.0,
         0,
+        gears,
         rng,
     );
     (emitted0, ambient0)
@@ -1063,6 +1279,7 @@ fn run_self_consistent(
     n_ricochet: u32,
     iters: usize,
     pump: bool,
+    gears: &GearConfig,
     emitted0: &DensityField,
     ambient0: &DensityField,
     seed: u64,
@@ -1116,6 +1333,7 @@ fn run_self_consistent(
             &field_emitted,
             sigma_ee,
             n_ricochet,
+            gears,
             &mut rng,
         );
         let (measured_ambient, a_tally, _) = run_pass(
@@ -1127,6 +1345,7 @@ fn run_self_consistent(
             &field_ambient,
             sigma_aa,
             n_ricochet,
+            gears,
             &mut rng,
         );
 
@@ -1209,7 +1428,7 @@ mod tests {
         let mut hits = 0;
         let mut mismatches = 0;
         for _ in 0..n {
-            let (photon, aim_lat) = spawn_ambient(&mut rng);
+            let (photon, aim_lat) = spawn_ambient(&mut rng, &GearConfig::off());
             let mut field = DensityField::new();
             let (term, cb, sb) = march(
                 photon,
@@ -1218,6 +1437,7 @@ mod tests {
                 &pure_ambient,
                 0.0,
                 0,
+                &GearConfig::off(),
                 &mut rng,
                 &mut field,
             );
@@ -1265,7 +1485,7 @@ mod tests {
         // deviation #1 for why this is guaranteed by construction).
         let mut reentries = 0;
         for _ in 0..n {
-            let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST);
+            let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST, BaryonClass::Proton);
             let mut field = DensityField::new();
             let (term, cb, sb) = march(
                 photon,
@@ -1274,6 +1494,7 @@ mod tests {
                 &pure_emitted,
                 0.0,
                 0,
+                &GearConfig::off(),
                 &mut rng,
                 &mut field,
             );
@@ -1321,6 +1542,7 @@ mod tests {
             &pure_emitted,
             0.0,
             0,
+            &GearConfig::off(),
             &mut rng,
         );
 
@@ -1379,6 +1601,7 @@ mod tests {
             &pure_emitted,
             0.0,
             0,
+            &GearConfig::off(),
             &mut rng,
         );
         let (_field_a, ambient_tally, _) = run_pass(
@@ -1390,6 +1613,7 @@ mod tests {
             &pure_ambient,
             0.0,
             0,
+            &GearConfig::off(),
             &mut rng,
         );
 
@@ -1418,7 +1642,7 @@ mod tests {
         let cap = 5u32;
         let mut any_self = false;
         for _ in 0..200 {
-            let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST);
+            let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST, BaryonClass::Proton);
             let mut field = DensityField::new();
             let (_term, cb, sb) = march(
                 photon,
@@ -1427,6 +1651,7 @@ mod tests {
                 &pure_emitted,
                 1000.0,
                 cap,
+                &GearConfig::off(),
                 &mut rng,
                 &mut field,
             );
@@ -1449,6 +1674,7 @@ mod tests {
             weight: 1.0,
             kind: PhotonKind::Ambient,
             bounces: 0,
+            chirality: 0.0,
         };
         let mut field = DensityField::new();
         let (term, cb, sb) = march(
@@ -1458,6 +1684,7 @@ mod tests {
             &pure_ambient,
             1000.0,
             100,
+            &GearConfig::off(),
             &mut rng,
             &mut field,
         );
@@ -1475,6 +1702,7 @@ mod tests {
             weight: 1.0,
             kind: PhotonKind::Ambient,
             bounces: 0,
+            chirality: 0.0,
         };
         let mut field = DensityField::new();
         let (_term, _cb, sb) = march(
@@ -1484,6 +1712,7 @@ mod tests {
             &pure_ambient,
             1000.0,
             100,
+            &GearConfig::off(),
             &mut rng,
             &mut field,
         );
@@ -1501,7 +1730,8 @@ mod tests {
     fn pump_budget_tracks_geometric_absorption_at_tau0() {
         let mut rng = 0xBEE5_0000_1234_ABCDu64;
         let n = 20_000usize;
-        let (emitted0, ambient0) = run_iteration0(n, DEFAULT_SWING_BOOST, &mut rng);
+        let gears = GearConfig::off();
+        let (emitted0, ambient0) = run_iteration0(n, DEFAULT_SWING_BOOST, &gears, &mut rng);
         let cell = run_self_consistent(
             n,
             DEFAULT_SWING_BOOST,
@@ -1510,6 +1740,7 @@ mod tests {
             0,
             4,
             true,
+            &gears,
             &emitted0,
             &ambient0,
             0x5eed_5eed_5eed_5eedu64,
@@ -1572,7 +1803,11 @@ mod tests {
             tau_self_ambient_integral()
         );
 
-        let (emitted0, ambient0) = run_iteration0(n, swing_boost, &mut seed);
+        // This report keeps the original chirality-blind physics (proton
+        // disc profile, no gears) as the v4 regression anchor. The
+        // proton-vs-neutron chirality comparison is a separate report.
+        let gears = GearConfig::off();
+        let (emitted0, ambient0) = run_iteration0(n, swing_boost, &gears, &mut seed);
 
         // (pump, TAU, TAU_SELF, N_RICOCHET, iters) sweep — v4. The forced
         // flagship is the v3 regression anchor; every pump cell's emission
@@ -1593,7 +1828,7 @@ mod tests {
         for &(pump, tau, tau_self, nr, iters) in &specs {
             seed = seed.wrapping_add(1);
             let cell = run_self_consistent(
-                n, swing_boost, tau, tau_self, nr, iters, pump, &emitted0, &ambient0, seed,
+                n, swing_boost, tau, tau_self, nr, iters, pump, &gears, &emitted0, &ambient0, seed,
             );
             println!(
                 "cell {} TAU={tau:.1} TAU_SELF={tau_self:.1} Nric={nr} iters={iters} -> sigma_e={:.4} sigma_a={:.6} sigma_ee={:.4} sigma_aa={:.6} n_emit_final={}",
@@ -1932,6 +2167,213 @@ mod tests {
             cells.len(),
             n,
             ITERS
+        );
+    }
+
+    /// CM-3 neutron test: does chirality trapping + species-split directed
+    /// intake give the neutron spin class a distinct polar EXIT TOPOLOGY?
+    ///
+    /// Setup answers "what is the neutron's profile?" without hardcoding one.
+    /// Emission GEOMETRY is the same equatorial disc for both classes (every
+    /// baryon-sized construction traces a disc). The only class difference is
+    /// the chirality tag χ = z-sign (proton +1, neutron −1; the survey's
+    /// discriminator) and the swing sign.
+    ///
+    /// Two coupled mechanisms run in the full photon gas + pressure + pump:
+    ///   1. Chirality gears (k = cancel_backscatter, fixed 1.0 here): a
+    ///      cross-collision meshes χ_marcher · χ_partner; opposite chirality
+    ///      (cancel) reverses the outward run — the charge is TURNED BACK
+    ///      (magmom.pdf "has to turn around and find its way out one of the
+    ///      poles"). An earlier run confirmed this traps neutron charge ~2×
+    ///      the proton on Earth's 2/3 field and not at all on a balanced field
+    ///      — but with isotropic intake the trapped charge only reabsorbed; it
+    ///      never reached a pole (the CM-3 "poles are exhaust, not intake"
+    ///      wall).
+    ///   2. Species-split directed intake (swept here, pole_intake_bias): the
+    ///      ambient is no longer isotropic — photons stream in the SOUTH pole,
+    ///      antiphotons the NORTH (venus2.pdf / neutron.pdf), building the
+    ///      poleward flow the isotropic gas lacked. This is the limb that was
+    ///      missing; the sweep asks whether restoring it lets the neutron's
+    ///      trapped charge exit polar.
+    ///
+    /// Read: on Earth's 2/3 field, a distinct neutron profile shows as the
+    /// bias rises — emitted polar-escape (polEsc) rising for the neutron above
+    /// the proton, and the ambient polar radial flow (poleIn) turning INWARD
+    /// (< 0 = intake limb closed). The balanced field is the null control
+    /// (neutron.pdf: balanced → indistinguishable). bias = 0 reproduces the
+    /// earlier isotropic-intake result.
+    #[test]
+    #[ignore = "long-running report; run with --ignored --nocapture"]
+    fn report_neutron_recycling() {
+        use std::time::Instant;
+        let started = Instant::now();
+
+        let n = 80_000usize;
+        let swing_boost = DEFAULT_SWING_BOOST;
+        // Some species-split directed intake stays on throughout (the intake
+        // limb); the through-channel (cancel_redirect) is the swept knob.
+        let intake_bias = 0.5_f64;
+        let mut seed = 0x1BAD_C0DE_F00D_2027u64;
+
+        println!("=== CM-3 Neutron Recycling Report (through-channel: does chirality-gated axial funnelling give the neutron a polar exit?) ===");
+        println!(
+            "N per population = {n}, pump flagship (TAU=3, TAU_SELF=3, Nric=30, iters={ITERS_PUMP}), swing_boost = {swing_boost}, pole_intake_bias = {intake_bias}, grid = {N_R}x{N_THETA}, R_OUT = {R_OUT}"
+        );
+        println!("Emission geometry IDENTICAL for both classes (bimodal disc ±7/±58); class difference = chirality χ=z_sign (proton +1, neutron −1) + swing sign.");
+        println!("Sweeping cancel_redirect (through-channel): 0 = cancel does nothing (disc-only, the old wall); >0 funnels a CANCELLED (chirality-blocked) photon toward the nearer pole (neutron.pdf axial channel).");
+        println!("Which photons cancel is set by chirality × field imbalance — so the polar-exit RATE is emergent; only the pole direction is imposed. Proton (χ=+1) augments on the 2/3 field (disc); neutron (χ=−1) cancels (funnelled polar).");
+        println!("EXIT TOPOLOGY (emitted escaped, by latitude band): equatorial = proton disc (electric charge); polar = neutron axial channel (sub-electrical along poles).");
+        println!("poleIn / eqIn = mean AMBIENT radial flow near the surface (r<~2.9) in the polar / equatorial band: NEGATIVE = inward = intake limb working.\n");
+
+        // Mean radial flow of a density field over a radial-bin range and a
+        // theta-band predicate (track-weighted). Negative = net inward.
+        let band_radial_flow =
+            |field: &DensityField, i_lo: usize, i_hi: usize, polar: bool| -> f64 {
+                let mut flux = 0.0;
+                let mut w = 0.0;
+                for i in i_lo..i_hi {
+                    for j in 0..N_THETA {
+                        let is_polar = !(3..15).contains(&j);
+                        if is_polar != polar {
+                            continue;
+                        }
+                        let idx = i * N_THETA + j;
+                        flux += field.radial_flux[idx];
+                        w += field.track_weight[idx];
+                    }
+                }
+                if w > 1e-9 {
+                    flux / w
+                } else {
+                    0.0
+                }
+            };
+
+        struct Row {
+            class: &'static str,
+            phi_label: &'static str,
+            redirect: f64,
+            n_emit: usize,
+            esc_frac: f64,
+            reent_frac: f64,
+            eq_esc: f64,
+            mid_esc: f64,
+            pol_esc: f64,
+            pole_in: f64,
+            eq_in: f64,
+        }
+
+        let classes = [
+            ("proton", BaryonClass::Proton),
+            ("neutron", BaryonClass::Neutron),
+        ];
+        let phis = [("earth-2/3", 2.0 / 3.0), ("balanced", 0.5)];
+        let redirects = [0.0_f64, 0.5, 1.0];
+
+        let mut rows: Vec<Row> = Vec::new();
+        for (cname, class) in classes {
+            // iteration-0 seed depends only on the class (swing sign);
+            // free-streaming, so redirect / bias are irrelevant here.
+            let seed_gears = GearConfig {
+                enabled: true,
+                photon_fraction: PHOTON_FRACTION,
+                cancel_redirect: 0.0,
+                pole_intake_bias: 0.0,
+                class,
+            };
+            seed = seed.wrapping_add(0x100);
+            let (emitted0, ambient0) = run_iteration0(n, swing_boost, &seed_gears, &mut seed);
+
+            for (phi_label, phi) in phis {
+                for &redirect in &redirects {
+                    let gears = GearConfig {
+                        enabled: true,
+                        photon_fraction: phi,
+                        cancel_redirect: redirect,
+                        pole_intake_bias: intake_bias,
+                        class,
+                    };
+                    seed = seed.wrapping_add(1);
+                    let cell = run_self_consistent(
+                        n, swing_boost, 3.0, 3.0, 30, ITERS_PUMP, true, &gears, &emitted0,
+                        &ambient0, seed,
+                    );
+                    let e = &cell.emitted_tally;
+                    let tot = e.total.max(1.0);
+                    let esc = e.escaped.max(0.0);
+                    let esc_den = esc.max(1.0);
+                    rows.push(Row {
+                        class: cname,
+                        phi_label,
+                        redirect,
+                        n_emit: cell.n_emit_final,
+                        esc_frac: esc / tot,
+                        reent_frac: e.arrived / tot,
+                        eq_esc: e.escaped_band[Band::Equatorial as usize] / esc_den,
+                        mid_esc: e.escaped_band[Band::Mid as usize] / esc_den,
+                        pol_esc: e.escaped_band[Band::Polar as usize] / esc_den,
+                        // Near-surface = r bins 0..8 (r ≈ 1 → 2.9).
+                        pole_in: band_radial_flow(&cell.final_ambient_field, 0, 8, true),
+                        eq_in: band_radial_flow(&cell.final_ambient_field, 0, 8, false),
+                    });
+                }
+            }
+        }
+
+        println!(
+            "{:>8} {:>10} {:>6} {:>8} {:>7} {:>7} | {:>7} {:>7} {:>7} | {:>8} {:>8}",
+            "class", "field", "redir", "nEmit", "escFr", "reentFr", "eqEsc%", "midEsc%",
+            "polEsc%", "poleIn", "eqIn"
+        );
+        for r in &rows {
+            println!(
+                "{:>8} {:>10} {:>6.2} {:>8} {:>7.4} {:>7.4} | {:>7.3} {:>7.3} {:>7.3} | {:>8.4} {:>8.4}",
+                r.class, r.phi_label, r.redirect, r.n_emit, r.esc_frac, r.reent_frac,
+                r.eq_esc, r.mid_esc, r.pol_esc, r.pole_in, r.eq_in
+            );
+        }
+
+        println!("\n--- Proton vs neutron contrast (equatorial-escape ratio n/p, polar-escape diff n−p, neutron polar exit fraction) ---");
+        println!(
+            "{:>10} {:>6} {:>12} {:>12} {:>14} {:>14}",
+            "field", "redir", "eqEsc n/p", "polEsc n−p", "n polEsc%", "p polEsc%"
+        );
+        let find = |cls: &str, phi: &str, redirect: f64| -> &Row {
+            rows.iter()
+                .find(|r| {
+                    r.class == cls && r.phi_label == phi && (r.redirect - redirect).abs() < 1e-9
+                })
+                .expect("row present")
+        };
+        for (phi_label, _) in phis {
+            for &redirect in &redirects {
+                let p = find("proton", phi_label, redirect);
+                let nn = find("neutron", phi_label, redirect);
+                let eq_ratio = if p.eq_esc.abs() > 1e-9 {
+                    nn.eq_esc / p.eq_esc
+                } else {
+                    f64::NAN
+                };
+                println!(
+                    "{:>10} {:>6.2} {:>12.3} {:>12.3} {:>14.3} {:>14.3}",
+                    phi_label,
+                    redirect,
+                    eq_ratio,
+                    nn.pol_esc - p.pol_esc,
+                    nn.pol_esc,
+                    p.pol_esc
+                );
+            }
+        }
+        println!("\nREAD: neutron polar profile emerges if, on earth-2/3 as redirect rises, eqEsc(n/p) drops below 1 (disc suppressed) AND polEsc(n−p) rises above 0 (axial gained). Balanced rows are the null control (neutron.pdf: balanced field → indistinguishable).");
+
+        let elapsed = started.elapsed();
+        println!(
+            "\nTotal report runtime: {:.1}s ({} cells x {} photons/pop x {} pump iters x 2 pops, plus 2 iteration-0 seeds)",
+            elapsed.as_secs_f64(),
+            rows.len(),
+            n,
+            ITERS_PUMP
         );
     }
 }
