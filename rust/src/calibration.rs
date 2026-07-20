@@ -1247,6 +1247,7 @@ impl AmbientField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hitbox::bake_loop_velocities;
     use std::f64::consts::TAU;
 
     /// A small Z-pole particle for clean impulse-decomposition tests: loop L3,
@@ -3399,6 +3400,7 @@ mod tests {
                 make: Box::new(|| {
                     let mut p = CalibrationParticle::new(bake_loop(12, 256), 1.0);
                     p.gear_efficiency = GEAR_LADDER_PROTON;
+                    (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_PROTON;
                     p
                 }),
             },
@@ -3407,6 +3409,7 @@ mod tests {
                 make: Box::new(|| {
                     let mut p = CalibrationParticle::new(bake_loop(11, 256), 1.0);
                     p.gear_efficiency = GEAR_LADDER_NEUTRON;
+                    (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_NEUTRON;
                     p
                 }),
             },
@@ -3415,6 +3418,7 @@ mod tests {
                 make: Box::new(|| {
                     let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
                     p.gear_efficiency = GEAR_LADDER_ELECTRON;
+                    (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_ELECTRON;
                     p
                 }),
             },
@@ -3643,28 +3647,19 @@ mod tests {
             SEED, DURATION
         );
         println!(
-            "WARNING (theta=0 rows): at exactly axial incidence dir.dot(t_hat) == +/-0.0, so DirRelSign's"
+            "NOTE (theta=0 rows): the pre-cone knife-edge (dir.dot(t_hat)==+/-0.0 into signum()) is"
         );
         println!(
-            "  chi_eff = chirality * (-dir.dot(t_hat)).signum() evaluates signum on an IEEE signed zero /"
+            "  RESOLVED: apply_photon's axial-cone branch (commit 3b32c69) smoothstep-blends to"
         );
         println!(
-            "  fp residue -- a floating-point knife edge, NOT geometry. Confirmed by report_vortex_feedback_probes:"
+            "  the loop-resolved lane constants (AXIAL_GEAR_*) inside 10-20 deg of the pole."
         );
         println!(
-            "  B3 (per-photon delta sign at exact pole incidence is set by fp zero-sign bookkeeping),"
+            "  theta=0 rows now reflect the wired axial rule. Continuity with theta=1/5/15/30"
         );
         println!(
-            "  B1 (theta=180 does not mirror), B2 (theta=1/5 deg do not connect continuously to the axis)."
-        );
-        println!(
-            "  theta=0 rows are NOT trustworthy physics until the axial-incidence rule is decided"
-        );
-        println!(
-            "  (dead-zone vs chirality-signed azimuthal push) -- a user physics decision, deliberately"
-        );
-        println!(
-            "  NOT wired here since apply_photon is the signed-off CM-2 rule."
+            "  should hold (the smoothstep connects the axial lane to the oblique swing rule)."
         );
 
         let stream_cells: [(f64, f64); 3] = [(200.0, 200.0), (200.0, 800.0), (0.0, 200.0)];
@@ -4425,5 +4420,753 @@ mod tests {
             "T above by linearity (f_i is chirality-independent; chi_eff_i flips sign with chi, so j_i and"
         );
         println!("tau_i flip sign) -- W (built from f_i alone) is unchanged under chi -> -chi.");
+    }
+
+    /// REPORT: sweep all 16 baryon chirality configurations from
+    /// PHYSICS_REFERENCE §3 through the ricochet machinery.
+    ///
+    /// For each of the 16 sign patterns (proton ×4, neutron ×4, anti-proton
+    /// ×4, anti-neutron ×4) we bake the spin loop with those chiralities on
+    /// levels 9-12 (L1-L8 fixed at +c) and measure:
+    ///
+    ///   (A) **Shape metrics** — planarity (disc vs sphere), equatorial vs
+    ///       polar surface concentration, max extent. A proton-like pattern
+    ///       should produce a flat, disc-heavy shape; a neutron-like pattern
+    ///       may differ.
+    ///
+    ///   (B) **Orientation coherence** — do the baked orientations around the
+    ///       equator point the same way (emission escapes coherently) or are
+    ///       they scrambled (emission gets trapped)?
+    ///
+    ///   (C) **Settled outer_spin** — same as the vortex feedback measurement
+    ///       but for each chirality variant, under isotropic ambient. Tests
+    ///       whether the gear pump drives or damps the live swing.
+    ///
+    /// The user's hypothesis: proton patterns self-recycle (emission escapes),
+    /// neutron patterns channel-and-block (emission trapped). This survey is
+    /// the empirical test.
+    ///
+    /// Configuration variations per the user's request:
+    ///   - L12 baked at c (standard proton depth)
+    ///   - L11 baked at c (previous neutron hypothesis: sub-c L12)
+    ///   - L13 attached (proton with uberon axial precession)
+    #[test]
+    #[ignore]
+    fn report_chirality_survey() {
+        // ── The 16 baryon chirality patterns ──────────────────────────────
+        // Each tuple: (label, particle_class, [a, x, y, z] signs for L9-L12)
+        // Signs are applied to baked levels 9..=12; levels 1..=8 stay at +c.
+        struct Pattern {
+            label: &'static str,
+            class: &'static str,
+            signs: [f64; 4], // L9=a, L10=x, L11=y, L12=z
+        }
+        let patterns: Vec<Pattern> = vec![
+            // Proton states (emission escapes, coherent equatorial emission)
+            Pattern { label: "+a+x+y+z", class: "proton",       signs: [ 1., 1., 1., 1.] },
+            Pattern { label: "-a-x-y-z", class: "proton",       signs: [-1.,-1.,-1.,-1.] },
+            Pattern { label: "-a+x+y+z", class: "proton",       signs: [-1., 1., 1., 1.] },
+            Pattern { label: "+a-x-y-z", class: "proton",       signs: [ 1.,-1.,-1.,-1.] },
+            // Neutron states (emission trapped, charge neutral)
+            Pattern { label: "-a-x-y+z", class: "neutron",      signs: [-1.,-1.,-1., 1.] },
+            Pattern { label: "+a+x+y-z", class: "neutron",      signs: [ 1., 1., 1.,-1.] },
+            Pattern { label: "-a+x+y-z", class: "neutron",      signs: [-1., 1., 1.,-1.] },
+            Pattern { label: "+a-x-y+z", class: "neutron",      signs: [ 1.,-1.,-1., 1.] },
+            // Anti-proton states (emission escapes upside-down)
+            Pattern { label: "+a-x+y-z", class: "anti-proton",  signs: [ 1.,-1., 1.,-1.] },
+            Pattern { label: "-a+x-y+z", class: "anti-proton",  signs: [-1., 1.,-1., 1.] },
+            Pattern { label: "+a+x-y+z", class: "anti-proton",  signs: [ 1., 1.,-1., 1.] },
+            Pattern { label: "-a-x+y-z", class: "anti-proton",  signs: [-1.,-1., 1.,-1.] },
+            // Anti-neutron states (trapped, not fully cancelled)
+            Pattern { label: "+a-x+y+z", class: "anti-neutron", signs: [ 1.,-1., 1., 1.] },
+            Pattern { label: "+a+x-y-z", class: "anti-neutron", signs: [ 1., 1.,-1.,-1.] },
+            Pattern { label: "-a-x+y+z", class: "anti-neutron", signs: [-1.,-1., 1., 1.] },
+            Pattern { label: "-a+x-y-z", class: "anti-neutron", signs: [-1., 1.,-1.,-1.] },
+        ];
+
+        // ── Build full 12-level velocity arrays ──────────────────────────
+        // Levels 1-8 at +c; levels 9-12 from the pattern.
+        // `z_mag` overrides the magnitude of L12 (default 1.0 = saturated).
+        let full_velocities = |p: &Pattern, z_mag: f64| -> Vec<f64> {
+            let mut s = vec![1.0; 12];
+            for i in 0..4 {
+                s[8 + i] = p.signs[i];
+            }
+            s[11] *= z_mag.abs(); // scale L12 magnitude, preserve sign
+            s
+        };
+
+        // ── Bake depth variations ────────────────────────────────────────
+        struct DepthVariant {
+            label: &'static str,
+            loop_level: u8,
+            z_mag: f64, // L12 velocity magnitude (1.0 = saturated, 0.05 = sub-c)
+        }
+        let depths = [
+            DepthVariant { label: "L12 (proton-depth)", loop_level: 12, z_mag: 1.0 },
+            DepthVariant { label: "L11 (neutron-hyp)",  loop_level: 11, z_mag: 1.0 },
+            DepthVariant { label: "L12 |Z|=0.05",      loop_level: 12, z_mag: 0.05 },
+        ];
+
+        let samples = 256;
+
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("  CHIRALITY SURVEY: all 16 baryon sign patterns × bake depths");
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!();
+
+        // ── PART A: Shape metrics ────────────────────────────────────────
+        println!("PART A: Baked-loop shape metrics");
+        println!("  R_eq  = RMS equatorial radius (sqrt(x²+y²) over points)");
+        println!("  R_pol = RMS polar extent (|z| over points)");
+        println!("  P     = planarity = R_eq / R_pol (disc > 1, ball ~ 1)");
+        println!("  R_max = max distance from origin");
+        println!("  F_eq  = fraction of points within 30° of equator");
+        println!("  F_pol = fraction of points within 30° of poles");
+        println!();
+
+        for depth in &depths {
+            println!("── Bake depth: {} (loop_level={}, samples={}) ──",
+                     depth.label, depth.loop_level, samples);
+            println!(
+                "{:<16} {:<14} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+                "pattern", "class", "R_eq", "R_pol", "P", "R_max", "F_eq", "F_pol"
+            );
+
+            for pat in &patterns {
+                let vels = full_velocities(pat, depth.z_mag);
+                let vel_slice = &vels[..depth.loop_level as usize];
+                let baked = bake_loop_velocities(depth.loop_level, samples, vel_slice);
+
+                let n = baked.points.len() as f64;
+                let pole = baked.swing_axis.normalize_or_zero();
+
+                let mut sum_eq2 = 0.0;
+                let mut sum_pol2 = 0.0;
+                let mut max_r = 0.0f64;
+                let mut n_eq = 0u64;
+                let mut n_pol = 0u64;
+
+                for p in &baked.points {
+                    let r = p.length();
+                    max_r = max_r.max(r);
+
+                    let along_pole = p.dot(pole);
+                    let perp = (*p - pole * along_pole).length();
+                    sum_eq2 += perp * perp;
+                    sum_pol2 += along_pole * along_pole;
+
+                    if r > 1e-12 {
+                        let cos_lat = along_pole.abs() / r;
+                        if cos_lat < 0.5 {  // within 60° of equator = within 30° of equator
+                            n_eq += 1;
+                        }
+                        if cos_lat > 0.866 { // within 30° of pole
+                            n_pol += 1;
+                        }
+                    }
+                }
+
+                let r_eq = (sum_eq2 / n).sqrt();
+                let r_pol = (sum_pol2 / n).sqrt();
+                let planarity = if r_pol > 1e-12 { r_eq / r_pol } else { f64::INFINITY };
+                let f_eq = n_eq as f64 / n;
+                let f_pol = n_pol as f64 / n;
+
+                println!(
+                    "{:<16} {:<14} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.4} {:>8.4}",
+                    pat.label, pat.class, r_eq, r_pol, planarity, max_r, f_eq, f_pol
+                );
+            }
+            println!();
+        }
+
+        // ── PART B: Orientation coherence ────────────────────────────────
+        // For each pattern, measure how coherently the base photon's
+        // orientation aligns around the equator. If emission escapes
+        // (proton-like), equatorial orientations should cluster; if trapped
+        // (neutron-like), they should be scrambled.
+        //
+        // Metric: mean |q_i · q_mean| for equatorial points (|cos(lat)| < 0.5),
+        // where q_mean is the average orientation quaternion. 1.0 = perfect
+        // alignment, ~0.5 = random.
+        println!("PART B: Equatorial orientation coherence");
+        println!("  C_eq = mean alignment of orientation quaternions at equatorial points");
+        println!("  (1.0 = all facing same way, ~0.5 = random)");
+        println!();
+
+        for depth in &depths {
+            println!("── Bake depth: {} ──", depth.label);
+            println!(
+                "{:<16} {:<14} {:>10} {:>10}",
+                "pattern", "class", "C_eq", "n_eq_pts"
+            );
+
+            for pat in &patterns {
+                let vels = full_velocities(pat, depth.z_mag);
+                let vel_slice = &vels[..depth.loop_level as usize];
+                let baked = bake_loop_velocities(depth.loop_level, samples, vel_slice);
+                let pole = baked.swing_axis.normalize_or_zero();
+
+                // Collect equatorial orientations
+                let mut eq_orientations = Vec::new();
+                for (i, p) in baked.points.iter().enumerate() {
+                    let r = p.length();
+                    if r > 1e-12 {
+                        let cos_lat = p.dot(pole).abs() / r;
+                        if cos_lat < 0.5 {
+                            eq_orientations.push(baked.orientations[i]);
+                        }
+                    }
+                }
+
+                let coherence = if eq_orientations.len() >= 2 {
+                    // Average quaternion (approximate: sum and normalize)
+                    let mut sum = glam::DVec4::ZERO;
+                    for q in &eq_orientations {
+                        let v = glam::DVec4::new(q.x, q.y, q.z, q.w);
+                        // Flip to consistent hemisphere (q and -q are the same rotation)
+                        if sum.dot(v) < 0.0 { sum -= v; } else { sum += v; }
+                    }
+                    let avg = DQuat::from_xyzw(sum.x, sum.y, sum.z, sum.w).normalize();
+                    // Mean alignment
+                    let mut align_sum = 0.0;
+                    for q in &eq_orientations {
+                        align_sum += q.dot(avg).abs();
+                    }
+                    align_sum / eq_orientations.len() as f64
+                } else {
+                    f64::NAN
+                };
+
+                println!(
+                    "{:<16} {:<14} {:>10.4} {:>10}",
+                    pat.label, pat.class, coherence, eq_orientations.len()
+                );
+            }
+            println!();
+        }
+
+        // ── PART C: Settled outer_spin under isotropic ambient ───────────
+        // Same framework as settle_probe / report_vortex_feedback, but
+        // using each chirality variant's baked loop. Isotropic field only
+        // (no neighbor stream), measuring whether the shape alone drives
+        // a preferred spin direction.
+        println!("PART C: Settled outer_spin (isotropic ambient, lattice-held)");
+        println!("  gear_eff = 1/16385 (proton ladder rung) for all patterns");
+        println!("  200 flux, 0.02 momentum, 2/3 photon, 200k steps");
+        println!();
+
+        let steps = 200_000;
+        let seed = 42u64;
+
+        for depth in &depths {
+            println!("── Bake depth: {} ──", depth.label);
+            println!(
+                "{:<16} {:<14} {:>12} {:>12} {:>10}",
+                "pattern", "class", "mean_spin", "std_spin", "transmuted"
+            );
+
+            for pat in &patterns {
+                let vels = full_velocities(pat, depth.z_mag);
+                let vels_owned: Vec<f64> = vels[..depth.loop_level as usize].to_vec();
+                let ll = depth.loop_level;
+
+                let make = move || {
+                    let baked = bake_loop_velocities(ll, samples, &vels_owned);
+                    let mut p = CalibrationParticle::new(baked, 1.0);
+                    p.gear_efficiency = GEAR_LADDER_PROTON;
+                    (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_PROTON;
+                    p
+                };
+
+                // Use settle_probe with no neighbor stream (f_s=0).
+                let (mean, std, transmuted, _blocks) = settle_probe(
+                    &make, 0.0, 0.5, 200.0, 0.0, steps, seed, true, 4,
+                );
+
+                println!(
+                    "{:<16} {:<14} {:>12.6} {:>12.6} {:>10}",
+                    pat.label, pat.class, mean, std, transmuted
+                );
+            }
+            println!();
+        }
+
+        // ── PART D: Sign-symmetry check ──────────────────────────────────
+        println!("PART D: Mirror-symmetry check (do (+a+x+y+z) and (-a-x-y-z) produce identical shapes?)");
+        println!();
+
+        let vels_all_pos: Vec<f64> = vec![1.0; 12];
+        let mut vels_all_neg: Vec<f64> = vec![1.0; 12];
+        for i in 8..12 { vels_all_neg[i] = -1.0; }
+
+        let b_pos = bake_loop_velocities(12, samples, &vels_all_pos);
+        let b_neg = bake_loop_velocities(12, samples, &vels_all_neg);
+
+        let mut max_diff = 0.0f64;
+        for (p1, p2) in b_pos.points.iter().zip(b_neg.points.iter()) {
+            let d = (*p1 - *p2).length();
+            max_diff = max_diff.max(d);
+        }
+        println!("  max point distance between +all and -all: {:.6e}", max_diff);
+        println!("  (0 = identical shapes, >0 = chirality affects geometry)");
+        println!();
+
+        let mut max_diff_reflected = 0.0f64;
+        for (p1, p2) in b_pos.points.iter().zip(b_neg.points.iter()) {
+            let d = (*p1 + *p2).length();
+            max_diff_reflected = max_diff_reflected.max(d);
+        }
+        println!("  max |p1 + p2| (mirror-through-origin test): {:.6e}", max_diff_reflected);
+        println!("  (0 = p2 is the mirror of p1 — expected for a×x×y×z sign flip)");
+        println!();
+
+        // ── PART E: Spin-layer routing ───────────────────────────────────
+        // Test whether chirality patterns route photons differently through
+        // individual spin levels. A photon entering at the pole encounters
+        // spin levels L9-L12 in sequence. At each level, the level's
+        // angular velocity deflects the photon tangentially.
+        //
+        // For each pattern, we build a partial spin stack (just L9-L12)
+        // and sample the composed orientation at many phases. The photon's
+        // "escape direction" is the orientation applied to a radial test
+        // vector. We measure:
+        //   - D_eq: how much the photon gets deflected toward the equator
+        //           (radial → tangential conversion, averaged over phases)
+        //   - D_pol: how much stays aligned with the pole (pass-through)
+        //   - C_dir: directional coherence — do all phase samples deflect
+        //            the SAME way (spiral = proton) or scatter (trap = neutron)?
+        //   - net_handed: net CW vs CCW deflection around the pole
+        println!("PART E: Spin-layer routing (photon deflection through L9-L12)");
+        println!("  A polar-incoming photon direction [0,0,1] is rotated through");
+        println!("  the baryon spin levels. Averaged over 1024 phase samples:");
+        println!("  D_eq   = mean equatorial deflection (tangent component)");
+        println!("  D_pol  = mean polar component (pass-through)");
+        println!("  C_dir  = directional coherence of deflection (1=spiral, ~0=scatter)");
+        println!("  handed = net CW(+) vs CCW(-) around the pole axis");
+        println!();
+
+        let n_phase = 1024usize;
+
+        for depth in &depths {
+            println!("── Bake depth: {} ──", depth.label);
+            println!(
+                "{:<16} {:<14} {:>8} {:>8} {:>8} {:>8}",
+                "pattern", "class", "D_eq", "D_pol", "C_dir", "handed"
+            );
+
+            for pat in &patterns {
+                let vels = full_velocities(pat, depth.z_mag);
+
+                // Build a stack with only the baryon levels (L9..=loop_level)
+                // but we need the full stack for compose() to work correctly.
+                // Instead: build full stack, advance by varying dt, and
+                // measure the ORIENTATION at each phase — the orientation
+                // tells us which way the photon exits.
+                let ll = depth.loop_level;
+                let vel_slice = &vels[..ll as usize];
+                let baked = bake_loop_velocities(ll, samples, vel_slice);
+
+                let pole = baked.swing_axis.normalize_or_zero();
+                let incoming = pole; // photon entering along pole axis
+
+                let mut sum_eq = 0.0f64;
+                let mut sum_pol = 0.0f64;
+                let mut deflections = Vec::with_capacity(n_phase);
+
+                for i in 0..n_phase {
+                    // Sample orientation at different points along the loop
+                    let idx = (i * baked.orientations.len()) / n_phase;
+                    let q = baked.orientations[idx.min(baked.orientations.len() - 1)];
+
+                    // The orientation transforms the incoming photon direction
+                    let exit_dir = q * incoming;
+                    let along_pole = exit_dir.dot(pole);
+                    let tangent = exit_dir - pole * along_pole;
+                    let eq_component = tangent.length();
+
+                    sum_pol += along_pole.abs();
+                    sum_eq += eq_component;
+                    deflections.push(tangent);
+                }
+
+                let d_eq = sum_eq / n_phase as f64;
+                let d_pol = sum_pol / n_phase as f64;
+
+                // Directional coherence: average the tangent deflections,
+                // then measure how aligned individual samples are with the mean
+                let mut mean_tangent = DVec3::ZERO;
+                for t in &deflections { mean_tangent += *t; }
+                mean_tangent /= n_phase as f64;
+                let mean_len = mean_tangent.length();
+                let c_dir = if mean_len > 1e-12 {
+                    let mean_hat = mean_tangent / mean_len;
+                    let mut align_sum = 0.0;
+                    for t in &deflections {
+                        let tlen = t.length();
+                        if tlen > 1e-12 {
+                            align_sum += t.dot(mean_hat) / tlen;
+                        }
+                    }
+                    align_sum / n_phase as f64
+                } else {
+                    0.0
+                };
+
+                // Net handedness around the pole: angular momentum of the
+                // deflection vectors. For each tangent vector in the equatorial
+                // plane, the "handedness" is the z-component of the cross
+                // product of the baked point's radial direction with the tangent.
+                let mut cw_sum = 0.0f64;
+                for (i, t) in deflections.iter().enumerate() {
+                    let idx = (i * baked.points.len()) / n_phase;
+                    let pt = baked.points[idx.min(baked.points.len() - 1)];
+                    let r_hat = (pt - pole * pt.dot(pole)).normalize_or_zero();
+                    cw_sum += r_hat.cross(*t).dot(pole);
+                }
+                let handed = cw_sum / n_phase as f64;
+
+                println!(
+                    "{:<16} {:<14} {:>8.4} {:>8.4} {:>8.4} {:>+8.4}",
+                    pat.label, pat.class, d_eq, d_pol, c_dir, handed
+                );
+            }
+            println!();
+        }
+
+        // ── PART F: Per-level decomposition ──────────────────────────────
+        // For each baryon level L9-L12, measure that level's individual
+        // contribution to deflection. Build partial stacks stopping at each
+        // level and diff the orientations.
+        println!("PART F: Per-level deflection decomposition (L12 depth only)");
+        println!("  For each chirality pattern, the deflection contributed by");
+        println!("  each baryon spin level individually. Computed as the");
+        println!("  orientation difference between stacks ending at L(n) vs L(n-1).");
+        println!();
+
+        let representative_patterns = [0usize, 4, 8, 12]; // one per class
+        for &pidx in &representative_patterns {
+            let pat = &patterns[pidx];
+            let vels = full_velocities(pat, 1.0);
+
+            println!("  {} ({}):", pat.label, pat.class);
+            println!("    {:<6} {:>8} {:>8} {:>8} {:>12}", "level", "D_eq", "D_pol", "C_dir", "type");
+
+            let incoming = DVec3::Z;
+            let pole = DVec3::Z;
+
+            for target_lvl in 9u8..=12 {
+                // Bake to target_lvl and measure orientation
+                let vel_slice = &vels[..target_lvl as usize];
+                let baked_to = bake_loop_velocities(target_lvl, 256, vel_slice);
+
+                // Measure deflections at the target level
+                let mut sum_eq = 0.0f64;
+                let mut sum_pol = 0.0f64;
+                let mut tangents = Vec::new();
+
+                for i in 0..256 {
+                    let q = baked_to.orientations[i.min(baked_to.orientations.len() - 1)];
+                    let exit = q * incoming;
+                    let along = exit.dot(pole);
+                    let tang = exit - pole * along;
+                    sum_eq += tang.length();
+                    sum_pol += along.abs();
+                    tangents.push(tang);
+                }
+
+                let d_eq = sum_eq / 256.0;
+                let d_pol = sum_pol / 256.0;
+
+                let mut mean_t = DVec3::ZERO;
+                for t in &tangents { mean_t += *t; }
+                mean_t /= 256.0;
+                let ml = mean_t.length();
+                let c_dir = if ml > 1e-12 {
+                    let mh = mean_t / ml;
+                    let mut asum = 0.0f64;
+                    for t in &tangents {
+                        let l = t.length();
+                        if l > 1e-12 { asum += t.dot(mh) / l; }
+                    }
+                    asum / 256.0
+                } else {
+                    0.0
+                };
+
+                let level_type = match target_lvl {
+                    9 => "axial(a)",
+                    10 => "orbital(x)",
+                    11 => "orbital(y)",
+                    12 => "orbital(z)",
+                    _ => "?",
+                };
+
+                println!(
+                    "    L{:<5} {:>8.4} {:>8.4} {:>8.4} {:>12}",
+                    target_lvl, d_eq, d_pol, c_dir, level_type
+                );
+            }
+            println!();
+        }
+
+        // ── PART G: Gear-torque profile by latitude ─────────────────────
+        // The gear-tangent kick is TANGENTIAL, so its radial component is
+        // near-zero by construction. The physically relevant observable is
+        // the POLE-AXIS TORQUE by latitude: where on the body does the gear
+        // pump accelerate the spin (= equatorial wind-up = emission drive)
+        // vs decelerate it (= polar braking = intake signature)?
+        //
+        // A recycling cell means: equatorial zone drives spin one way,
+        // polar zone drives it the other way, and the two zones balance
+        // (that's WHY outer_spin settles where it does). A non-recycling
+        // pattern might show uniform torque everywhere (no spatial
+        // structure) or all-same-sign (no cell, just uniform spin-up).
+        //
+        // Also measure the TANGENTIAL magnitude profile: does the gear
+        // pump concentrate its action at the equator (disc emission) or
+        // spread uniformly (no disc)?
+        println!("PART G: Gear-torque profile by latitude (sub-c L12)");
+        println!("  For each chirality pattern at its settled spin, fire 100k");
+        println!("  isotropic photons. Measure pole-axis torque per latitude bin.");
+        println!("  tau_z+ = spin-up torque (drives emission), tau_z- = braking.");
+        println!("  |kick| = tangential kick magnitude (where is the pump active?).");
+        println!();
+
+        const N_LAT_BINS: usize = 6;
+        let bin_labels = ["0-15°", "15-30°", "30-45°", "45-60°", "60-75°", "75-90°"];
+
+        let z_mag = 0.05;
+        let n_photons = 100_000usize;
+        let chirality_photon = 2.0 / 3.0;
+
+        // Print header for torque profile
+        println!("  Pole-axis torque (tau_z) by latitude bin (×1e6):");
+        println!(
+            "  {:<16} {:<10} {:>7} | {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} | {:>7}",
+            "pattern", "class", "spin",
+            bin_labels[0], bin_labels[1], bin_labels[2],
+            bin_labels[3], bin_labels[4], bin_labels[5],
+            "profile"
+        );
+
+        let mut rng_state = 42u64;
+
+        for pat in &patterns {
+            let vels = full_velocities(pat, z_mag);
+            let vels_owned: Vec<f64> = vels[..12].to_vec();
+
+            let vels_c = vels_owned.clone();
+            let make = move || {
+                let baked = bake_loop_velocities(12, samples, &vels_c);
+                let mut p = CalibrationParticle::new(baked, 1.0);
+                p.gear_efficiency = GEAR_LADDER_PROTON;
+                (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_PROTON;
+                p
+            };
+            let (settled_spin, _std, _transmuted, _blocks) = settle_probe(
+                &make, 0.0, 0.5, 200.0, 0.0, 200_000, 42, true, 4,
+            );
+
+            let baked = bake_loop_velocities(12, samples, &vels_owned);
+            let mut particle = CalibrationParticle::new(baked, 1.0);
+            particle.gear_efficiency = GEAR_LADDER_PROTON;
+            (particle.axial_gear_north, particle.axial_gear_south) = AXIAL_GEAR_PROTON;
+            particle.outer_spin = settled_spin;
+
+            let pole = particle.pole_axis();
+
+            // Per-bin accumulators: pole-axis torque component
+            let mut torque_z = [0.0f64; N_LAT_BINS];
+            let mut kick_mag = [0.0f64; N_LAT_BINS];
+            let mut bin_counts = [0u64; N_LAT_BINS];
+
+            for _ in 0..n_photons {
+                let dir = rand_unit_vec(&mut rng_state);
+                let swing_angle = xorshift64(&mut rng_state) * std::f64::consts::TAU;
+
+                let n_pts = particle.hitbox.points.len();
+                let pt_idx = ((xorshift64(&mut rng_state) * n_pts as f64) as usize).min(n_pts - 1);
+                let contact = particle.hitbox.swept_point(
+                    particle.hitbox.points[pt_idx],
+                    swing_angle,
+                ) + particle.position;
+
+                let r = contact - particle.position;
+                let rp = r - pole * r.dot(pole);
+                let t_pos = pole.cross(rp).normalize_or_zero();
+                if t_pos.length_squared() < 1e-18 { continue; }
+
+                let t_actual = particle.swing_tangent(contact);
+
+                let t_hat = if t_actual.length_squared() > 1e-18 { t_actual } else { t_pos };
+                let f_catch = if t_actual.length_squared() > 1e-18 {
+                    ((1.0 - dir.dot(t_actual)) * 0.5).clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
+
+                let mu = dir.dot(pole);
+                let sign_oblique = (-dir.dot(t_hat)).signum();
+                const COS_FULL: f64 = 0.98480775301220805;
+                const COS_EDGE: f64 = 0.93969262078590838;
+                let x = ((mu.abs() - COS_EDGE) / (COS_FULL - COS_EDGE)).clamp(0.0, 1.0);
+                let a = x * x * (3.0 - 2.0 * x);
+                let s_lane = if mu < 0.0 { particle.axial_gear_north } else { particle.axial_gear_south };
+                let chi_eff = chirality_photon * ((1.0 - a) * sign_oblique + a * s_lane);
+
+                let kick = t_pos * (f_catch * chi_eff * particle.gear_efficiency);
+
+                // Pole-axis torque: tau_z = (r × kick) · pole
+                let tau = r.cross(kick);
+                let tau_pole = tau.dot(pole);
+
+                // Latitude bin
+                let r_len = r.length();
+                if r_len < 1e-12 { continue; }
+                let cos_angle_from_pole: f64 = r.dot(pole).abs() / r_len;
+                let angle_from_pole_deg: f64 = cos_angle_from_pole.acos().to_degrees();
+                let lat_from_equator: f64 = 90.0 - angle_from_pole_deg;
+                let bin = ((lat_from_equator / 15.0).floor() as usize).min(N_LAT_BINS - 1);
+
+                torque_z[bin] += tau_pole;
+                kick_mag[bin] += kick.length();
+                bin_counts[bin] += 1;
+            }
+
+            // Normalize
+            let mut mean_tau = [0.0f64; N_LAT_BINS];
+            let mut mean_kick = [0.0f64; N_LAT_BINS];
+            for i in 0..N_LAT_BINS {
+                if bin_counts[i] > 0 {
+                    mean_tau[i] = torque_z[i] / bin_counts[i] as f64;
+                    mean_kick[i] = kick_mag[i] / bin_counts[i] as f64;
+                }
+            }
+
+            // Classify torque profile
+            let eq_tau = mean_tau[0] + mean_tau[1]; // 0-30° from equator
+            let pol_tau = mean_tau[4] + mean_tau[5]; // 60-90° from equator
+            let profile = if eq_tau.signum() != pol_tau.signum() && eq_tau.abs() > 1e-12 && pol_tau.abs() > 1e-12 {
+                if eq_tau > 0.0 { "EQ+/PO-" } else { "EQ-/PO+" }
+            } else if eq_tau.abs() < 1e-12 && pol_tau.abs() < 1e-12 {
+                "ZERO"
+            } else {
+                "UNIFORM"
+            };
+
+            let scale = 1e6;
+            println!(
+                "  {:<16} {:<10} {:>+7.4} | {:>+7.1} {:>+7.1} {:>+7.1} {:>+7.1} {:>+7.1} {:>+7.1} | {:>7}",
+                pat.label, pat.class, settled_spin,
+                mean_tau[0]*scale, mean_tau[1]*scale, mean_tau[2]*scale,
+                mean_tau[3]*scale, mean_tau[4]*scale, mean_tau[5]*scale,
+                profile
+            );
+        }
+
+        // Second table: tangential kick magnitude profile
+        println!();
+        println!("  Tangential kick magnitude |kick| by latitude (×1e6):");
+        println!(
+            "  {:<16} {:<10} | {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} | {:>7}",
+            "pattern", "class",
+            bin_labels[0], bin_labels[1], bin_labels[2],
+            bin_labels[3], bin_labels[4], bin_labels[5],
+            "eq/pol"
+        );
+
+        // Re-run with a fresh seed for the magnitude table
+        rng_state = 123u64;
+        for pat in &patterns {
+            let vels = full_velocities(pat, z_mag);
+            let vels_owned: Vec<f64> = vels[..12].to_vec();
+
+            let vels_c = vels_owned.clone();
+            let make = move || {
+                let baked = bake_loop_velocities(12, samples, &vels_c);
+                let mut p = CalibrationParticle::new(baked, 1.0);
+                p.gear_efficiency = GEAR_LADDER_PROTON;
+                (p.axial_gear_north, p.axial_gear_south) = AXIAL_GEAR_PROTON;
+                p
+            };
+            let (settled_spin, _std, _transmuted, _blocks) = settle_probe(
+                &make, 0.0, 0.5, 200.0, 0.0, 200_000, 123, true, 4,
+            );
+
+            let baked = bake_loop_velocities(12, samples, &vels_owned);
+            let mut particle = CalibrationParticle::new(baked, 1.0);
+            particle.gear_efficiency = GEAR_LADDER_PROTON;
+            (particle.axial_gear_north, particle.axial_gear_south) = AXIAL_GEAR_PROTON;
+            particle.outer_spin = settled_spin;
+            let pole = particle.pole_axis();
+
+            let mut kick_mag = [0.0f64; N_LAT_BINS];
+            let mut bin_counts = [0u64; N_LAT_BINS];
+
+            for _ in 0..n_photons {
+                let dir = rand_unit_vec(&mut rng_state);
+                let swing_angle = xorshift64(&mut rng_state) * std::f64::consts::TAU;
+                let n_pts = particle.hitbox.points.len();
+                let pt_idx = ((xorshift64(&mut rng_state) * n_pts as f64) as usize).min(n_pts - 1);
+                let contact = particle.hitbox.swept_point(
+                    particle.hitbox.points[pt_idx],
+                    swing_angle,
+                ) + particle.position;
+
+                let r = contact - particle.position;
+                let rp = r - pole * r.dot(pole);
+                let t_pos = pole.cross(rp).normalize_or_zero();
+                if t_pos.length_squared() < 1e-18 { continue; }
+
+                let t_actual = particle.swing_tangent(contact);
+                let t_hat = if t_actual.length_squared() > 1e-18 { t_actual } else { t_pos };
+                let f_catch = if t_actual.length_squared() > 1e-18 {
+                    ((1.0 - dir.dot(t_actual)) * 0.5).clamp(0.0, 1.0)
+                } else { 0.5 };
+
+                let mu = dir.dot(pole);
+                let sign_oblique = (-dir.dot(t_hat)).signum();
+                const COS_FULL2: f64 = 0.98480775301220805;
+                const COS_EDGE2: f64 = 0.93969262078590838;
+                let x = ((mu.abs() - COS_EDGE2) / (COS_FULL2 - COS_EDGE2)).clamp(0.0, 1.0);
+                let a = x * x * (3.0 - 2.0 * x);
+                let s_lane = if mu < 0.0 { particle.axial_gear_north } else { particle.axial_gear_south };
+                let chi_eff = chirality_photon * ((1.0 - a) * sign_oblique + a * s_lane);
+                let kick = t_pos * (f_catch * chi_eff * particle.gear_efficiency);
+
+                let r_len = r.length();
+                if r_len < 1e-12 { continue; }
+                let cos_fp: f64 = r.dot(pole).abs() / r_len;
+                let afp: f64 = cos_fp.acos().to_degrees();
+                let lfe: f64 = 90.0 - afp;
+                let bin = ((lfe / 15.0).floor() as usize).min(N_LAT_BINS - 1);
+
+                kick_mag[bin] += kick.length();
+                bin_counts[bin] += 1;
+            }
+
+            let mut mean_k = [0.0f64; N_LAT_BINS];
+            for i in 0..N_LAT_BINS {
+                if bin_counts[i] > 0 { mean_k[i] = kick_mag[i] / bin_counts[i] as f64; }
+            }
+            let eq_k = mean_k[0] + mean_k[1];
+            let pol_k = mean_k[4] + mean_k[5];
+            let ratio = if pol_k > 1e-15 { eq_k / pol_k } else { f64::INFINITY };
+            let scale = 1e6;
+            println!(
+                "  {:<16} {:<10} | {:>7.1} {:>7.1} {:>7.1} {:>7.1} {:>7.1} {:>7.1} | {:>7.2}",
+                pat.label, pat.class,
+                mean_k[0]*scale, mean_k[1]*scale, mean_k[2]*scale,
+                mean_k[3]*scale, mean_k[4]*scale, mean_k[5]*scale,
+                ratio
+            );
+        }
+
+        println!();
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("  END CHIRALITY SURVEY v2");
+        println!("═══════════════════════════════════════════════════════════════════");
     }
 }

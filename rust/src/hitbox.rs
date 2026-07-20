@@ -148,10 +148,33 @@ fn swing_geometry(loop_level: u8) -> (u8, DVec3, DVec3, bool) {
 /// at angles `k·(2π/samples)`, `k = 0..samples`. `samples` is clamped to at
 /// least 8; pass `recommended_samples(loop_level)` for real particles.
 pub fn bake_loop(loop_level: u8, samples: usize) -> BakedLoop {
+    bake_loop_signed(loop_level, samples, &[])
+}
+
+/// Like `bake_loop` but with per-level chirality signs.
+///
+/// `signs[i]` gives the chirality for level `i+1` (1-indexed in the stack).
+/// +1.0 = CW, −1.0 = CCW. Levels beyond `signs.len()` default to +1.0.
+/// The magnitude is clamped to exactly 1.0 (saturated at c); only the sign
+/// is used. This lets us sweep all 16 baryon chirality configurations from
+/// PHYSICS_REFERENCE §3.
+pub fn bake_loop_signed(loop_level: u8, samples: usize, signs: &[f64]) -> BakedLoop {
+    let saturated: Vec<f64> = signs.iter().map(|&s| {
+        let s = s.signum();
+        if s == 0.0 { 1.0 } else { s }
+    }).collect();
+    bake_loop_velocities(loop_level, samples, &saturated)
+}
+
+/// Like `bake_loop_signed` but the values are raw angular velocities, not just
+/// signs. `velocities[i]` is passed directly to `set_velocity` for level `i+1`
+/// (clamped to [-1, 1] by the stack). Levels beyond `velocities.len()` default
+/// to +1.0. Use this for sub-c spin rates like the neutron hypothesis
+/// (|L12| = 0.05).
+pub fn bake_loop_velocities(loop_level: u8, samples: usize, velocities: &[f64]) -> BakedLoop {
     let samples = samples.max(8);
     let loop_level = loop_level.clamp(1, 15);
 
-    // Build a stack with levels 1..=loop_level active, all saturated at +c.
     let mut stack = SpinStack::new();
     while (stack.level_count() as u8) < loop_level {
         let top = stack.level_count() as u8;
@@ -159,12 +182,14 @@ pub fn bake_loop(loop_level: u8, samples: usize) -> BakedLoop {
         stack.activate_next();
     }
     for lvl in 1..=loop_level {
-        stack.set_velocity(lvl, 1.0);
+        let v = velocities
+            .get((lvl - 1) as usize)
+            .copied()
+            .unwrap_or(1.0);
+        let v = if v == 0.0 { 1.0 } else { v };
+        stack.set_velocity(lvl, v);
     }
 
-    // Choose dt so the outermost level advances exactly TAU over `samples` steps.
-    // advance() moves level L by (v·scaled / orbit_radius(L)); with v=1 and
-    // time_scale=1 this is scaled/r_L, so set scaled = r_L·TAU/samples.
     let r_outer = stack
         .get(loop_level)
         .map(|l| l.orbit_radius())
