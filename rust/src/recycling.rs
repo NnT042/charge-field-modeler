@@ -922,16 +922,35 @@ fn scatter_off(
     // so the disabled path never consumes it.
     let chi_partner = gears.partner_chirality(field.kind, rng);
     let mesh = chirality * chi_partner;
-    if mesh < 0.0 && gears.cancel_redirect > 0.0 {
-        // Cancel = blocked from equatorial escape → the through-channel: the
-        // charge is funneled to the central spin axis and out the nearer pole
-        // (neutron.pdf). Blend the exit direction toward ±ẑ; k=1 sends it
-        // fully axial. This is what turns a trapped-disc photon into a POLAR
-        // exit — the missing limb the disc-only pump never had.
-        let pole = if pos.z >= 0.0 { DVec3::Z } else { -DVec3::Z };
-        let blended = new_dir.lerp(pole, gears.cancel_redirect);
-        if blended.length_squared() > 1e-12 {
-            return blended.normalize();
+    if gears.cancel_redirect > 0.0 {
+        // SYMMETRIC gear channel (PHYSICS_REFERENCE §5: "same-spin deflects
+        // ALONG the spin direction; opposite-spin deflects AGAINST it").
+        // Both nudges are small per-collision; the NET over many collisions
+        // decides the exit, so an augment-dominated (proton) charge channels
+        // to the disc while a cancel-dominated (neutron) charge channels to
+        // the poles. A one-sided (cancel-only) redirect over-funnels BOTH
+        // classes polar because cancels compound over the ricochet chain;
+        // the augment counter-nudge is what keeps the proton a disc.
+        if mesh < 0.0 {
+            // Cancel = blocked from the equator → through-channel to the
+            // nearer pole (neutron.pdf "funnelled back to the central spin
+            // axis… escape out one of the poles").
+            let pole = if pos.z >= 0.0 { DVec3::Z } else { -DVec3::Z };
+            let blended = new_dir.lerp(pole, gears.cancel_redirect);
+            if blended.length_squared() > 1e-12 {
+                return blended.normalize();
+            }
+        } else if mesh > 0.0 {
+            // Augment = escapes normally → channel toward the equatorial disc
+            // (the Faraday-sprinkler limb): flatten the exit toward the xy
+            // plane.
+            let flat = DVec3::new(new_dir.x, new_dir.y, 0.0);
+            if flat.length_squared() > 1e-9 {
+                let blended = new_dir.lerp(flat.normalize(), gears.cancel_redirect);
+                if blended.length_squared() > 1e-12 {
+                    return blended.normalize();
+                }
+            }
         }
     }
     new_dir
@@ -1062,6 +1081,12 @@ struct PassTally {
     /// output. Neutron neutrality shows here as a collapse toward 0 (spin
     /// cancellation) even while charge is still recycled (escaped > 0).
     chi_escaped_sum: f64,
+    /// Fine escape-latitude histogram of emitted charge: 180 one-degree bins,
+    /// index = floor(lat_deg + 90) ∈ [0,179] (0 = −90° south pole, 179 = +89°
+    /// north). Empty until the first escape (sized lazily so PassTally keeps
+    /// deriving Default). This is the atom-mode emission profile the recycling
+    /// engine exports — the `degree,percentage` histogram Atom mode loads.
+    escaped_lat_hist: Vec<f64>,
     lost: f64,
     lz_arrived: f64,
     lz_escaped: f64,
@@ -1104,10 +1129,16 @@ impl PassTally {
             }
             Termination::Escaped { pos, dir } => {
                 self.escaped += 1.0;
-                let band = lat_band(arrival_latitude(*pos));
+                let lat = arrival_latitude(*pos);
+                let band = lat_band(lat);
                 self.escaped_band[band as usize] += 1.0;
                 self.chi_escaped_sum += chirality;
                 self.lz_escaped += pos.cross(*dir).z;
+                if self.escaped_lat_hist.is_empty() {
+                    self.escaped_lat_hist = vec![0.0; 180];
+                }
+                let idx = ((lat + 90.0).floor() as isize).clamp(0, 179) as usize;
+                self.escaped_lat_hist[idx] += 1.0;
             }
             Termination::Lost => self.lost += 1.0,
         }
@@ -2375,5 +2406,103 @@ mod tests {
             n,
             ITERS_PUMP
         );
+    }
+
+    /// Exports atom-mode emission profiles for proton and neutron DERIVED FROM
+    /// THE COLLECTIVE RECYCLING ENGINE (not the single-particle trace). Writes
+    /// `godot/config/histogram_{proton,neutron}_recycling.csv` in the same
+    /// `degree,percentage` format Atom mode loads (M5). These are NEW files —
+    /// the trace-derived `histogram_*.csv` the atom_scenarios tests calibrate
+    /// against are left untouched; the next session decides whether to swap
+    /// Atom mode over.
+    ///
+    /// Config = the reconciled regime: symmetric gear at cancel_redirect 0.5,
+    /// Earth 2/3 field, moderate species-split intake — the proton stays a
+    /// clean disc, the neutron is disc-suppressed and mid/high-latitude
+    /// (matches the ~57° trace butterfly while being chirality-emergent).
+    /// FORCED mode (fixed large N) for smooth per-degree statistics.
+    #[test]
+    #[ignore = "generates atom-mode profile CSVs; run with --ignored --nocapture"]
+    fn export_recycling_profiles() {
+        use std::time::Instant;
+        let started = Instant::now();
+
+        let n = 200_000usize;
+        let swing_boost = DEFAULT_SWING_BOOST;
+        let redirect = 0.5_f64;
+        let intake_bias = 0.5_f64;
+        let mut seed = 0xE111_7ED0_F00D_2027u64;
+
+        let dir = crate::atom_core::config_dir();
+        println!("=== CM-3 Recycling Profile Export (atom-mode emission histograms) ===");
+        println!(
+            "Forced mode, N={n}, earth-2/3, cancel_redirect={redirect}, pole_intake_bias={intake_bias}, iters={ITERS}. Writing to {}",
+            dir.display()
+        );
+
+        let classes = [
+            ("proton", BaryonClass::Proton),
+            ("neutron", BaryonClass::Neutron),
+        ];
+
+        for (cname, class) in classes {
+            let gears = GearConfig {
+                enabled: true,
+                photon_fraction: PHOTON_FRACTION,
+                cancel_redirect: redirect,
+                pole_intake_bias: intake_bias,
+                class,
+            };
+            seed = seed.wrapping_add(0x100);
+            let (emitted0, ambient0) = run_iteration0(n, swing_boost, &gears, &mut seed);
+            seed = seed.wrapping_add(1);
+            let cell = run_self_consistent(
+                n, swing_boost, 3.0, 3.0, 30, ITERS, false, &gears, &emitted0, &ambient0, seed,
+            );
+            let e = &cell.emitted_tally;
+            let raw = if e.escaped_lat_hist.is_empty() {
+                vec![0.0; 180]
+            } else {
+                e.escaped_lat_hist.clone()
+            };
+            // Light 3-bin box smooth (per-degree counts are ~1k, ~3% noise).
+            let mut hist = vec![0.0f64; 180];
+            for i in 0..180usize {
+                let lo = i.saturating_sub(1);
+                let hi = (i + 1).min(179);
+                hist[i] = (raw[lo] + raw[i] + raw[hi]) / (hi - lo + 1) as f64;
+            }
+            let max = hist.iter().copied().fold(0.0f64, f64::max).max(1e-12);
+
+            let esc = e.escaped.max(1.0);
+            println!(
+                "{cname}: escaped {} | eqEsc {:.3} midEsc {:.3} polEsc {:.3} | peak at {}° ",
+                e.escaped as usize,
+                e.escaped_band[Band::Equatorial as usize] / esc,
+                e.escaped_band[Band::Mid as usize] / esc,
+                e.escaped_band[Band::Polar as usize] / esc,
+                hist.iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .map(|(i, _)| i as i32 - 90)
+                    .unwrap_or(0),
+            );
+
+            let mut csv = String::from("degree,percentage\n");
+            for d in -90i32..90 {
+                let v = hist[(d + 90) as usize] / max;
+                csv.push_str(&format!("{d},{v:.4}\n"));
+            }
+            let path = dir.join(format!("histogram_{cname}_recycling.csv"));
+            std::fs::write(&path, &csv)
+                .unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+
+            // Round-trip: confirm Atom mode's loader + table accept the file.
+            let reload = crate::atom_core::load_histogram_csv(&path);
+            let table = crate::atom_core::EmissionTable::from_csv_values(&reload);
+            assert_eq!(table.bins.len(), 91, "profile must fold to 91 pole→equator bins");
+            println!("  wrote + verified {} ({} rows)", path.display(), reload.len());
+        }
+        println!("done in {:.1}s", started.elapsed().as_secs_f64());
     }
 }
