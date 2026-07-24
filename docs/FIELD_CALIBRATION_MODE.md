@@ -773,3 +773,103 @@ class x swing_boost {0.05, 0.0} at Earth 2/3, cancel_redirect 0.5.
 `histogram_electron_recycling.csv` is now exported alongside the two baryon files, so all
 three Atom-mode profiles can come from one engine. The trace CSVs remain untouched and
 `atom_scenarios::standard_core` still loads them - nothing is swapped.
+
+---
+
+## The through-charge limb (2026-07-24, later)
+
+Built to answer the one prediction `report_magnetic_neutrality` found REFUTED:
+neutron.pdf's balanced-field magnetic neutrality. That refutation's diagnosis was
+architectural - every exit the pump offers is monochiral disc re-emission, so at
+balance there is nothing mixed for the counter-stream to cancel against.
+
+### The limb
+
+In `march`, at the `r < R_IN` branch: an AMBIENT photon reaching the surface inside
+the polar lane, travelling near-axially and inward, is NOT absorbed. It crosses to
+the far side of the body along its own straight line (exit point from
+t = -2(pos.dir), so no teleport) and continues, RETAINING ITS CHIRALITY AND SPIN.
+That retention is the entire point. venus2.pdf: through charge "goes straight through
+the body from pole to pole, avoiding lateral recycling". neutron.pdf: photons in the
+south, antiphotons in the north, "then they go out the other pole".
+
+Selection is geometric, per salt.pdf ("the charge that enters nearest the center of
+the hole or pole [is] most likely to pass through. Charge that comes in nearer the
+edges, or that enters on an angle, will be forced by centrifugal forces into the
+equatorial whirlpool"):
+- `THROUGH_LANE_RHO` = 1/3 of body radius. NOT tuned - it is the MEASURED hole from
+  `report_axial_channel_geometry` (proton hole 127.5 against a disc reaching 382.5,
+  ~11% of disc area). On a unit sphere that subtends asin(1/3) = 19.5 deg, landing on
+  the same 10-20 deg axial cone already wired into `apply_photon` - two independent
+  routes to one aperture.
+- `THROUGH_COS_MAX_ANGLE` = cos(20 deg) axial-incidence gate, matching apply_photon's
+  COS_EDGE.
+- CLASS-INDEPENDENT on purpose (the same donut/hole map was measured for proton and
+  neutron), so any p/n asymmetry has to emerge.
+
+Consumes no RNG draws, so `through_lane_rho` = 0 is a strict no-op.
+
+### report_through_charge (ignored, ~260s)
+
+FIRST RESULT WAS A STARVATION ARTIFACT, and the report now says so in-source. At the
+full ambient ensemble the limb fired 0-1 times per 40k launches. That is geometry, not
+physics: the lane is b < 1/3 against an ensemble spread over b <= B_MAX = 6, so
+P(b < lane) = 3.09e-3, and independently P(|dir.z| > cos20) = 6.03e-2, giving a joint
+1.86e-4 - about 7 expected per 40k. Any verdict read off those rows would have
+repeated the v1 lesson (never trust a transport null until the report proves its own
+optical depth).
+
+THE INTERPRETABLE RATE, conditioned on ARRIVAL rather than on the b<=6 launch
+ensemble: of charge that actually reaches the body, 0.67% is on a through-trajectory
+(11.1% by impact parameter, times the 6.0% axial gate).
+
+LANE-ONLY PROBE (the conditional physics at real statistics). Launches only on
+through-trajectories - b area-weighted inside the lane, direction axial with tilt
+< 20 deg, entry pole set by species per neutron.pdf - marching through a converged
+gas. ~500 of 20k survive the collisions and cross. Through-exhaust spin per escaped
+photon:
+
+| class | balanced | earth-2/3 |
+|---|---|---|
+| proton  | +0.271 | +0.451 |
+| neutron | -0.149 | +0.078 |
+
+against the DISC limb's monochiral +-1.0 to 1.6. So the through limb does supply a
+LOW-SPIN output channel, and the neutron's gearing perturbs it least - 1.8x closer to
+zero than the proton at balance, 5.8x at Earth, emergent from a class-independent
+aperture.
+
+CAVEAT KEPT IN THE OUTPUT: at a balanced field the probe population is launched 50/50
+by species, so its net spin is ~0 BEFORE reaching the body. A near-zero exhaust there
+does NOT show that something was cancelled - it shows how much the particle's gearing
+BREAKS an already-balanced mixture. Only the comparative claim is defensible.
+
+AXIAL CHANNELLING SWEEP (N raised to 250k - at 40k the expected count is ~7, far too
+few for a trend). venus2.pdf's "the nucleus actually channels charge along the
+axis... it is pushed there by charge streams" = `pole_intake_bias`:
+
+| bias | proton (% of arrivals) | neutron (% of arrivals) |
+|---|---|---|
+| 0.5 | 0.049% | 0.168% |
+| 2.0 | 0.494% | 0.885% |
+| 8.0 | 4.632% | 4.732% |
+
+Monotonic, roughly quadratic in the bias, ~100x over the swept range - and it
+SATURATES near ~4.7% for both classes, so channelling opens the lane but does not
+itself create the p/n asymmetry.
+
+### VERDICT: the limb is built and correct, but it cannot be the neutrality mechanism
+### for an ISOLATED particle
+
+Total magnetic output barely moves with the limb on (M_tot/esc 1.3095 -> 1.3114), because
+the disc limb still carries ~95-99% of the output even under strong channelling. So
+balanced-field neutrality is still NOT delivered, and the reason is now quantified rather
+than architectural.
+
+This is consistent with venus2.pdf rather than in conflict with it: through charge is
+"normally a minor complication" and dominates specifically at the NUCLEAR level, where
+"much more charge passes through" because "the distance from pole to pole is so much
+shorter" AND the nucleus channels charge axially. In a nucleus the nucleons are stacked
+pole-to-pole and the axial lane is fed by the NEIGHBOURS' exhaust, not by isotropic
+ambient - a multi-body configuration. Testing whether through charge delivers neutrality
+therefore needs an axial STACK, which is Atom mode, not the single-particle cell.

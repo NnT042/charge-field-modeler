@@ -264,6 +264,29 @@ pub const DEFAULT_CANCEL_REDIRECT: f64 = 1.0;
 /// to hold across the sweep rather than at a tuned value. 0 = frozen spin =
 /// the pre-existing behaviour, in which cancellation was unmeasurable.
 pub const DEFAULT_SPIN_TRANSFER: f64 = 0.25;
+/// Through-charge lane radius as a fraction of the body radius — the polar
+/// "hole" that charge can cross without being pulled into the equatorial
+/// whirlpool (salt.pdf; venus2.pdf "only charge that travels very near the pole
+/// can do this, and it has to enter the body on the right trajectory, too").
+///
+/// NOT a tuned knob: this is the MEASURED pass-through lane from
+/// `calibration::report_axial_channel_geometry` (commit 7516470) — proton hole
+/// radius 127.5 against a disc reaching 382.5, i.e. rho < 1/3 of the body
+/// radius, about 11% of the disc area. On a unit sphere that lane subtends a
+/// polar cap of asin(1/3) ≈ 19.5°, which lands on the same 10-20° axial cone
+/// already wired into `apply_photon`'s intake branch — two independent routes to
+/// the same aperture. Note the SAME map was measured for proton and neutron
+/// (structural identity: the L12 loop is the L11 pattern riding the level-12
+/// orbit), so the lane is deliberately CLASS-INDEPENDENT here and any
+/// proton/neutron asymmetry in through-charge has to emerge from the gearing and
+/// the exit profiles rather than from a per-class aperture.
+pub const THROUGH_LANE_RHO: f64 = 1.0 / 3.0;
+/// Axial-incidence gate for through-charge: |dir·ẑ| must exceed this, i.e. the
+/// photon arrives within 20° of the pole axis. Charge arriving "on an angle" is
+/// spun into the equatorial whirlpool instead (salt.pdf). 20° matches
+/// `apply_photon`'s COS_EDGE so the two axial branches agree on what "axial"
+/// means.
+pub const THROUGH_COS_MAX_ANGLE: f64 = 0.939_692_620_785_908_4; // cos(20°)
 /// Maximum ambient-launch impact parameter (importance-sampling near zone).
 pub const B_MAX: f64 = 6.0;
 /// Safety cap on total path length before a photon is given up as lost.
@@ -707,6 +730,11 @@ struct GearConfig {
     /// 0 = spin is a frozen tag (the pre-existing behaviour, where the escaped
     /// chirality sum could not show cancellation at all). See `Photon.spin`.
     spin_transfer: f64,
+    /// Through-charge lane radius (fraction of body radius). 0 = limb OFF, which
+    /// is bit-identical to the pre-through-charge module: the branch consumes no
+    /// RNG draws, so the stream is untouched. Default `THROUGH_LANE_RHO` is the
+    /// measured hole, not a fitted value.
+    through_lane_rho: f64,
 }
 
 impl GearConfig {
@@ -720,6 +748,7 @@ impl GearConfig {
             pole_intake_bias: 0.0,
             class: ParticleClass::Proton,
             spin_transfer: 0.0,
+            through_lane_rho: 0.0,
         }
     }
 
@@ -1105,13 +1134,66 @@ fn march(
     gears: &GearConfig,
     rng: &mut u64,
     own_field: &mut DensityField,
-) -> (Termination, u32, u32, f64) {
+) -> (Termination, u32, u32, f64, u32) {
     let mut path_length = 0.0;
     let mut cross_bounces = 0u32;
     let mut self_bounces = 0u32;
+    let mut through_count = 0u32;
     let term = loop {
         let r = photon.pos.length();
         if r < R_IN {
+            // THROUGH-CHARGE LIMB (venus2.pdf "through charge... goes straight
+            // through the body from pole to pole, avoiding lateral recycling";
+            // neutron.pdf "the photons will go in the south pole and the
+            // antiphotons will go in the north. Then they go out the other
+            // pole"). An AMBIENT photon that reaches the surface inside the
+            // polar pass-through lane, travelling near-axially, is NOT absorbed:
+            // it crosses and exits the far side RETAINING ITS SPECIES AND SPIN.
+            //
+            // That retention is the whole point. Everything the pump re-emits is
+            // monochiral charge from the fixed disc, which is why balanced-field
+            // magnetic neutrality was unreachable: with no species-preserving
+            // exit limb there was nothing for the counter-stream to cancel
+            // against. Through-charge supplies the mixed-species exhaust.
+            //
+            // Selection is GEOMETRIC, per salt.pdf: "the charge that enters
+            // nearest the center of the hole or pole [is] most likely to pass
+            // through. Charge that comes in nearer the edges, or that enters on
+            // an angle, will be forced by centrifugal forces into the equatorial
+            // whirlpool." So the two gates are lane radius and axial incidence,
+            // and the through-RATE is emergent from the arriving flux geometry —
+            // only the lane WIDTH is imposed, and that is anchored to the
+            // measured hole (see THROUGH_LANE_RHO).
+            if photon.kind == PhotonKind::Ambient && gears.through_lane_rho > 0.0 {
+                let rho = (photon.pos.x * photon.pos.x + photon.pos.y * photon.pos.y).sqrt();
+                let pos_hat = photon.pos / r.max(1e-12);
+                let incoming = photon.dir.dot(pos_hat); // < 0 = heading inward
+                let axial = photon.dir.z.abs();
+                if rho < gears.through_lane_rho * r
+                    && axial > THROUGH_COS_MAX_ANGLE
+                    && incoming < 0.0
+                {
+                    // Straight-line crossing: from a point at radius r, the far
+                    // intersection with the same sphere is at t = −2(pos·dir).
+                    // No teleport — this IS "goes straight through".
+                    let t = -2.0 * photon.pos.dot(photon.dir);
+                    if t > 0.0 {
+                        let exit = photon.pos + photon.dir * t;
+                        // Nudge just outside so the r < R_IN test doesn't refire
+                        // on the exit point itself.
+                        photon.pos = exit * (R_IN / exit.length().max(1e-12)) * 1.001;
+                        through_count += 1;
+                        path_length += t;
+                        // Chirality and spin are deliberately untouched. The
+                        // exiting stream now meets the incoming stream at the
+                        // far pole and their spins mesh through the normal
+                        // collision path — neutron.pdf's "as they leave, they
+                        // collide with photons coming in, and we get spin
+                        // cancellations" is then emergent, not imposed.
+                        continue;
+                    }
+                }
+            }
             break Termination::Absorbed {
                 pos: photon.pos,
                 dir: photon.dir,
@@ -1192,7 +1274,13 @@ fn march(
     };
     // The photon is taken by value, so its collision-mutated SPIN has to come
     // back out here — this is the magnetic state the tally records.
-    (term, cross_bounces, self_bounces, photon.spin)
+    (
+        term,
+        cross_bounces,
+        self_bounces,
+        photon.spin,
+        through_count,
+    )
 }
 
 // ---------------------------------------------------------------------
@@ -1249,6 +1337,20 @@ struct PassTally {
     /// absence of flux.
     dir_escaped_xy_abs: f64,
     dir_escaped_z_abs: f64,
+    /// THROUGH-CHARGE (ambient population only): photons that crossed the body
+    /// pole-to-pole through the polar lane instead of being absorbed, and their
+    /// carried spin at escape. This is the SPECIES-PRESERVING output limb — the
+    /// pump's disc re-emission is monochiral, so this is the only channel whose
+    /// exhaust can be a mixture and therefore the only one whose spin sum can
+    /// cancel. `through_crossings` counts crossings (a photon may cross more
+    /// than once); `through_photons` counts distinct photons that crossed.
+    through_crossings: f64,
+    through_photons: f64,
+    /// Σ carried spin over escaped photons that made at least one crossing, and
+    /// their escape-band split. Neutron neutrality should show up as this sum
+    /// collapsing toward 0 in a BALANCED field while the count stays large.
+    through_spin_escaped: f64,
+    through_escaped_band: [f64; 3],
     /// Fine escape-latitude histogram of emitted charge: 180 one-degree bins,
     /// index = floor(lat_deg + 90) ∈ [0,179] (0 = −90° south pole, 179 = +89°
     /// north). Empty until the first escape (sized lazily so PassTally keeps
@@ -1326,11 +1428,16 @@ impl PassTally {
         self_bounces: u32,
         aim_lat: Option<f64>,
         spin: f64,
+        through: u32,
     ) {
         let bounces = cross_bounces + self_bounces;
         self.total += 1.0;
         self.collisions_cross_sum += cross_bounces as f64;
         self.collisions_self_sum += self_bounces as f64;
+        self.through_crossings += through as f64;
+        if through > 0 {
+            self.through_photons += 1.0;
+        }
         let aim_band = aim_lat.map(lat_band);
         match aim_band {
             Some(Band::Equatorial) => self.aim_eq_count += 1.0,
@@ -1365,6 +1472,10 @@ impl PassTally {
                 self.escaped_band[band as usize] += 1.0;
                 self.spin_escaped_band[band as usize] += spin;
                 self.lz_escaped += pos.cross(*dir).z;
+                if through > 0 {
+                    self.through_spin_escaped += spin;
+                    self.through_escaped_band[band as usize] += 1.0;
+                }
             }
             Termination::Lost => self.lost += 1.0,
         }
@@ -1393,7 +1504,7 @@ fn run_pass(
             PhotonKind::Emitted => {
                 let photon = spawn_emitted(rng, swing_boost, gears.class);
                 lz_source_total += photon.pos.cross(photon.dir).z * photon.weight;
-                let (term, cb, sb, spin) = march(
+                let (term, cb, sb, spin, _through) = march(
                     photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
                     &mut field,
                 );
@@ -1401,11 +1512,11 @@ fn run_pass(
             }
             PhotonKind::Ambient => {
                 let (photon, aim_lat) = spawn_ambient(rng, gears);
-                let (term, cb, sb, spin) = march(
+                let (term, cb, sb, spin, through) = march(
                     photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
                     &mut field,
                 );
-                tally.record_ambient(&term, cb, sb, aim_lat, spin);
+                tally.record_ambient(&term, cb, sb, aim_lat, spin, through);
             }
         }
     }
@@ -1646,7 +1757,7 @@ mod tests {
         for _ in 0..n {
             let (photon, aim_lat) = spawn_ambient(&mut rng, &GearConfig::off());
             let mut field = DensityField::new();
-            let (term, cb, sb, _spin) = march(
+            let (term, cb, sb, _spin, _through) = march(
                 photon,
                 &pure_emitted,
                 0.0,
@@ -1703,7 +1814,7 @@ mod tests {
         for _ in 0..n {
             let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST, ParticleClass::Proton);
             let mut field = DensityField::new();
-            let (term, cb, sb, _spin) = march(
+            let (term, cb, sb, _spin, _through) = march(
                 photon,
                 &pure_ambient,
                 0.0,
@@ -1860,7 +1971,7 @@ mod tests {
         for _ in 0..200 {
             let photon = spawn_emitted(&mut rng, DEFAULT_SWING_BOOST, ParticleClass::Proton);
             let mut field = DensityField::new();
-            let (_term, cb, sb, _spin) = march(
+            let (_term, cb, sb, _spin, _through) = march(
                 photon,
                 &pure_ambient,
                 0.0,
@@ -1894,7 +2005,7 @@ mod tests {
             spin: 0.0,
         };
         let mut field = DensityField::new();
-        let (term, cb, sb, _spin) = march(
+        let (term, cb, sb, _spin, _through) = march(
             far,
             &pure_emitted,
             0.0,
@@ -1923,7 +2034,7 @@ mod tests {
             spin: 0.0,
         };
         let mut field = DensityField::new();
-        let (_term, _cb, sb, _spin) = march(
+        let (_term, _cb, sb, _spin, _through) = march(
             near,
             &pure_emitted,
             0.0,
@@ -2501,6 +2612,9 @@ mod tests {
                 pole_intake_bias: 0.0,
                 class,
                 spin_transfer: DEFAULT_SPIN_TRANSFER,
+                // Through-charge limb OFF: this report's committed numbers were
+                // measured without it, so keep them reproducible.
+                through_lane_rho: 0.0,
             };
             seed = seed.wrapping_add(0x100);
             let (emitted0, ambient0) = run_iteration0(n, swing_boost, &seed_gears, &mut seed);
@@ -2514,6 +2628,7 @@ mod tests {
                         pole_intake_bias: intake_bias,
                         class,
                         spin_transfer: DEFAULT_SPIN_TRANSFER,
+                        through_lane_rho: 0.0,
                     };
                     seed = seed.wrapping_add(1);
                     let cell = run_self_consistent(
@@ -2599,6 +2714,539 @@ mod tests {
         );
     }
 
+    /// CM-3 THROUGH-CHARGE: does a species-preserving pole-to-pole limb deliver
+    /// the balanced-field magnetic neutrality that `report_magnetic_neutrality`
+    /// found REFUTED without it?
+    ///
+    /// The refutation's diagnosis was architectural, not numerical: every exit
+    /// the pump offers is monochiral disc re-emission, so at a balanced field
+    /// there is nothing mixed for the counter-stream to cancel against and
+    /// |M_n/esc| sits at 1.0-1.3 no matter what `spin_transfer` does. venus2.pdf
+    /// names the missing limb — "through charge... goes straight through the body
+    /// from pole to pole, avoiding lateral recycling" — and neutron.pdf spells
+    /// out the consequence: photons in the south, antiphotons in the north, "then
+    /// they go out the other pole", and at balance that yields "near-total spin
+    /// cancellation" while charge is still recycled.
+    ///
+    /// The limb is now wired in `march` (see the r < R_IN branch). Its aperture
+    /// is the MEASURED hole (`THROUGH_LANE_RHO` = 1/3 of body radius, from
+    /// report_axial_channel_geometry) and it is CLASS-INDEPENDENT on purpose, so
+    /// any proton/neutron asymmetry has to emerge.
+    ///
+    /// Predictions under test:
+    /// 1. Balanced field: the through-exhaust is a species MIXTURE, so
+    ///    `through_spin_escaped / through_photons` → ~0 while the count stays
+    ///    large. This is the direct test of the refuted claim.
+    /// 2. Neutron more affected than proton, EMERGENTLY: the neutron's disc
+    ///    exhaust is suppressed (eqEsc 0.308 vs the proton's 0.585), so
+    ///    through-charge is a larger share of its total output and its
+    ///    spin-cancelling component should dominate the total magnetic sum.
+    /// 3. Earth 2/3 must NOT go neutral — the imbalance leaves a residual, per
+    ///    neutron.pdf's "neutrons will only tamp down the magnetic field of the
+    ///    exiting photons, but they will not cancel it".
+    /// 4. Null: lane 0 reproduces the no-limb numbers bit-for-bit (the branch
+    ///    draws no randomness).
+    #[test]
+    #[ignore = "long-running report; run with --ignored --nocapture"]
+    fn report_through_charge() {
+        use std::time::Instant;
+        let started = Instant::now();
+
+        let n = 40_000usize;
+        let swing_boost = DEFAULT_SWING_BOOST;
+        let redirect = 0.5_f64;
+        let intake_bias = 0.5_f64;
+        let mut seed = 0x7480_0006_C0DE_2407u64;
+
+        println!("=== CM-3 Through-Charge Limb (species-preserving pole-to-pole crossing) ===");
+        println!(
+            "N={n}/pop, iters={ITERS}, cancel_redirect={redirect}, pole_intake_bias={intake_bias}, spin_transfer={DEFAULT_SPIN_TRANSFER}"
+        );
+        println!(
+            "Lane aperture is the MEASURED hole: rho < {THROUGH_LANE_RHO:.4} of body radius (report_axial_channel_geometry: proton hole 127.5 / disc 382.5, ~11% of disc area), incidence within 20 deg of the axis. CLASS-INDEPENDENT by design."
+        );
+        println!(
+            "TOTAL magnetic output M_tot = emitted disc exhaust (monochiral) + through-charge exhaust (species MIXTURE). Only the second can cancel.\n"
+        );
+
+        struct Row {
+            cname: &'static str,
+            phi_label: &'static str,
+            lane: f64,
+            esc_emit: f64,
+            m_emit: f64,
+            thru_photons: f64,
+            thru_crossings: f64,
+            m_thru: f64,
+            esc_ambient: f64,
+            thru_band: [f64; 3],
+        }
+
+        let classes = [
+            ("proton", ParticleClass::Proton),
+            ("neutron", ParticleClass::Neutron),
+        ];
+        let phis = [("balanced", 0.5_f64), ("earth-2/3", 2.0 / 3.0)];
+        let lanes = [0.0_f64, THROUGH_LANE_RHO];
+
+        let mut rows: Vec<Row> = Vec::new();
+        for (cname, class) in classes {
+            for (phi_label, phi) in phis {
+                for &lane in &lanes {
+                    let gears = GearConfig {
+                        enabled: true,
+                        photon_fraction: phi,
+                        cancel_redirect: redirect,
+                        pole_intake_bias: intake_bias,
+                        class,
+                        spin_transfer: DEFAULT_SPIN_TRANSFER,
+                        through_lane_rho: lane,
+                    };
+                    seed = seed.wrapping_add(0x100);
+                    let (emitted0, ambient0) = run_iteration0(n, swing_boost, &gears, &mut seed);
+                    seed = seed.wrapping_add(1);
+                    let cell = run_self_consistent(
+                        n, swing_boost, 3.0, 3.0, 30, ITERS, false, &gears, &emitted0, &ambient0,
+                        seed,
+                    );
+                    let e = &cell.emitted_tally;
+                    let a = &cell.ambient_tally;
+                    rows.push(Row {
+                        cname,
+                        phi_label,
+                        lane,
+                        esc_emit: e.escaped,
+                        m_emit: e.spin_escaped_sum,
+                        thru_photons: a.through_photons,
+                        thru_crossings: a.through_crossings,
+                        m_thru: a.through_spin_escaped,
+                        esc_ambient: a.escaped,
+                        thru_band: a.through_escaped_band,
+                    });
+                }
+            }
+        }
+
+        println!("--- [1] Through-charge throughput ---");
+        println!(
+            "{:<9} {:<10} {:>7} {:>11} {:>11} {:>11} {:>26}",
+            "class", "field", "lane", "thru_phot", "crossings", "%of ambient", "thru escape [pol/mid/eq]"
+        );
+        for r in &rows {
+            println!(
+                "{:<9} {:<10} {:>7.3} {:>11.0} {:>11.0} {:>10.2}% {:>8.0}{:>9.0}{:>9.0}",
+                r.cname,
+                r.phi_label,
+                r.lane,
+                r.thru_photons,
+                r.thru_crossings,
+                100.0 * r.thru_photons / (n as f64),
+                r.thru_band[0],
+                r.thru_band[1],
+                r.thru_band[2],
+            );
+        }
+
+        println!("\n--- [2] THE TEST: is the through-exhaust magnetically cancelled? ---");
+        println!(
+            "M_thru/phot is the mean surviving spin per through-photon. ~0 = species mixture cancelled (neutron.pdf's 'near-total spin cancellation'); ~±1 = monochiral, uncancelled."
+        );
+        println!(
+            "{:<9} {:<10} {:>7} {:>12} {:>12} {:>12} {:>12}",
+            "class", "field", "lane", "M_emit/esc", "M_thru", "M_thru/phot", "M_tot/esc_all"
+        );
+        for r in &rows {
+            let m_emit_per = r.m_emit / r.esc_emit.max(1.0);
+            let m_thru_per = if r.thru_photons > 0.0 {
+                r.m_thru / r.thru_photons
+            } else {
+                0.0
+            };
+            let m_tot = (r.m_emit + r.m_thru) / (r.esc_emit + r.thru_photons).max(1.0);
+            println!(
+                "{:<9} {:<10} {:>7.3} {:>12.4} {:>12.1} {:>12.4} {:>12.4}",
+                r.cname, r.phi_label, r.lane, m_emit_per, r.m_thru, m_thru_per, m_tot
+            );
+        }
+
+        println!("\n--- [3] VERDICT vs the previously-REFUTED balanced-field prediction ---");
+        for (cname, _) in classes {
+            for (phi_label, _) in phis {
+                let off = rows
+                    .iter()
+                    .find(|r| r.cname == cname && r.phi_label == phi_label && r.lane == 0.0);
+                let on = rows
+                    .iter()
+                    .find(|r| r.cname == cname && r.phi_label == phi_label && r.lane > 0.0);
+                if let (Some(off), Some(on)) = (off, on) {
+                    let tot_off = (off.m_emit + off.m_thru)
+                        / (off.esc_emit + off.thru_photons).max(1.0);
+                    let tot_on =
+                        (on.m_emit + on.m_thru) / (on.esc_emit + on.thru_photons).max(1.0);
+                    let thru_per = if on.thru_photons > 0.0 {
+                        on.m_thru / on.thru_photons
+                    } else {
+                        f64::NAN
+                    };
+                    println!(
+                        "  {cname:<9} {phi_label:<10} M_tot/esc {tot_off:>8.4} (no limb) -> {tot_on:>8.4} (limb on), through-exhaust spin/photon {thru_per:>8.4}  {}",
+                        if phi_label == "balanced" && thru_per.abs() < 0.15 {
+                            "<== through-exhaust CANCELLED at balance"
+                        } else if phi_label == "balanced" {
+                            "<== still NOT cancelled at balance"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
+        }
+
+        println!("\n--- [4] NULL: lane 0 must be bit-identical to the no-limb module ---");
+        println!(
+            "The through branch draws no randomness, so at lane 0 every lane-0 row above must have thru_phot = 0 and crossings = 0 exactly."
+        );
+        let mut null_ok = true;
+        for r in rows.iter().filter(|r| r.lane == 0.0) {
+            if r.thru_photons != 0.0 || r.thru_crossings != 0.0 {
+                null_ok = false;
+                println!(
+                    "  VIOLATION {} {}: thru_phot={} crossings={}",
+                    r.cname, r.phi_label, r.thru_photons, r.thru_crossings
+                );
+            }
+        }
+        println!(
+            "  {}",
+            if null_ok {
+                "clean — no crossings recorded with the lane closed"
+            } else {
+                "BROKEN — the limb fired with the lane closed"
+            }
+        );
+
+        println!("\n--- [5] WHY [1]-[3] ARE STARVED, and the geometric rate ---");
+        {
+            // A straight ambient line with impact parameter b enters the sphere
+            // essentially anti-parallel to its own direction d, so a
+            // through-trajectory needs BOTH b < lane AND d within 20° of the
+            // axis, and the two are near-independent.
+            let p_b = (THROUGH_LANE_RHO / B_MAX).powi(2);
+            let p_dir = 1.0 - THROUGH_COS_MAX_ANGLE; // both caps
+            println!(
+                "  P(b < lane) = (lane/B_MAX)^2 = {p_b:.3e};  P(|dir.z| > cos20) = {p_dir:.3e};  joint ~ {:.3e}",
+                p_b * p_dir
+            );
+            println!(
+                "  => ~{:.1} of {n} launches expected on a through-trajectory. The lane-0.333 rows above found 0-1. THE NULL IN [2]/[3] IS STATISTICS, NOT PHYSICS — do not read it as a refutation.",
+                p_b * p_dir * n as f64
+            );
+            // The launch-relative number is conditioned on the b <= B_MAX
+            // importance ensemble and so is not physically interpretable on its
+            // own. Conditioning on ARRIVAL is: of charge that actually reaches
+            // the body, the lane holds (lane/R_IN)^2 by impact parameter and the
+            // axial gate keeps P(dir) of that.
+            let p_arrive = (R_IN / B_MAX).powi(2);
+            println!(
+                "  CONDITIONAL ON ARRIVAL (the interpretable rate): arrivals are {:.3} of launches, and of ARRIVING charge {:.2}% is on a through-trajectory — (lane/R_IN)^2 = {:.1}% by impact parameter, times the {:.1}% axial-direction gate.",
+                p_arrive,
+                100.0 * p_b * p_dir / p_arrive,
+                100.0 * THROUGH_LANE_RHO.powi(2),
+                100.0 * p_dir
+            );
+            println!(
+                "  Physically: in an ISOTROPIC near-zone field through-charge is ~0.02% of the flux. venus2.pdf agrees for large bodies (\"normally a minor complication\") but claims it dominates at the nuclear level for two reasons we can separate: the pole-to-pole distance is short (geometry, already in the model) AND \"the nucleus actually channels charge along the axis... it is pushed there by charge streams\" (ACTIVE channelling = pole_intake_bias). [7] sweeps that."
+            );
+        }
+
+        println!("\n--- [6] LANE-ONLY PROBE: the conditional physics, at real statistics ---");
+        println!(
+            "Launches ONLY on through-trajectories (b area-weighted inside the lane, direction axial with tilt <20°, entry pole set by species per neutron.pdf: photons enter SOUTH, antiphotons NORTH). This answers 'IF charge crosses, does its exhaust cancel?' without pretending to measure the rate."
+        );
+        println!(
+            "{:<9} {:<10} {:>9} {:>9} {:>11} {:>13} {:>24}",
+            "class", "field", "launched", "crossed", "escaped", "spin/escaped", "exit band [pol/mid/eq]"
+        );
+        let n_probe = 20_000usize;
+        let mut probe_seed = 0x1A4E_0000_9001_2407u64;
+        let mut probe_rows: Vec<(&str, &str, f64, f64)> = Vec::new();
+        for (cname, class) in classes {
+            for (phi_label, phi) in phis {
+                let gears = GearConfig {
+                    enabled: true,
+                    photon_fraction: phi,
+                    cancel_redirect: redirect,
+                    pole_intake_bias: intake_bias,
+                    class,
+                    spin_transfer: DEFAULT_SPIN_TRANSFER,
+                    through_lane_rho: THROUGH_LANE_RHO,
+                };
+                // Converge the gas first so the probe marches through the real
+                // fields rather than analytic seeds.
+                probe_seed = probe_seed.wrapping_add(0x100);
+                let (emitted0, ambient0) =
+                    run_iteration0(n, swing_boost, &gears, &mut probe_seed);
+                probe_seed = probe_seed.wrapping_add(1);
+                let cell = run_self_consistent(
+                    n, swing_boost, 3.0, 3.0, 30, ITERS, false, &gears, &emitted0, &ambient0,
+                    probe_seed,
+                );
+                let (sigma_e, sigma_a, sigma_ee, sigma_aa) =
+                    (cell.sigma_e, cell.sigma_a, cell.sigma_ee, cell.sigma_aa);
+                let f_e = CollisionField::from_tally(
+                    PhotonKind::Emitted,
+                    class,
+                    cell.final_emitted_field.clone(),
+                );
+                let f_a = CollisionField::from_tally(
+                    PhotonKind::Ambient,
+                    class,
+                    cell.final_ambient_field.clone(),
+                );
+
+                let mut crossed = 0.0;
+                let mut escaped = 0.0;
+                let mut spin_sum = 0.0;
+                let mut band = [0.0f64; 3];
+                for _ in 0..n_probe {
+                    let chi = if xorshift64(&mut probe_seed) < phi { 1.0 } else { -1.0 };
+                    // Species split: a photon (χ=+1) travels +z and so enters
+                    // the SOUTH pole; an antiphoton travels −z, entering NORTH.
+                    let along = chi;
+                    // Small axial tilt, uniform inside the 20° acceptance.
+                    let cos_t = THROUGH_COS_MAX_ANGLE
+                        + (1.0 - THROUGH_COS_MAX_ANGLE) * xorshift64(&mut probe_seed);
+                    let sin_t = (1.0 - cos_t * cos_t).max(0.0).sqrt();
+                    let psi = xorshift64(&mut probe_seed) * TAU;
+                    let dir = DVec3::new(sin_t * psi.cos(), sin_t * psi.sin(), along * cos_t)
+                        .normalize();
+                    // Area-weighted b inside the lane. The offset MUST be
+                    // perpendicular to `dir`, not to z: offsetting in the xy
+                    // plane while the direction carries a tilt of up to 20° over
+                    // an R_OUT=30 lever arm displaces the line by ~10 units and
+                    // the photon misses the body completely. Same construction
+                    // as `spawn_ambient`: start at −d·R_OUT + e·b with e ⊥ d, so
+                    // the closest approach to the origin is exactly b.
+                    let b = THROUGH_LANE_RHO * xorshift64(&mut probe_seed).sqrt();
+                    let helper = if dir.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                    let t_perp = dir.cross(helper).normalize();
+                    let b_perp = dir.cross(t_perp);
+                    let phi_b = xorshift64(&mut probe_seed) * TAU;
+                    let e = t_perp * phi_b.cos() + b_perp * phi_b.sin();
+                    let start = -dir * R_OUT + e * b;
+                    // Advance to the tallied shell so the march's escape test
+                    // doesn't fire on the launch point.
+                    let t_entry = R_OUT - (R_OUT * R_OUT - b * b).sqrt();
+                    let pos = start + dir * (t_entry + 1e-9);
+                    let photon = Photon {
+                        pos,
+                        dir,
+                        weight: 1.0,
+                        kind: PhotonKind::Ambient,
+                        bounces: 0,
+                        chirality: chi,
+                        spin: chi,
+                    };
+                    let mut scratch = DensityField::new();
+                    // An AMBIENT photon marches through the EMITTED field as its
+                    // cross channel (sigma_e) and its own population as self
+                    // (sigma_aa) — matching run_self_consistent's wiring. Using
+                    // sigma_a here would be the emitted photon's coupling.
+                    let (term, _cb, _sb, spin, through) = march(
+                        photon, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut probe_seed,
+                        &mut scratch,
+                    );
+                    let _ = (sigma_a, sigma_ee);
+                    if through > 0 {
+                        crossed += 1.0;
+                        if let Termination::Escaped { pos, .. } = term {
+                            escaped += 1.0;
+                            spin_sum += spin;
+                            band[lat_band(arrival_latitude(pos)) as usize] += 1.0;
+                        }
+                    }
+                }
+                let per = if escaped > 0.0 { spin_sum / escaped } else { f64::NAN };
+                println!(
+                    "{:<9} {:<10} {:>9} {:>9.0} {:>11.0} {:>13.4} {:>8.0}{:>8.0}{:>8.0}",
+                    cname, phi_label, n_probe, crossed, escaped, per, band[0], band[1], band[2]
+                );
+                probe_rows.push((cname, phi_label, per, escaped));
+            }
+        }
+
+        println!("\n  Conditional verdict — READ THE CAVEAT:");
+        println!(
+            "    CAVEAT: at a BALANCED field the probe population is launched 50/50 by species, so its net spin is ~0 BEFORE it reaches the body. A near-zero exhaust there therefore does NOT demonstrate that something was cancelled — it shows how much the particle's gearing BREAKS an already-balanced mixture. The defensible claim is the comparative one: the through limb supplies a LOW-SPIN output channel (|spin/escaped| 0.08-0.45) where the disc limb supplies a monochiral +-1.0-1.6, and the NEUTRON's gearing perturbs it least."
+        );
+        for (cname, phi_label, per, esc) in &probe_rows {
+            if *phi_label == "balanced" {
+                println!(
+                    "    {cname:<9} balanced: through-exhaust spin/escaped = {per:>8.4} over {esc:.0} escapes (launched mixture was net ~0)"
+                );
+            }
+        }
+        for (cname, phi_label, per, esc) in &probe_rows {
+            if *phi_label == "earth-2/3" {
+                println!(
+                    "    {cname:<9} earth-2/3: through-exhaust spin/escaped = {per:>8.4} over {esc:.0} escapes  (must stay NONZERO — neutron.pdf: 'neutrons will only tamp down the magnetic field ... they will not cancel it')"
+                );
+            }
+        }
+
+        println!("\n--- [7] How much AXIAL CHANNELLING would through-charge need to matter? ---");
+        println!(
+            "Sweeping pole_intake_bias (venus2.pdf's \"pushed there by charge streams\") at the full ambient ensemble, counting crossings per {n} launches."
+        );
+        // N raised well above the sweep's 40k: at baseline only ~7 crossings per
+        // 40k are expected, so a 0-vs-4 difference there is noise, not a trend.
+        let n_bias = 250_000usize;
+        println!(
+            "  N={n_bias} for this part (at 40k the expected count is ~7, far too few to read a trend from)."
+        );
+        println!(
+            "{:<9} {:>10} {:>12} {:>14} {:>16}",
+            "class", "bias", "crossings", "% of launches", "% of arrivals"
+        );
+        let mut bias_seed = 0x8142_0000_5A5A_2407u64;
+        for (cname, class) in classes {
+            for &bias in &[0.5_f64, 2.0, 8.0] {
+                let gears = GearConfig {
+                    enabled: true,
+                    photon_fraction: 2.0 / 3.0,
+                    cancel_redirect: redirect,
+                    pole_intake_bias: bias,
+                    class,
+                    spin_transfer: DEFAULT_SPIN_TRANSFER,
+                    through_lane_rho: THROUGH_LANE_RHO,
+                };
+                bias_seed = bias_seed.wrapping_add(0x100);
+                let (emitted0, ambient0) =
+                    run_iteration0(n_bias, swing_boost, &gears, &mut bias_seed);
+                bias_seed = bias_seed.wrapping_add(1);
+                let cell = run_self_consistent(
+                    n_bias, swing_boost, 3.0, 3.0, 30, ITERS, false, &gears, &emitted0, &ambient0,
+                    bias_seed,
+                );
+                let c = cell.ambient_tally.through_crossings;
+                let arrivals = cell.ambient_tally.arrived.max(1.0);
+                println!(
+                    "{:<9} {:>10.1} {:>12.0} {:>13.4}% {:>15.3}%",
+                    cname,
+                    bias,
+                    c,
+                    100.0 * c / n_bias as f64,
+                    100.0 * c / arrivals
+                );
+            }
+        }
+
+        println!(
+            "\nTotal report runtime: {:.1}s ({} sweep cells + {} probe cells + bias sweep)",
+            started.elapsed().as_secs_f64(),
+            rows.len(),
+            probe_rows.len()
+        );
+    }
+
+    /// The through-charge limb must (a) be a strict no-op with the lane closed,
+    /// (b) actually pass charge when a photon is aimed down the lane, and (c)
+    /// preserve the crossing photon's SPECIES — the retention is the whole point,
+    /// since monochiral disc re-emission is what made balanced-field neutrality
+    /// unreachable.
+    #[test]
+    fn through_charge_limb_crosses_and_preserves_species() {
+        let gears_on = GearConfig {
+            enabled: true,
+            photon_fraction: PHOTON_FRACTION,
+            cancel_redirect: 0.5,
+            pole_intake_bias: 0.5,
+            class: ParticleClass::Neutron,
+            spin_transfer: 0.0, // isolate the limb from the meshing channel
+            through_lane_rho: THROUGH_LANE_RHO,
+        };
+        let gears_off = GearConfig {
+            through_lane_rho: 0.0,
+            ..gears_on
+        };
+        let pure_e = CollisionField::pure_analytic(PhotonKind::Emitted, ParticleClass::Neutron);
+        let pure_a = CollisionField::pure_analytic(PhotonKind::Ambient, ParticleClass::Neutron);
+
+        // Straight down the axis, well inside the lane, no collisions. NOTE the
+        // start radius must be strictly INSIDE R_OUT: launching at exactly
+        // r = R_OUT trips the march's escape test on the first iteration, which
+        // would make the negative assertions below pass for the wrong reason.
+        // With sigma = 0 the start radius is otherwise physically irrelevant.
+        const START_R: f64 = 5.0;
+        let launch = |chi: f64| Photon {
+            pos: DVec3::new(0.05, 0.0, -START_R),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: chi,
+            spin: chi,
+        };
+
+        for chi in [1.0_f64, -1.0] {
+            let mut rng = 0xC0FF_EE00_1234_0001u64;
+            let mut field = DensityField::new();
+            let (term, _cb, _sb, spin, through) = march(
+                launch(chi), &pure_e, 0.0, &pure_a, 0.0, 0, &gears_on, &mut rng, &mut field,
+            );
+            assert_eq!(through, 1, "axial lane photon did not cross (chi {chi})");
+            assert!(
+                matches!(term, Termination::Escaped { .. }),
+                "crossing photon should leave the domain, not be absorbed"
+            );
+            // SPECIES PRESERVED: spin_transfer is 0 here, so the exiting spin
+            // must still be the entering species sign.
+            assert_eq!(spin, chi, "through-charge lost its species (chi {chi})");
+
+            // Same photon, lane closed ⇒ absorbed, no crossing.
+            let mut rng2 = 0xC0FF_EE00_1234_0001u64;
+            let mut field2 = DensityField::new();
+            let (term_off, _, _, _, through_off) = march(
+                launch(chi), &pure_e, 0.0, &pure_a, 0.0, 0, &gears_off, &mut rng2, &mut field2,
+            );
+            assert_eq!(through_off, 0, "limb fired with the lane closed");
+            assert!(
+                matches!(term_off, Termination::Absorbed { .. }),
+                "with the lane closed an axial photon must be absorbed"
+            );
+        }
+
+        // Off-lane (large rho) and off-axis (oblique) photons must NOT cross,
+        // per salt.pdf: charge entering near the edges or on an angle is pulled
+        // into the equatorial whirlpool instead.
+        let mut rng = 0xC0FF_EE00_1234_0002u64;
+        let mut field = DensityField::new();
+        let wide = Photon {
+            pos: DVec3::new(0.8, 0.0, -START_R),
+            ..launch(1.0)
+        };
+        let (_t, _c, _s, _sp, through_wide) = march(
+            wide, &pure_e, 0.0, &pure_a, 0.0, 0, &gears_on, &mut rng, &mut field,
+        );
+        assert_eq!(through_wide, 0, "off-lane photon crossed — lane gate broken");
+
+        let mut rng = 0xC0FF_EE00_1234_0003u64;
+        let mut field = DensityField::new();
+        let oblique_dir = DVec3::new(0.6, 0.0, 0.8);
+        let oblique = Photon {
+            pos: -oblique_dir * START_R,
+            dir: oblique_dir,
+            ..launch(1.0)
+        };
+        let (_t, _c, _s, _sp, through_obl) = march(
+            oblique, &pure_e, 0.0, &pure_a, 0.0, 0, &gears_on, &mut rng, &mut field,
+        );
+        assert_eq!(
+            through_obl, 0,
+            "oblique photon crossed — axial-incidence gate broken"
+        );
+    }
+
     /// The two-peak profile must reproduce the pre-generalization expression
     /// BIT-FOR-BIT: an ULP shift propagates through the sigma_e calibration and
     /// can flip a collision coin, which would silently break the v2/v3/v4
@@ -2667,6 +3315,7 @@ mod tests {
                 pole_intake_bias: 0.5,
                 class,
                 spin_transfer: k,
+                through_lane_rho: 0.0,
             };
             let mut seed = 0x51E1_2C0D_4711_0001u64;
             let n = 3000;
@@ -2801,6 +3450,7 @@ mod tests {
                     pole_intake_bias: intake_bias,
                     class,
                     spin_transfer: DEFAULT_SPIN_TRANSFER,
+                    through_lane_rho: 0.0,
                 };
                 seed = seed.wrapping_add(0x100);
                 let (emitted0, ambient0) = run_iteration0(n, swing, &gears, &mut seed);
@@ -3030,6 +3680,7 @@ mod tests {
                         pole_intake_bias: intake_bias,
                         class,
                         spin_transfer: k,
+                        through_lane_rho: 0.0,
                     };
                     seed = seed.wrapping_add(0x100);
                     let (emitted0, ambient0) = run_iteration0(n, swing_boost, &gears, &mut seed);
@@ -3220,6 +3871,9 @@ mod tests {
                 pole_intake_bias: intake_bias,
                 class,
                 spin_transfer: DEFAULT_SPIN_TRANSFER,
+                // Through-charge limb OFF: this report's committed numbers were
+                // measured without it, so keep them reproducible.
+                through_lane_rho: 0.0,
             };
             seed = seed.wrapping_add(0x100);
             let (emitted0, ambient0) = run_iteration0(n, swing_boost, &gears, &mut seed);
