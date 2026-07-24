@@ -656,3 +656,120 @@ anything the swing rule already covered. The axial branch's magnitude still ride
 `gear_efficiency` ladder rung as the oblique branch (see the table above the self-limiter
 section); only the sign/lane-ratio channel is new. `report_vortex_feedback`'s THETA=0 CAVEAT is
 resolved by this change; theta=0 rows produced before it remain untrustworthy history.
+
+---
+
+## The electrical / magnetic split, and the electron class (2026-07-24)
+
+Two CM-3 additions in `rust/src/recycling.rs`. Both are measurement-side; the gear
+geometry signed off in commit `ebf637e` is unchanged, and the committed
+`histogram_{proton,neutron}_recycling.csv` are byte-identical after the refactor
+(the export reproduces eqEsc 0.585 / 0.308 and peaks 5 deg / -46 deg exactly).
+
+### ParticleClass replaces BaryonClass
+
+`BaryonClass {Proton, Neutron}` became `ParticleClass {Proton, Neutron, Electron}`,
+and the exit-latitude profile became a per-class property (`exit_lat_profile`,
+`exit_peaks_deg`, `exit_sigma_deg`) threaded through the TAU calibration
+(`tau_in_integral`, `tau_self_emitted_integral`) and `CollisionField`.
+
+The electron is NOT a small baryon and the profile difference is structural, not
+fitted. It is level 9 - baryon-tier AXIAL spin only, no x/y/z (PHYSICS_REFERENCE
+section 3b; photon.html "the electron is spinning axially; the proton is spinning
+axially plus x, y, and z"). One spin traces ONE exit family, so the bimodal
+7/58 disc is unavailable to it by construction. Input profile: single Gaussian at
++-3 deg, sigma 2.5. It also has no level-12 z-spin at all, so its chirality tag comes
+from the axial spin sense - an orientation, not a class invariant.
+
+Bit-identity for baryons is deliberate and load-bearing: the peak-selector RNG draw
+is consumed for every class (for n=2 peaks the index reproduces the old `u < 0.5`
+branch), and `exit_lat_profile` accumulates one term at a time and divides rather
+than multiplying by 0.25, so the two-peak sum matches the old expression to the bit.
+An ULP shift there would propagate through sigma_e and could flip a collision coin.
+
+### Photon.spin - the magnetic degree of freedom
+
+`Photon.chirality` was a frozen tag that `scatter_off` read but never wrote, so the
+old `chi_escaped_sum` was identically `class_sign x escaped` and could not show spin
+cancellation at all. That is why the magnetic-neutrality item stalled: the hook was
+measuring nothing.
+
+`Photon.spin` is now mutable, initialized to the chirality and updated per collision
+by ONE rule - the photon picks up the partner's spin, `spin += spin_transfer *
+chi_partner`, clamped to +-2. Same sign stacks, opposite cancels; no case split.
+Sourced from magmom.pdf ("those spins can stack or cancel") and voyag.pdf ("the
+spins will offset as a sum, and the field will be magnetically flat", with "a
+leftover or resultant field spin" when the populations do not balance). No new RNG
+draws are consumed, so gear-on geometry is unchanged and gears-off stays a strict
+no-op (`spin_transfer` 0 in `GearConfig::off()`).
+
+The split this enables is the one Mathis insists on: magnetism is SPIN and is
+geometry-blind, electricity is the linear motion c and is a genuine VECTOR sum, and
+"photon collisions affect only the spins, not c" (neutron.pdf).
+
+### report_magnetic_neutrality (ignored, ~87s, 16 cells)
+
+class x photon_fraction {0.5, 2/3} x spin_transfer {0, 0.1, 0.25, 0.5}, at
+cancel_redirect 0.5.
+
+CONFIRMED, and knob-INDEPENDENT:
+- The electrical channel is provably collision-independent. Incoherent z/xy ratio is
+  0.517-0.518 for the proton and 1.032-1.042 for the neutron across ALL spin_transfer
+  values - exactly as "collisions affect only the spins, not c" requires. Proton flux
+  sits in the equatorial plane, neutron flux is axial, factor ~2.0 apart.
+- Both channels NULL-CONTROL at the balanced field: at photon_fraction 0.5 the proton
+  and neutron are indistinguishable in both observables (z/xy 0.741 both; magnetic
+  ratio 1.000 at every spin_transfer). Matches neutron.pdf's "balanced field ->
+  indistinguishable".
+- spin_transfer = 0 gives M/esc = exactly +-1.0000, verifying the channel is wired and
+  nothing else moves spin.
+- The proton/neutron magnetic asymmetry exists ONLY in an imbalanced field. Mechanism:
+  the proton's monochiral chi=+1 exhaust STACKS with the photon-majority ambient
+  (M_p/esc rises 1.00 -> 1.59) while the neutron's chi=-1 exhaust CANCELS against it
+  (|M_n/esc| falls toward 0.88).
+
+NOT CONFIRMED - the magnitude is a FIT, not a derivation. |M_p/M_n| at Earth 2/3 grows
+monotonically with spin_transfer (1.000 / 1.218 / 1.438 / 1.799) and passes through the
+experimental |mu_p/mu_n| = 1.4600 at spin_transfer ~= 0.25. Since 1.46 sits mid-sweep and
+nothing independently pins spin_transfer, only the ORDERING and the FIELD-DEPENDENCE are
+results. magmom.pdf reaches 1.458 by a different route (an angle differential plus the
+proton's faster spin), which this model does not implement.
+
+REFUTED for the current architecture - balanced-field neutrality. neutron.pdf demands
+"near-total spin cancellation ... the neutron is then neutral regarding magnetism" in a
+balanced field, with charge still recycled. Measured: |M_n/esc| stays at 1.00-1.31 at
+photon_fraction 0.5 for every spin_transfer, with escaped ~38.4k. Diagnosis: at balance the
+ambient mean chirality is 0, so the meshing drift vanishes by construction and the
+neutron's own monochiral exhaust survives untouched. Genuine neutrality needs AMBIENT
+charge to enter one pole and leave the other RETAINING ITS SPECIES - venus2.pdf's
+"through charge" - which the pump cannot express: it absorbs ambient and re-emits
+monochiral charge from the fixed disc. This is the SAME architectural limit that blocked
+the polar-exit profile until the through-channel moved the redirect to the march level.
+The fix is a real pass-through limb, not a knob.
+
+### report_electron_and_swing_control (ignored, ~83s, 6 cells)
+
+class x swing_boost {0.05, 0.0} at Earth 2/3, cancel_redirect 0.5.
+
+- SWING CONTROL: INSENSITIVE for all three classes (mean |delta| per bin 0.010-0.020,
+  delta-eqEsc <= 0.002). `DEFAULT_SWING_BOOST` = 0.05 is the ELECTRON's measured settled
+  outer_spin while CM-2 measured baryons at a TRUE ZERO at Earth mix, so the exported
+  baryon CSVs had been generated with a swing the baryons should not have. It turns out
+  not to be load-bearing - the proton disc and neutron butterfly survive swing = 0
+  unchanged, so the exported CSVs STAND. Worth keeping on record as a resolved doubt.
+- ELECTRON VALIDATED against its own trace profile. The input was a bare +-3 deg core with
+  NO mid-latitude plateau; the engine REGENERATED the trace's shoulder - engine 0.383
+  vs trace 0.359 over 45-70 deg from the pole (~7%), with overall mean |delta| = 0.057 across
+  the folded profile, much closer than either baryon (proton 0.276, neutron 0.196). So
+  the electron trace's mid-latitude tail IS collective scattering, and the collective and
+  single-particle derivations AGREE for the electron. Exit topology: eqEsc 0.687, midEsc
+  0.267, polEsc 0.047, peak at the equator - a clean single disc, as one axial spin should
+  give.
+- Residual: the engine puts ~3% of electron emission inside 25 deg of the pole where the trace
+  is exactly 0.000. Same filled-polar-cone signature the baryon profiles show; it matters
+  because Atom mode's binding story is a wall-riding electron orbit in an emission-free
+  polar tunnel.
+
+`histogram_electron_recycling.csv` is now exported alongside the two baryon files, so all
+three Atom-mode profiles can come from one engine. The trace CSVs remain untouched and
+`atom_scenarios::standard_core` still loads them - nothing is swapped.
