@@ -873,3 +873,135 @@ shorter" AND the nucleus channels charge axially. In a nucleus the nucleons are 
 pole-to-pole and the axial lane is fed by the NEIGHBOURS' exhaust, not by isotropic
 ambient - a multi-body configuration. Testing whether through charge delivers neutrality
 therefore needs an axial STACK, which is Atom mode, not the single-particle cell.
+
+---
+
+## CM-4: the axial stack (2026-07-24, later still)
+
+The single-particle line ended by pointing at a multi-body test, so this is it: a
+second body on the pole axis, feeding the through-lane with its own exhaust
+instead of relying on isotropic ambient. `report_axial_stack` (~70s, 5 stack
+cells + 2 baselines).
+
+### The seating is not a free parameter
+
+graphene.pdf fixes it: "the proton is plugged in with its equator pointing down.
+But the neutron is plugged in with its pole pointing down. This is because
+protons channel charge pole to equator, while neutrons channel pole to pole."
+Atom mode already asserts exactly this for plugs (`atom_scenarios`: plug protons
+edge-on `rest_axis·Y ≈ 0` "disc feeds the hole", plug neutrons `|rest_axis·Y| ≈ 1`
+"pole on the stack axis"), so CM-4 and Atom mode agree on nuclear geometry by
+construction rather than by luck. `stack_seating_matches_atom_mode_plug_convention`
+locks the two together.
+
+Consequence worth stating plainly: a nuclear stack aims a proton's EQUATORIAL
+DISC - the limb carrying 95-99% of its output - straight into the neutron's
+polar lane.
+
+### Architecture
+
+`march_stack` is a separate path from `march`, so every single-body bit-identity
+anchor is untouched. Three differences forced by having more than one centre:
+absorption and the lane gate are tested per body in that body's OWN frame; the
+chirality gears are evaluated with the photon rotated into the field body's local
+frame and the new direction rotated back (skipping this would give an edge-on
+proton a disc lying in the stack's xy plane instead of its own); escape is
+measured from the stack centroid.
+
+Phase-1 simplification, and it matters quantitatively below: only the feeder has
+a converged gas. The probe is a passive absorber, so its own field never scatters
+arriving charge back out of its lane, which makes every on-lane rate here an
+UPPER bound. Body-level shadowing IS included, since real photons are marched
+through the real geometry.
+
+### CONFIRMED: a neighbour turns through-charge into a percent-level limb
+
+At `sep = NUCLEON_PITCH = 2.6`, nuclear seating, per arrival at the probe:
+
+| channel | arrivals | crossings | on-lane %/arrival |
+|---|---|---|---|
+| feeder's emitted exhaust | 1970 | 390 | 19.797% |
+| ambient (same cell) | 3181 | 26 | 0.817% |
+
+**24x**, and that is the only defensible enhancement figure: one field
+configuration, one geometry, two launch populations. The tempting 204x against
+the solo-probe baseline (0.097%) is NOT defensible - in the solo cell the probe
+owns the gas and scatters its own arrivals out of the lane, in the stack cells it
+owns none, and that difference alone accounts for 0.097% -> 0.817%.
+
+In absolute terms the probe intercepts 4.92% of the feeder's total output and
+passes 0.97% of the feeder's WHOLE exhaust through its lane, against ~0.001% of
+launched ambient in the isolated cell. That is the number that decides whether
+the limb can ever offset the disc.
+
+Separation sweep, and it converges to a computable ceiling:
+
+| sep | feeder reach | feeder %/arrival |
+|---|---|---|
+| 2.2 | 6.20% | 22.048% |
+| 2.6 | 4.92% | 19.797% |
+| 5.2 | 1.42% | 10.229% |
+
+For a collimated beam the lane is a pure area gate, `(lane/R_IN)^2` = 11.1% of
+the cross-section, so 11.1% is the far-field ceiling - which sep 5.2 sits on. A
+NEAR feeder BEATS it by illuminating the polar cap preferentially (1/r^2 alone
+weights the near pole 2.25x over the rim of the illuminated cap at sep 2.6). So
+venus2.pdf's "the distance from pole to pole is so much shorter" clause is here
+as a measured geometric effect, not an assertion.
+
+### CONFIRMED, and emergent: the seating asymmetry
+
+The lane gate is class-INDEPENDENT - nothing was told to prefer neutrons - yet:
+
+- edge-on PROTON probe: **0 crossings from 1882 arrivals** (0.000%), against the
+  pole-on neutron's 19.797%. graphene.pdf's "protons channel pole to equator,
+  neutrons pole to pole" falls out of the seating.
+- pole-on feeder control (what a stack test would assume WITHOUT graphene.pdf):
+  reaches the probe with only 0.39% of its output vs the edge-on 4.92%, **13x**
+  less, because a proton's poles are nearly dark. The paper's seating is what
+  couples the stack at all.
+
+`stack_lane_gate_is_evaluated_in_each_bodys_own_frame` pins this in a unit test:
+one axial photon, pole-on body passes it, edge-on body absorbs it.
+
+### REFUTED: neutrality via a p -> n feed. It goes BACKWARDS
+
+The well-fed lane is monochiral (species mix 0.031) because a proton's exhaust is
+all one species by construction, and its exhaust spin per escaped photon is
+**1.437** - ABOVE the isolated limb's 0.27-0.45, because a crossing photon keeps
+its spin and then stacks more of the same sign in the feeder's monochiral gas.
+
+So the neighbour feed fixes the RATE problem and makes the SPECIES problem worse.
+Two mechanisms have now failed for the same reason, which is the useful part: the
+lane needs OPPOSITE-species feeds, and a single proton neighbour cannot supply
+them.
+
+### Where that points
+
+ammon.pdf on a real nucleus: "charge moving pole-to-pole through the alphas,
+south to north and north to south. The south to north channel is stronger, but
+both exist, giving us both charge and anticharge." In this model the neutron's
+own emission IS the anticharge (`chirality_sign` -1) while the protons' is
+charge. So the candidate cancellation is between the neutron's through-charge (+)
+and its own emission (-) - a WHOLE-PARTICLE sum, not a within-limb one, which is
+also what voyag.pdf's "the spins will offset as a sum" actually says.
+
+That is a 3-body p-n-p cell and a different observable (total magnetic output of
+the middle body), not a bigger version of this measurement.
+
+### Count discipline
+
+Isotropic launches put only `(R_IN/B_MAX)^2` = 2.8% of photons on the body and
+~0.1% of those on the lane, so 40k launches yield ~7 crossings. The isotropic
+channels therefore run at 600k (baseline) and 400k (in-cell ambient), and the
+report prints the expected count and the Poisson error on every small-count row -
+the baseline's 3 and 4 crossings are "order 0.1%", nothing finer. This is the
+same trap the through-charge report fell into on its first run.
+
+One correction to earlier notes: the 0.67% isolated figure quoted in the
+through-charge section is the COLLISION-FREE GEOMETRIC BOUND. The measured
+isolated rate at these gear settings is 0.049-0.168%, and part [1] here
+independently gives ~0.1%. The ~7x gap is scattering loss.
+
+Suite 157/0/48 (3 new unit tests: seating matches Atom mode, lane gate is
+per-body-frame, stack-of-one matches single-body geometry and two bodies shadow).

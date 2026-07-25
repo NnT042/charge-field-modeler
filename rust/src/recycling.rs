@@ -205,7 +205,7 @@
 
 #![allow(dead_code)]
 
-use glam::DVec3;
+use glam::{DQuat, DVec3};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::OnceLock;
 
@@ -1724,6 +1724,348 @@ fn run_self_consistent(
 }
 
 // ---------------------------------------------------------------------
+// CM-4: the axial stack (multi-body)
+// ---------------------------------------------------------------------
+//
+// The single-particle cell established that the through-charge limb WORKS
+// (species- and spin-preserving pole-to-pole crossing) but is only ~0.67% of
+// arriving charge, saturating near 4.7% under strong axial channelling — far
+// too small to deliver magnetic neutrality, because the equatorial disc limb
+// still carries 95-99% of output. venus2.pdf says exactly that for an isolated
+// body ("normally a minor complication") and locates the dominance at the
+// NUCLEAR level, where two things change that a one-body cell cannot express:
+// the pole-to-pole distance is short, and the lane is fed by a NEIGHBOUR's
+// exhaust rather than by isotropic ambient. That is what this section tests.
+//
+// The seating is NOT free. graphene.pdf: "the proton is plugged in with its
+// equator pointing down. But the neutron is plugged in with its pole pointing
+// down. This is because protons channel charge pole to equator, while neutrons
+// channel pole to pole." So a nuclear stack aims a proton's EQUATORIAL DISC —
+// the limb that carries ~95-99% of its output — straight into the neutron's
+// polar lane. Atom mode already asserts this convention for plugs
+// (atom_scenarios: plug protons edge-on `rest_axis·Y ≈ 0` "disc feeds the
+// hole", plug neutrons `|rest_axis·Y| ≈ 1` "pole on the stack axis"), so the
+// two modes agree on geometry by construction rather than by coincidence.
+
+/// Stacked-nucleon centre separation in body radii — `atom_core::NUCLEON_PITCH`
+/// ("a fused neighbor parks at the MOUTH of the source's intake funnel"). Kept
+/// as a local copy so the recycling cell stays independent of Atom mode; the
+/// stack report sweeps around it.
+pub const STACK_PITCH: f64 = 2.6;
+
+/// Seating of a nucleon in an axial stack. The two cases are physically
+/// distinct limbs, not a cosmetic rotation: which of the body's own limbs
+/// points along the stack axis decides what the neighbour receives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StackOrient {
+    /// Spin axis ALONG the stack axis: the body channels pole-to-pole through
+    /// the stack, so its through-lane opens onto its neighbours. The neutron's
+    /// nuclear seating.
+    PoleOn,
+    /// Spin axis PERPENDICULAR to the stack axis: the equatorial disc fires
+    /// along the stack and the through-lane points sideways, away from the
+    /// neighbours. The proton's nuclear seating.
+    EdgeOn,
+}
+
+impl StackOrient {
+    /// The body's spin axis in stack coordinates (stack axis = +z).
+    fn spin_axis(self) -> DVec3 {
+        match self {
+            StackOrient::PoleOn => DVec3::Z,
+            StackOrient::EdgeOn => DVec3::X,
+        }
+    }
+
+    /// The nuclear seating for a class, per graphene.pdf. The electron is not a
+    /// nucleon; it is given the pole-on convention only so the enum is total.
+    fn nuclear_for(class: ParticleClass) -> Self {
+        match class {
+            ParticleClass::Proton => StackOrient::EdgeOn,
+            ParticleClass::Neutron | ParticleClass::Electron => StackOrient::PoleOn,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            StackOrient::PoleOn => "pole-on",
+            StackOrient::EdgeOn => "edge-on",
+        }
+    }
+}
+
+/// One body in an axial stack: a centre on the stack axis plus its own spin
+/// orientation. Every per-body quantity (density lookup, through-lane gate,
+/// gear redirect) is evaluated in this body's frame, never the stack's.
+#[derive(Clone, Copy)]
+struct StackBody {
+    center: DVec3,
+    class: ParticleClass,
+    orient: StackOrient,
+}
+
+impl StackBody {
+    fn spin_axis(&self) -> DVec3 {
+        self.orient.spin_axis()
+    }
+
+    /// Rotation carrying BODY-LOCAL coordinates (spin axis = +z — the frame
+    /// every sampler, density field and gear rule in this module is written in)
+    /// into stack coordinates. For a pole-on body this is the identity.
+    fn to_stack(&self) -> DQuat {
+        DQuat::from_rotation_arc(DVec3::Z, self.spin_axis())
+    }
+
+    /// (radius, colatitude) of a stack-frame point in this body's own frame —
+    /// the pair every `CollisionField` lookup wants.
+    fn local_polar(&self, pos: DVec3) -> (f64, f64) {
+        let d = pos - self.center;
+        let r = d.length();
+        let ct = (d.dot(self.spin_axis()) / r.max(1e-12)).clamp(-1.0, 1.0);
+        (r, ct.acos())
+    }
+
+    /// Latitude of a surface point in this body's own frame (+90 = its north
+    /// pole), which is what the exit-topology bands mean.
+    fn local_latitude(&self, pos: DVec3) -> f64 {
+        let (_, theta) = self.local_polar(pos);
+        90.0 - theta.to_degrees()
+    }
+
+    /// The two quantities the through-lane gate needs, about this body's OWN
+    /// spin axis: cylindrical radius of `pos`, and the axial component of
+    /// `dir`. An edge-on body's lane runs along x, so axial feed along the
+    /// stack misses it — that asymmetry is the point of the measurement.
+    fn lane_coords(&self, pos: DVec3, dir: DVec3) -> (f64, f64) {
+        let d = pos - self.center;
+        let a = self.spin_axis();
+        let along = d.dot(a);
+        let rho = (d - a * along).length();
+        (rho, dir.dot(a))
+    }
+}
+
+/// What one stacked march did, from the point of view of the body being
+/// measured (`probe`).
+struct StackOutcome {
+    term: Termination,
+    spin: f64,
+    /// Reached the probe's surface at all (whether or not it then crossed).
+    probe_arrived: bool,
+    /// Latitude of that first contact, in the PROBE's own frame.
+    probe_arrival_lat: f64,
+    /// Through-lane crossings of the probe.
+    probe_crossed: u32,
+    /// Absorbed by some OTHER body — the neighbour shadowing/reabsorption
+    /// channel, which a one-body cell has no way to charge for.
+    other_absorbed: bool,
+}
+
+/// Ray-marches one photon through a STACK of bodies. Same transport physics as
+/// `march`, with three differences forced by there being more than one centre:
+///
+/// 1. Absorption and the through-lane gate are tested against every body, each
+///    in its own frame (`StackBody::lane_coords`), so seating matters.
+/// 2. The chirality gears are geometric — `scatter_off` funnels cancels to
+///    "the nearer pole" and flattens augments toward "the equatorial plane",
+///    both keyed to +z. So the collision is evaluated with the photon rotated
+///    into the FIELD BODY's local frame and the new direction rotated back.
+///    Skipping that would give an edge-on proton a disc lying in the stack's
+///    xy plane instead of its own.
+/// 3. Escape is measured from the stack CENTROID, so the tallied shell encloses
+///    the whole stack rather than one body.
+///
+/// Phase 1 deliberately gives only `field_body` a converged gas: the probe is a
+/// passive absorber. The probe's own gas would scatter arriving charge, some of
+/// it OUT of the lane, so the on-lane rate measured here is an UPPER bound on
+/// the coupled value. Transport-level shadowing by the probe's solid body IS
+/// included, since real photons are marched through the real geometry. Nor does
+/// this deposit track-length into a field — the stack is not iterated to
+/// self-consistency here, it reads a feed rate off converged single-body gases.
+#[allow(clippy::too_many_arguments)]
+fn march_stack(
+    mut photon: Photon,
+    bodies: &[StackBody],
+    field_body: usize,
+    probe: usize,
+    cross: &CollisionField,
+    sigma_cross: f64,
+    selff: &CollisionField,
+    sigma_self: f64,
+    n_ricochet: u32,
+    gears: &GearConfig,
+    rng: &mut u64,
+) -> StackOutcome {
+    let mut centroid = DVec3::ZERO;
+    for b in bodies {
+        centroid += b.center;
+    }
+    centroid /= bodies.len() as f64;
+
+    let source = &bodies[field_body];
+    let q_to_stack = source.to_stack();
+    let q_to_local = q_to_stack.inverse();
+
+    let mut path_length = 0.0;
+    let mut probe_arrived = false;
+    let mut probe_arrival_lat = f64::NAN;
+    let mut probe_crossed = 0u32;
+    let mut other_absorbed = false;
+
+    let term = loop {
+        // Nearest surface decides the step, so resolution stays fine near
+        // either body rather than only near the origin.
+        let mut r_min = f64::INFINITY;
+        let mut hit: Option<usize> = None;
+        for (i, b) in bodies.iter().enumerate() {
+            let r_i = (photon.pos - b.center).length();
+            if r_i < r_min {
+                r_min = r_i;
+            }
+            if r_i < R_IN && hit.is_none() {
+                hit = Some(i);
+            }
+        }
+
+        if let Some(i) = hit {
+            let body = &bodies[i];
+            let r_i = (photon.pos - body.center).length();
+            if i == probe && !probe_arrived {
+                probe_arrived = true;
+                probe_arrival_lat = body.local_latitude(photon.pos);
+            }
+            // Through-charge limb, same two geometric gates as the single-body
+            // version (salt.pdf: near the centre of the hole passes, edge or
+            // angled entry is thrown to the equatorial whirlpool) — but in
+            // THIS body's frame. Species and spin are retained; that retention
+            // is what makes a mixed-species exhaust possible at all.
+            if gears.through_lane_rho > 0.0 {
+                let (rho, axial) = body.lane_coords(photon.pos, photon.dir);
+                let d = photon.pos - body.center;
+                let incoming = photon.dir.dot(d / r_i.max(1e-12));
+                if rho < gears.through_lane_rho * r_i
+                    && axial.abs() > THROUGH_COS_MAX_ANGLE
+                    && incoming < 0.0
+                {
+                    let t = -2.0 * d.dot(photon.dir);
+                    if t > 0.0 {
+                        let exit = d + photon.dir * t;
+                        photon.pos =
+                            body.center + exit * (R_IN / exit.length().max(1e-12)) * 1.001;
+                        if i == probe {
+                            probe_crossed += 1;
+                        }
+                        path_length += t;
+                        continue;
+                    }
+                }
+            }
+            if i != probe {
+                other_absorbed = true;
+            }
+            break Termination::Absorbed {
+                pos: photon.pos,
+                dir: photon.dir,
+            };
+        }
+
+        if (photon.pos - centroid).length() > R_OUT {
+            break Termination::Escaped {
+                pos: photon.pos,
+                dir: photon.dir,
+            };
+        }
+        if path_length > SAFETY_PATH_CAP {
+            break Termination::Lost;
+        }
+
+        let ds = (DS_FRACTION * r_min).max(MIN_DS);
+        let (r_f, theta_f) = source.local_polar(photon.pos);
+
+        if (sigma_cross > 0.0 || sigma_self > 0.0) && photon.bounces < n_ricochet {
+            let lam_cross = if sigma_cross > 0.0 {
+                sigma_cross * cross.effective_density_at(r_f, theta_f)
+            } else {
+                0.0
+            };
+            let lam_self = if sigma_self > 0.0
+                && !(selff.kind == PhotonKind::Ambient && r_f > B_MAX)
+            {
+                sigma_self * selff.effective_density_at(r_f, theta_f)
+            } else {
+                0.0
+            };
+            let lam = lam_cross + lam_self;
+            if lam > 0.0 {
+                let p_collide = 1.0 - (-lam * ds).exp();
+                if xorshift64(rng) < p_collide {
+                    let use_self = if lam_cross <= 0.0 {
+                        true
+                    } else if lam_self <= 0.0 {
+                        false
+                    } else {
+                        xorshift64(rng) < lam_self / lam
+                    };
+                    let field = if use_self { selff } else { cross };
+                    // Into the field body's frame for the gear geometry, back
+                    // out again afterwards (see doc comment, point 2).
+                    let pos_local = q_to_local * (photon.pos - source.center);
+                    let dir_local = q_to_local * photon.dir;
+                    let (new_dir_local, spin_delta) = scatter_off(
+                        field,
+                        dir_local,
+                        pos_local,
+                        r_f,
+                        theta_f,
+                        photon.chirality,
+                        gears,
+                        rng,
+                    );
+                    photon.dir = q_to_stack * new_dir_local;
+                    photon.spin = (photon.spin + spin_delta).clamp(-2.0, 2.0);
+                    photon.bounces += 1;
+                }
+            }
+        }
+
+        photon.pos += photon.dir * ds;
+        path_length += ds;
+    };
+
+    StackOutcome {
+        term,
+        spin: photon.spin,
+        probe_arrived,
+        probe_arrival_lat,
+        probe_crossed,
+        other_absorbed,
+    }
+}
+
+/// Spawns emitted charge on `body` in STACK coordinates: the body-local
+/// sampler is used unchanged (so the exit profile and RNG draws are the same
+/// ones the single-body cell validated) and the result is rotated onto the
+/// body's actual spin axis and translated to its centre.
+fn spawn_emitted_on(rng: &mut u64, swing_boost: f64, body: &StackBody) -> Photon {
+    let mut p = spawn_emitted(rng, swing_boost, body.class);
+    let q = body.to_stack();
+    p.pos = body.center + q * p.pos;
+    p.dir = q * p.dir;
+    p
+}
+
+/// Ambient launch for a stack: the single-body importance ensemble, recentred
+/// on the stack centroid. `B_MAX = 6` still covers both bodies of a
+/// `STACK_PITCH` pair (each sits 1.3 from the centroid). The species-split
+/// `pole_intake_bias` inside `spawn_ambient` steers along +z, which in stack
+/// coordinates IS the stack axis — the correct axis for a nuclear channel.
+fn spawn_ambient_on_stack(rng: &mut u64, gears: &GearConfig, centroid: DVec3) -> Photon {
+    let (mut p, _aim) = spawn_ambient(rng, gears);
+    p.pos += centroid;
+    p
+}
+
+// ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
 
@@ -3147,6 +3489,667 @@ mod tests {
             rows.len(),
             probe_rows.len()
         );
+    }
+
+    /// CM-4: does a NEIGHBOUR's exhaust light up the through-charge lane?
+    ///
+    /// The single-particle cell measured through-charge at 0.67% of arriving
+    /// charge (saturating ~4.7% under strong axial channelling) — too small to
+    /// matter, exactly as venus2.pdf says for an isolated body. Its claim is
+    /// that this inverts at the NUCLEAR level. Two things change there, and this
+    /// report separates them: the pole-to-pole distance is short (a separation
+    /// sweep) and the lane is fed by a neighbour's exhaust rather than by
+    /// isotropic ambient (an emitted-population launch from a second body).
+    ///
+    /// The seating comes from graphene.pdf, not from convenience: protons sit
+    /// EDGE-ON (equatorial disc firing along the stack), neutrons POLE-ON
+    /// (through-lane open along the stack). That predicts an asymmetry nobody
+    /// put in by hand — the neutron's lane receives the proton's disc, the
+    /// proton's lane points sideways at nothing.
+    #[test]
+    #[ignore]
+    fn report_axial_stack() {
+        use std::time::Instant;
+        let started = Instant::now();
+
+        let n = 40_000usize;
+        let swing_boost = DEFAULT_SWING_BOOST;
+        let redirect = 0.5_f64;
+        let intake_bias = 0.5_f64;
+
+        println!("=== CM-4 Axial Stack: is the through-lane fed by a NEIGHBOUR? ===");
+        println!(
+            "N={n}/population, iters={ITERS} (feeder gas), cancel_redirect={redirect}, pole_intake_bias={intake_bias}, spin_transfer={DEFAULT_SPIN_TRANSFER}, lane={THROUGH_LANE_RHO:.4}"
+        );
+        println!(
+            "SEATING (graphene.pdf, and already asserted for plugs in atom_scenarios): proton EDGE-ON — 'plugged in with its equator pointing down', disc fires along the stack; neutron POLE-ON — 'plugged in with its pole pointing down', channels pole to pole. Stack axis = +z."
+        );
+        println!(
+            "BASELINE, stated precisely. The isolated cell's 0.67% was a COLLISION-FREE GEOMETRIC BOUND (impact parameter times axial gate); its MEASURED rate at these gear settings was 0.049% (proton) / 0.168% (neutron) of arrivals, because scattering deflects most lane-bound charge back out. Part [1] re-measures the isolated rate here; parts [3]-[4] then compare channels WITHIN one cell, which is the only apples-to-apples comparison available (see [7]).\n"
+        );
+
+        /// One measured configuration.
+        struct StackRow {
+            label: String,
+            sep: f64,
+            /// (arrivals at probe, on-lane crossings) from the FEEDER's emitted
+            /// exhaust.
+            emit: (f64, f64),
+            /// Same, from the ambient background.
+            amb: (f64, f64),
+            /// Crossing photons by species, and their escaped spin sum/count.
+            chi_plus: f64,
+            chi_minus: f64,
+            spin_sum: f64,
+            spin_n: f64,
+            /// Emitted photons the feeder itself reabsorbed (shadowing channel).
+            emit_self_lost: f64,
+        }
+
+        /// Converges a single body's gas and hands back everything a stacked
+        /// march needs to read densities off it.
+        fn feeder_gas(
+            n: usize,
+            swing_boost: f64,
+            gears: &GearConfig,
+            seed: &mut u64,
+        ) -> (CollisionField, CollisionField, f64, f64, f64, f64) {
+            *seed = seed.wrapping_add(0x100);
+            let (e0, a0) = run_iteration0(n, swing_boost, gears, seed);
+            *seed = seed.wrapping_add(1);
+            let cell = run_self_consistent(
+                n, swing_boost, 3.0, 3.0, 30, ITERS, false, gears, &e0, &a0, *seed,
+            );
+            let f_e = CollisionField::from_tally(
+                PhotonKind::Emitted,
+                gears.class,
+                cell.final_emitted_field.clone(),
+            );
+            let f_a = CollisionField::from_tally(
+                PhotonKind::Ambient,
+                gears.class,
+                cell.final_ambient_field.clone(),
+            );
+            (
+                f_e,
+                f_a,
+                cell.sigma_e,
+                cell.sigma_a,
+                cell.sigma_ee,
+                cell.sigma_aa,
+            )
+        }
+
+        // -------------------------------------------------------------
+        // COUNT DISCIPLINE (the v1 lesson, and the trap the through-charge
+        // report fell into first time). An isotropic launch puts only
+        // (R_IN/B_MAX)^2 of photons on the body at all, and ~0.67% of those on
+        // the lane, so 40k launches yield ~7 crossings — a number no rate can
+        // be read off. The isotropic channels therefore get their own much
+        // larger N, and the expected count is printed so a starved row cannot
+        // be mistaken for physics. The FEEDER channel needs no such help: it is
+        // aimed, so its arrival fraction is the probe's solid angle (~4%), two
+        // orders up.
+        let n_iso = 600_000usize;
+        let p_arrive_iso = (R_IN / B_MAX).powi(2);
+        println!("--- [1] BASELINE: the probe ALONE, ambient feed only ---");
+        println!(
+            "  N={n_iso} here (not {n}): collision-free geometry predicts arrivals at {:.3} of launches => ~{:.0}, and at the MEASURED ~0.1% lane rate ~{:.0} crossings. At {n} that would be ~{:.0} — unreadable, which is the trap this part exists to avoid.",
+            p_arrive_iso,
+            p_arrive_iso * n_iso as f64,
+            0.001 * p_arrive_iso * n_iso as f64,
+            0.001 * p_arrive_iso * n as f64,
+        );
+        println!(
+            "  Expect the measured arrivals to come in WELL UNDER that geometric figure: it assumes straight lines, while at TAU=3 with the gears live most ambient charge is scattered off its aim before reaching the surface. The shortfall is the scattering loss, not a bug — the same loss that puts the real lane rate ~7x below the 0.67% bound."
+        );
+        println!(
+            "{:<22} {:>10} {:>11} {:>13} {:>16}",
+            "probe", "launched", "arrivals", "crossings", "% of arrivals"
+        );
+        let mut base_rate: Vec<(&str, f64)> = Vec::new();
+        for (pname, pclass) in [("neutron", ParticleClass::Neutron), ("proton", ParticleClass::Proton)]
+        {
+            let orient = StackOrient::nuclear_for(pclass);
+            let gears = GearConfig {
+                enabled: true,
+                photon_fraction: 2.0 / 3.0,
+                cancel_redirect: redirect,
+                pole_intake_bias: intake_bias,
+                class: pclass,
+                spin_transfer: DEFAULT_SPIN_TRANSFER,
+                through_lane_rho: THROUGH_LANE_RHO,
+            };
+            let mut seed = 0x5741_0000_C0DE_2407u64 ^ ((pclass as u64) << 40);
+            let (f_e, f_a, sigma_e, _sigma_a, _sigma_ee, sigma_aa) =
+                feeder_gas(n, swing_boost, &gears, &mut seed);
+            let bodies = [StackBody {
+                center: DVec3::ZERO,
+                class: pclass,
+                orient,
+            }];
+            let mut arrivals = 0.0f64;
+            let mut crossings = 0.0f64;
+            for _ in 0..n_iso {
+                let p = spawn_ambient_on_stack(&mut seed, &gears, DVec3::ZERO);
+                let out = march_stack(
+                    p, &bodies, 0, 0, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
+                );
+                if out.probe_arrived {
+                    arrivals += 1.0;
+                }
+                if out.probe_crossed > 0 {
+                    crossings += 1.0;
+                }
+            }
+            let rate = 100.0 * crossings / arrivals.max(1.0);
+            println!(
+                "{:<22} {:>10} {:>11.0} {:>13.0} {:>15.3}%",
+                format!("{pname} ({})", orient.label()),
+                n_iso,
+                arrivals,
+                crossings,
+                rate
+            );
+            println!(
+                "    {crossings:.0} crossings is a SMALL COUNT: Poisson +-{:.0} => rate {rate:.3}% +-{:.3}%. Read this as 'order 0.1%', nothing finer. Consistent with the isolated cell's measured 0.049-0.168%; the collision-free 0.67% bound is ~7x above it, which is the scattering loss.",
+                crossings.sqrt(),
+                rate / crossings.max(1.0).sqrt()
+            );
+            base_rate.push((pname, rate));
+        }
+
+        // -------------------------------------------------------------
+        println!("\n--- [2] NULL CONTROL: lane closed, stack present ---");
+        {
+            let gears_open = GearConfig {
+                enabled: true,
+                photon_fraction: 2.0 / 3.0,
+                cancel_redirect: redirect,
+                pole_intake_bias: intake_bias,
+                class: ParticleClass::Proton,
+                spin_transfer: DEFAULT_SPIN_TRANSFER,
+                through_lane_rho: THROUGH_LANE_RHO,
+            };
+            let gears_shut = GearConfig {
+                through_lane_rho: 0.0,
+                ..gears_open
+            };
+            let mut seed = 0x9C10_0000_5EED_2407u64;
+            let (f_e, f_a, _se, sigma_a, sigma_ee, _sa) =
+                feeder_gas(n, swing_boost, &gears_open, &mut seed);
+            let bodies = [
+                StackBody {
+                    center: DVec3::new(0.0, 0.0, -STACK_PITCH),
+                    class: ParticleClass::Proton,
+                    orient: StackOrient::EdgeOn,
+                },
+                StackBody {
+                    center: DVec3::ZERO,
+                    class: ParticleClass::Neutron,
+                    orient: StackOrient::PoleOn,
+                },
+            ];
+            let mut shut_cross = 0.0;
+            let mut shut_seed = seed;
+            for _ in 0..n {
+                let p = spawn_emitted_on(&mut shut_seed, swing_boost, &bodies[0]);
+                let out = march_stack(
+                    p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears_shut,
+                    &mut shut_seed,
+                );
+                shut_cross += out.probe_crossed as f64;
+            }
+            println!(
+                "  lane=0.000 over {n} feeder-emitted launches: {shut_cross:.0} crossings — {}",
+                if shut_cross == 0.0 {
+                    "clean"
+                } else {
+                    "BROKEN: the limb fired with the lane closed"
+                }
+            );
+        }
+
+        // -------------------------------------------------------------
+        println!("\n--- [3] THE STACK: proton feeder -> probe, separation sweep ---");
+        let n_amb = 400_000usize;
+        println!(
+            "Two populations per cell: {n} from the FEEDER's own emitted exhaust (the neighbour channel venus2.pdf points at) and {n_amb} ambient (the isolated channel, at the larger count for the reason in [1])."
+        );
+        println!(
+            "They are reported ONLY per-channel and per-arrival. A combined rate would weight the two by their launch counts, which are a sampling choice, not the physical flux ratio — that ratio is not something this cell knows."
+        );
+
+        let mut rows: Vec<StackRow> = Vec::new();
+        let feeder_class = ParticleClass::Proton;
+        let mut seed = 0x2B0D_0000_57AC_2407u64;
+        let gears = GearConfig {
+            enabled: true,
+            photon_fraction: 2.0 / 3.0,
+            cancel_redirect: redirect,
+            pole_intake_bias: intake_bias,
+            class: feeder_class,
+            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            through_lane_rho: THROUGH_LANE_RHO,
+        };
+        // gears.class drives both the emitted chirality and the collision
+        // partner sampling, so it must be the FIELD body's class.
+        assert_eq!(gears.class, feeder_class);
+        let (f_e, f_a, sigma_e, sigma_a, sigma_ee, sigma_aa) =
+            feeder_gas(n, swing_boost, &gears, &mut seed);
+
+        struct Config {
+            label: &'static str,
+            feeder_orient: StackOrient,
+            probe_class: ParticleClass,
+            probe_orient: StackOrient,
+            sep: f64,
+        }
+        let mut configs: Vec<Config> = Vec::new();
+        for sep in [2.2_f64, STACK_PITCH, 5.2] {
+            configs.push(Config {
+                label: "p(edge)->n(pole)  NUCLEAR",
+                feeder_orient: StackOrient::EdgeOn,
+                probe_class: ParticleClass::Neutron,
+                probe_orient: StackOrient::PoleOn,
+                sep,
+            });
+        }
+        // The nuclear proton's own lane points sideways — it should receive
+        // almost nothing from an axial neighbour. Emergent, not imposed.
+        configs.push(Config {
+            label: "p(edge)->p(edge)  NUCLEAR",
+            feeder_orient: StackOrient::EdgeOn,
+            probe_class: ParticleClass::Proton,
+            probe_orient: StackOrient::EdgeOn,
+            sep: STACK_PITCH,
+        });
+        // Naive control: both poles on the stack axis, which is what a stack
+        // test would assume WITHOUT graphene.pdf.
+        configs.push(Config {
+            label: "p(pole)->n(pole)  control",
+            feeder_orient: StackOrient::PoleOn,
+            probe_class: ParticleClass::Neutron,
+            probe_orient: StackOrient::PoleOn,
+            sep: STACK_PITCH,
+        });
+
+        for cfg in &configs {
+            let bodies = [
+                StackBody {
+                    center: DVec3::new(0.0, 0.0, -cfg.sep),
+                    class: feeder_class,
+                    orient: cfg.feeder_orient,
+                },
+                StackBody {
+                    center: DVec3::ZERO,
+                    class: cfg.probe_class,
+                    orient: cfg.probe_orient,
+                },
+            ];
+            let centroid = (bodies[0].center + bodies[1].center) * 0.5;
+
+            let mut emit = (0.0, 0.0);
+            let mut amb = (0.0, 0.0);
+            let mut chi_plus = 0.0;
+            let mut chi_minus = 0.0;
+            let mut spin_sum = 0.0;
+            let mut spin_n = 0.0;
+            let mut emit_self_lost = 0.0;
+
+            for _ in 0..n {
+                let p = spawn_emitted_on(&mut seed, swing_boost, &bodies[0]);
+                let chi = p.chirality;
+                let out = march_stack(
+                    p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears, &mut seed,
+                );
+                if out.probe_arrived {
+                    emit.0 += 1.0;
+                }
+                if out.probe_crossed > 0 {
+                    emit.1 += 1.0;
+                    if chi >= 0.0 {
+                        chi_plus += 1.0
+                    } else {
+                        chi_minus += 1.0
+                    }
+                    if let Termination::Escaped { .. } = out.term {
+                        spin_sum += out.spin;
+                        spin_n += 1.0;
+                    }
+                } else if out.other_absorbed {
+                    emit_self_lost += 1.0;
+                }
+            }
+            for _ in 0..n_amb {
+                let p = spawn_ambient_on_stack(&mut seed, &gears, centroid);
+                let chi = p.chirality;
+                let out = march_stack(
+                    p, &bodies, 0, 1, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
+                );
+                if out.probe_arrived {
+                    amb.0 += 1.0;
+                }
+                if out.probe_crossed > 0 {
+                    amb.1 += 1.0;
+                    if chi >= 0.0 {
+                        chi_plus += 1.0
+                    } else {
+                        chi_minus += 1.0
+                    }
+                    if let Termination::Escaped { .. } = out.term {
+                        spin_sum += out.spin;
+                        spin_n += 1.0;
+                    }
+                }
+            }
+            rows.push(StackRow {
+                label: cfg.label.to_string(),
+                sep: cfg.sep,
+                emit,
+                amb,
+                chi_plus,
+                chi_minus,
+                spin_sum,
+                spin_n,
+                emit_self_lost,
+            });
+        }
+
+        println!(
+            "\n{:<28} {:>5} {:>19} {:>21}",
+            "config", "sep", "FEEDER arr/cross", "AMBIENT arr/cross"
+        );
+        for r in &rows {
+            println!(
+                "{:<28} {:>5.1} {:>10.0}/{:<8.0} {:>11.0}/{:<9.0}",
+                r.label, r.sep, r.emit.0, r.emit.1, r.amb.0, r.amb.1
+            );
+        }
+
+        println!("\n--- [4] Per-channel lane rate: which feed is efficient? ---");
+        println!(
+            "The neighbour channel is AIMED, the ambient channel isotropic. venus2's claim predicts the FEEDER column runs far above the ambient one per arrival. 'reach' is how much of the feeder's whole output the probe intercepts at all — the coupling strength, which decides whether an efficient lane rate matters."
+        );
+        println!(
+            "{:<28} {:>5} {:>14} {:>15} {:>15} {:>13}",
+            "config", "sep", "feeder reach", "feeder %/arr", "ambient %/arr", "enhancement"
+        );
+        for r in &rows {
+            let fe = 100.0 * r.emit.1 / r.emit.0.max(1.0);
+            let am = 100.0 * r.amb.1 / r.amb.0.max(1.0);
+            println!(
+                "{:<28} {:>5.1} {:>13.2}% {:>14.3}% {:>14.3}% {:>12.1}x",
+                r.label,
+                r.sep,
+                100.0 * r.emit.0 / n as f64,
+                fe,
+                am,
+                if am > 0.0 { fe / am } else { f64::NAN }
+            );
+        }
+
+        println!(
+            "\n  Why the rate FALLS with separation, and what it converges to. For a collimated beam the lane is a pure area gate: (lane/R_IN)^2 = {:.1}% of the geometric cross-section, and a distant feeder is collimated, so {:.1}% is the far-field CEILING. A NEAR feeder beats it because it illuminates the polar cap preferentially — the near pole sits at (sep - R_IN) while the rim of the illuminated cap sits at sqrt(sep^2 - R_IN^2), so 1/r^2 alone weights the pole by {:.2}x at sep {STACK_PITCH}, before obliquity. That is venus2.pdf's 'the pole-to-pole distance is short' clause, as a measured geometric effect rather than an assertion.",
+            100.0 * THROUGH_LANE_RHO.powi(2),
+            100.0 * THROUGH_LANE_RHO.powi(2),
+            (STACK_PITCH * STACK_PITCH - R_IN * R_IN) / ((STACK_PITCH - R_IN) * (STACK_PITCH - R_IN))
+        );
+
+        println!("\n--- [5] Species mix and exhaust spin of the probe's through-charge ---");
+        println!(
+            "Monochiral through-charge cannot cancel anything: the feeder's emitted exhaust is all one species, so a lane fed ONLY by the neighbour re-imports the same problem the disc limb had. chi+/chi- is the test."
+        );
+        println!(
+            "{:<28} {:>5} {:>9} {:>9} {:>12} {:>14}",
+            "config", "sep", "chi+", "chi-", "mix (min/tot)", "spin/escaped"
+        );
+        for r in &rows {
+            let tot = r.chi_plus + r.chi_minus;
+            let mix = if tot > 0.0 {
+                r.chi_plus.min(r.chi_minus) / tot
+            } else {
+                f64::NAN
+            };
+            let per = if r.spin_n > 0.0 {
+                r.spin_sum / r.spin_n
+            } else {
+                f64::NAN
+            };
+            println!(
+                "{:<28} {:>5.1} {:>9.0} {:>9.0} {:>12.3} {:>14.4}",
+                r.label, r.sep, r.chi_plus, r.chi_minus, mix, per
+            );
+        }
+
+        println!("\n--- [6] Shadowing: what the neighbour costs the feeder ---");
+        println!(
+            "Emitted charge the FEEDER reabsorbed (its own surface, plus anything the probe blocked before the lane) — a channel the one-body cell cannot charge for."
+        );
+        for r in &rows {
+            println!(
+                "  {:<28} sep {:>4.1}: {:>7.0} of {n} feeder-emitted lost to a non-probe body ({:>5.2}%)",
+                r.label,
+                r.sep,
+                r.emit_self_lost,
+                100.0 * r.emit_self_lost / n as f64
+            );
+        }
+
+        println!("\n--- [7] VERDICT ---");
+        for (pname, rate) in &base_rate {
+            println!("  isolated baseline, {pname} probe: {rate:.3}% of arrivals on-lane");
+        }
+        let nuclear = rows
+            .iter()
+            .find(|r| r.label.starts_with("p(edge)->n(pole)") && r.sep == STACK_PITCH);
+        if let (Some(nr), Some((_, base))) = (nuclear, base_rate.first()) {
+            let fe = 100.0 * nr.emit.1 / nr.emit.0.max(1.0);
+            let am = 100.0 * nr.amb.1 / nr.amb.0.max(1.0);
+            println!(
+                "  WHICH RATIO IS DEFENSIBLE. Feeder channel {fe:.3}%/arrival vs the ambient channel MEASURED IN THE SAME CELL {am:.3}%/arrival = {:.0}x. That is the honest enhancement: one field configuration, one geometry, two launch populations.",
+                fe / am.max(1e-9)
+            );
+            println!(
+                "  The tempting {:.0}x against the SOLO baseline ({base:.3}%) is NOT defensible — in the solo cell the probe owns the gas, so its own field scatters arriving charge out of its lane, while in the stack cells the gas belongs to the FEEDER and the probe has none (Phase-1 simplification, see march_stack). That difference alone moves the ambient rate from {base:.3}% to {am:.3}%, so the cross-configuration ratio is mostly an artifact of who owns the gas.",
+                fe / base.max(1e-9)
+            );
+            println!(
+                "  ABSOLUTE THROUGHPUT — the number that decides whether the limb can offset the disc: the probe intercepts {:.2}% of the feeder's total output and passes {:.0} of {n} feeder-emitted photons through its lane = {:.2}% of the feeder's WHOLE exhaust. In the isolated cell the lane carried ~0.001% of launched ambient. A neighbour therefore turns through-charge from negligible into a percent-level limb.",
+                100.0 * nr.emit.0 / n as f64,
+                nr.emit.1,
+                100.0 * nr.emit.1 / n as f64
+            );
+            let proton_probe = rows
+                .iter()
+                .find(|r| r.label.starts_with("p(edge)->p(edge)"));
+            if let Some(pp) = proton_probe {
+                println!(
+                    "  SEATING ASYMMETRY, emergent — the lane gate is class-INDEPENDENT, so nothing here was told to prefer neutrons: the edge-on PROTON probe passes {:.3}% of its {:.0} arrivals ({:.0} crossings) against the pole-on neutron's {fe:.3}%. graphene.pdf's 'protons channel pole to equator, neutrons pole to pole' falls out of the seating instead of being assumed.",
+                    100.0 * pp.emit.1 / pp.emit.0.max(1.0),
+                    pp.emit.0,
+                    pp.emit.1
+                );
+            }
+            let control = rows.iter().find(|r| r.label.starts_with("p(pole)"));
+            if let Some(c) = control {
+                println!(
+                    "  AND THE SEATING IS WHAT COUPLES THE STACK AT ALL: a pole-on feeder reaches the probe with only {:.2}% of its output vs the edge-on {:.2}% ({:.0}x), because a proton's poles are nearly dark — its output is the disc. Stacking protons pole-on, the configuration a test would assume WITHOUT graphene.pdf, gives almost no coupling.",
+                    100.0 * c.emit.0 / n as f64,
+                    100.0 * nr.emit.0 / n as f64,
+                    nr.emit.0 / c.emit.0.max(1.0)
+                );
+            }
+            let mix = nr.chi_plus.min(nr.chi_minus) / (nr.chi_plus + nr.chi_minus).max(1.0);
+            let per = nr.spin_sum / nr.spin_n.max(1.0);
+            println!(
+                "  BUT NEUTRALITY GOES BACKWARDS. The well-fed lane is MONOCHIRAL (species mix {mix:.3}) because a proton's exhaust is all one species by construction, and its exhaust spin per escaped photon is {per:.3} — ABOVE the isolated limb's 0.27-0.45, since a crossing photon keeps its spin and then stacks more of the same sign in the feeder's monochiral gas. Feeding the lane from a single proton neighbour fixes the RATE problem and makes the SPECIES problem worse."
+            );
+            println!(
+                "  So a p->n pair cannot be the neutrality mechanism either. The lane needs opposite-species feeds, which is what ammon.pdf describes for a real nucleus: 'charge moving pole-to-pole through the alphas, south to north and north to south... giving us both charge and anticharge'. In this model the neutron's OWN emission is the anticharge (chirality_sign -1) while the protons' is charge, so the candidate cancellation is between the neutron's through-charge (+) and its own emission (-) — a whole-particle sum, not a within-limb one. That is a 3-body p-n-p cell and a different observable."
+            );
+        }
+        println!(
+            "\nTotal report runtime: {:.1}s ({} stack cells + {} baselines)",
+            started.elapsed().as_secs_f64(),
+            rows.len(),
+            base_rate.len()
+        );
+    }
+
+    /// The stack's seating convention must be the one graphene.pdf states and
+    /// the one Atom mode already asserts for plugs — protons edge-on, neutrons
+    /// pole-on. If these ever diverge, the two modes are modelling different
+    /// nuclei.
+    #[test]
+    fn stack_seating_matches_atom_mode_plug_convention() {
+        let p = StackOrient::nuclear_for(ParticleClass::Proton);
+        let nn = StackOrient::nuclear_for(ParticleClass::Neutron);
+        assert_eq!(p, StackOrient::EdgeOn, "graphene.pdf: proton equator down");
+        assert_eq!(nn, StackOrient::PoleOn, "graphene.pdf: neutron pole down");
+        // Mirrors atom_scenarios' plug assertions (rest_axis·stack ≈ 0 for a
+        // proton, ≈ 1 for a neutron).
+        assert!(
+            p.spin_axis().dot(DVec3::Z).abs() < 1e-12,
+            "plug proton must be edge-on to the stack axis"
+        );
+        assert!(
+            nn.spin_axis().dot(DVec3::Z).abs() > 1.0 - 1e-12,
+            "plug neutron must keep its pole on the stack axis"
+        );
+    }
+
+    /// The through-lane gate must be evaluated in each body's OWN frame. Same
+    /// axial photon, same stack: a pole-on body passes it, an edge-on body
+    /// (whose lane points sideways) absorbs it. This is the geometric asymmetry
+    /// the nuclear seating predicts, so it has to be real in the code and not
+    /// an artifact of how the report happens to be wired.
+    #[test]
+    fn stack_lane_gate_is_evaluated_in_each_bodys_own_frame() {
+        let gears = GearConfig {
+            enabled: true,
+            photon_fraction: 2.0 / 3.0,
+            cancel_redirect: 0.0,
+            pole_intake_bias: 0.0,
+            class: ParticleClass::Proton,
+            // No collisions: this is a pure geometry test.
+            spin_transfer: 0.0,
+            through_lane_rho: THROUGH_LANE_RHO,
+        };
+        let f_e = CollisionField::pure_analytic(PhotonKind::Emitted, ParticleClass::Proton);
+        let f_a = CollisionField::pure_analytic(PhotonKind::Ambient, ParticleClass::Proton);
+
+        // A photon on the stack axis heading +z straight at the probe at origin.
+        let launch = |orient: StackOrient, rng: &mut u64| {
+            let bodies = [StackBody {
+                center: DVec3::ZERO,
+                class: ParticleClass::Neutron,
+                orient,
+            }];
+            let photon = Photon {
+                pos: DVec3::new(0.0, 0.0, -5.0),
+                dir: DVec3::Z,
+                weight: 1.0,
+                kind: PhotonKind::Ambient,
+                bounces: 0,
+                chirality: 1.0,
+                spin: 1.0,
+            };
+            march_stack(
+                photon, &bodies, 0, 0, &f_e, 0.0, &f_a, 0.0, 0, &gears, rng,
+            )
+        };
+
+        let mut rng = 0xA5A5_0000_1234_5678u64;
+        let pole_on = launch(StackOrient::PoleOn, &mut rng);
+        assert!(pole_on.probe_arrived, "photon should reach the surface");
+        assert_eq!(
+            pole_on.probe_crossed, 1,
+            "a pole-on body's lane is open along the stack axis"
+        );
+        assert!(
+            matches!(pole_on.term, Termination::Escaped { .. }),
+            "having crossed, it should leave the shell"
+        );
+        // Species and spin survive the crossing — the retention that makes a
+        // mixed exhaust possible.
+        assert_eq!(pole_on.spin, 1.0, "crossing must not alter spin");
+
+        let edge_on = launch(StackOrient::EdgeOn, &mut rng);
+        assert!(edge_on.probe_arrived, "photon should reach the surface");
+        assert_eq!(
+            edge_on.probe_crossed, 0,
+            "an edge-on body's lane points along x, so axial feed must be absorbed"
+        );
+        assert!(matches!(edge_on.term, Termination::Absorbed { .. }));
+    }
+
+    /// A one-body "stack" must reproduce the single-body cell's geometry: the
+    /// stacked march is a generalization, not a different model. Checks the two
+    /// things that could silently diverge — where the shell boundary sits, and
+    /// that a second body genuinely shadows the first.
+    #[test]
+    fn stack_of_one_matches_single_body_geometry_and_two_bodies_shadow() {
+        let gears = GearConfig::off();
+        let f_e = CollisionField::pure_analytic(PhotonKind::Emitted, ParticleClass::Proton);
+        let f_a = CollisionField::pure_analytic(PhotonKind::Ambient, ParticleClass::Proton);
+        let mut rng = 0x0BAD_0000_C0FF_EE01u64;
+
+        let solo = [StackBody {
+            center: DVec3::ZERO,
+            class: ParticleClass::Proton,
+            orient: StackOrient::PoleOn,
+        }];
+        // Straight at the body from just inside the shell: must be absorbed,
+        // never escape (with the lane shut this is the plain single-body rule).
+        let aimed = Photon {
+            pos: DVec3::new(0.0, 0.0, -(R_OUT - 0.5)),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: 0.0,
+            spin: 0.0,
+        };
+        let out = march_stack(
+            aimed, &solo, 0, 0, &f_e, 0.0, &f_a, 0.0, 0, &gears, &mut rng,
+        );
+        assert!(out.probe_arrived);
+        assert!(matches!(out.term, Termination::Absorbed { .. }));
+        assert_eq!(out.probe_crossed, 0, "lane is shut in GearConfig::off()");
+        assert!(!out.other_absorbed, "there is no other body");
+
+        // Now park a blocker between the launch point and the probe. The same
+        // photon must be stopped by the blocker and never reach the probe.
+        let pair = [
+            StackBody {
+                center: DVec3::new(0.0, 0.0, -STACK_PITCH),
+                class: ParticleClass::Proton,
+                orient: StackOrient::PoleOn,
+            },
+            StackBody {
+                center: DVec3::ZERO,
+                class: ParticleClass::Neutron,
+                orient: StackOrient::PoleOn,
+            },
+        ];
+        let blocked = Photon {
+            pos: DVec3::new(0.0, 0.0, -(R_OUT - 0.5)),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: 0.0,
+            spin: 0.0,
+        };
+        let out2 = march_stack(
+            blocked, &pair, 0, 1, &f_e, 0.0, &f_a, 0.0, 0, &gears, &mut rng,
+        );
+        assert!(
+            !out2.probe_arrived,
+            "the blocker must shadow the probe completely on-axis"
+        );
+        assert!(out2.other_absorbed, "the blocker should have absorbed it");
     }
 
     /// The through-charge limb must (a) be a strict no-op with the lane closed,
