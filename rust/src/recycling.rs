@@ -1859,6 +1859,12 @@ struct StackOutcome {
     /// Absorbed by some OTHER body — the neighbour shadowing/reabsorption
     /// channel, which a one-body cell has no way to charge for.
     other_absorbed: bool,
+    /// WHICH body absorbed it, if any. Together with the direction stored in
+    /// `Termination::Absorbed` this is the linear-momentum bookkeeping: the
+    /// stream's push on a neighbour is the sum of absorbed photon directions,
+    /// per cc.pdf's open field (absorber force only — emitter recoil is not a
+    /// channel in this model, see [[project-momentum-open-field]]).
+    absorbed_by: Option<usize>,
 }
 
 /// Ray-marches one photon through a STACK of bodies. Same transport physics as
@@ -1911,6 +1917,7 @@ fn march_stack(
     let mut probe_arrival_lat = f64::NAN;
     let mut probe_crossed = 0u32;
     let mut other_absorbed = false;
+    let mut absorbed_by: Option<usize> = None;
 
     let term = loop {
         // Nearest surface decides the step, so resolution stays fine near
@@ -1963,6 +1970,7 @@ fn march_stack(
             if i != probe {
                 other_absorbed = true;
             }
+            absorbed_by = Some(i);
             break Termination::Absorbed {
                 pos: photon.pos,
                 dir: photon.dir,
@@ -2039,6 +2047,7 @@ fn march_stack(
         probe_arrival_lat,
         probe_crossed,
         other_absorbed,
+        absorbed_by,
     }
 }
 
@@ -3995,6 +4004,567 @@ mod tests {
             rows.len(),
             base_rate.len()
         );
+    }
+
+    /// CM-4b: the 3-body p–n–p cell, and the observable CM-4 could not ask.
+    ///
+    /// CM-4's refutation was that any single-species feed makes the lane MORE
+    /// monochiral. ammon.pdf's picture is charge running through the stack both
+    /// ways, "giving us both charge and anticharge" — and in this model the
+    /// neutron's OWN emission is the anticharge (chirality −1) while the proton
+    /// feeders' through-charge is +1. So the candidate cancellation is a
+    /// WHOLE-PARTICLE sum over everything leaving the middle body (voyag.pdf:
+    /// "the spins will offset as a sum"): own emission plus through-exhaust,
+    /// NOT the within-lane mix that CM-4 measured.
+    ///
+    /// Phase-1 limits, stated up front:
+    /// - one converged single-body gas per marched population (the field
+    ///   body's); the probe still owns no gas, so through rates stay UPPER
+    ///   bounds. Part [5] integrates the optical depth Phase 1 skips, so the
+    ///   size of that error is printed rather than guessed at.
+    /// - bodies are STATIC. The stream's push on a neighbour is tallied in [4]
+    ///   (absorbed photon directions, cc.pdf open-field absorber force) but
+    ///   nothing moves; matching Atom mode's stream-cushion force channel is
+    ///   the eventual consumer of that number.
+    /// - equal per-body emission budgets are assumed when the own and feeder
+    ///   populations are combined (all nucleons recycle ~19x their mass/sec,
+    ///   so to first order budgets scale with mass ≈ equal for p/n).
+    #[test]
+    #[ignore]
+    fn report_pnp_stack() {
+        use std::time::Instant;
+        let started = Instant::now();
+
+        let n_gas = 40_000usize;
+        let n_own = 40_000usize;
+        let n_feed = 80_000usize;
+        // Equal-budget weight: a feeder launch of n_feed represents the same
+        // physical budget as the middle body's n_own.
+        let w = n_own as f64 / n_feed as f64;
+        let swing_boost = DEFAULT_SWING_BOOST;
+        let redirect = 0.5_f64;
+        let intake_bias = 0.5_f64;
+
+        let gears_for = |class: ParticleClass| GearConfig {
+            enabled: true,
+            photon_fraction: 2.0 / 3.0,
+            cancel_redirect: redirect,
+            pole_intake_bias: intake_bias,
+            class,
+            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            through_lane_rho: THROUGH_LANE_RHO,
+        };
+        let gears_p = gears_for(ParticleClass::Proton);
+        let gears_n = gears_for(ParticleClass::Neutron);
+
+        println!("=== CM-4b p-n-p Stack: does the WHOLE-PARTICLE spin sum move toward zero? ===");
+        println!(
+            "gas N={n_gas} x{ITERS} iters/class, own N={n_own}, feeder N={n_feed} (budget weight {w:.2}), cancel_redirect={redirect}, pole_intake_bias={intake_bias}, spin_transfer={DEFAULT_SPIN_TRANSFER}, lane={THROUGH_LANE_RHO:.4}"
+        );
+        println!(
+            "OBSERVABLE: M_total/escaped over everything leaving the MIDDLE body — its own emission (neutron: chirality -1, the anticharge) plus the through-exhaust fed by its neighbours (proton: +1). CM-4 measured only the lane and found it monochiral; the sum is the different question ammon.pdf/voyag.pdf actually pose."
+        );
+        println!(
+            "CONTROLS: n-n-n feeds the lane the SAME species as the middle body's own emission, so its sum must move AWAY from zero if species opposition is what matters; lane-shut p-n-p must reproduce the isolated sum exactly.\n"
+        );
+
+        /// Converges a single body's gas (same recipe as report_axial_stack).
+        fn gas_for(
+            n: usize,
+            swing_boost: f64,
+            gears: &GearConfig,
+            seed: &mut u64,
+        ) -> (CollisionField, CollisionField, f64, f64, f64, f64) {
+            *seed = seed.wrapping_add(0x100);
+            let (e0, a0) = run_iteration0(n, swing_boost, gears, seed);
+            *seed = seed.wrapping_add(1);
+            let cell = run_self_consistent(
+                n, swing_boost, 3.0, 3.0, 30, ITERS, false, gears, &e0, &a0, *seed,
+            );
+            let f_e = CollisionField::from_tally(
+                PhotonKind::Emitted,
+                gears.class,
+                cell.final_emitted_field.clone(),
+            );
+            let f_a = CollisionField::from_tally(
+                PhotonKind::Ambient,
+                gears.class,
+                cell.final_ambient_field.clone(),
+            );
+            (f_e, f_a, cell.sigma_e, cell.sigma_a, cell.sigma_ee, cell.sigma_aa)
+        }
+
+        let mut seed = 0x7E57_0000_9A5C_2607u64;
+        let (fe_p, fa_p, _se_p, sa_p, see_p, _saa_p) =
+            gas_for(n_gas, swing_boost, &gears_p, &mut seed);
+        let (fe_n, fa_n, _se_n, sa_n, see_n, _saa_n) =
+            gas_for(n_gas, swing_boost, &gears_n, &mut seed);
+
+        let body = |z: f64, class: ParticleClass| StackBody {
+            center: DVec3::new(0.0, 0.0, z),
+            class,
+            orient: StackOrient::nuclear_for(class),
+        };
+        let p_at = |z: f64| body(z, ParticleClass::Proton);
+        let n_at = |z: f64| body(z, ParticleClass::Neutron);
+
+        struct PnpConfig {
+            label: &'static str,
+            bodies: Vec<StackBody>,
+            middle: usize,
+            feeders: Vec<usize>,
+            lane_open: bool,
+        }
+        let configs = [
+            PnpConfig {
+                label: "n alone",
+                bodies: vec![n_at(0.0)],
+                middle: 0,
+                feeders: vec![],
+                lane_open: true,
+            },
+            PnpConfig {
+                label: "p-n (1 feeder)",
+                bodies: vec![p_at(-STACK_PITCH), n_at(0.0)],
+                middle: 1,
+                feeders: vec![0],
+                lane_open: true,
+            },
+            PnpConfig {
+                label: "p-n-p (2 feeders)",
+                bodies: vec![p_at(-STACK_PITCH), n_at(0.0), p_at(STACK_PITCH)],
+                middle: 1,
+                feeders: vec![0, 2],
+                lane_open: true,
+            },
+            PnpConfig {
+                label: "n-n-n SAME-SPECIES",
+                bodies: vec![n_at(-STACK_PITCH), n_at(0.0), n_at(STACK_PITCH)],
+                middle: 1,
+                feeders: vec![0, 2],
+                lane_open: true,
+            },
+            PnpConfig {
+                label: "p-n-p LANE SHUT",
+                bodies: vec![p_at(-STACK_PITCH), n_at(0.0), p_at(STACK_PITCH)],
+                middle: 1,
+                feeders: vec![0, 2],
+                lane_open: false,
+            },
+        ];
+
+        struct PnpRow {
+            label: &'static str,
+            /// Own-emission channel of the middle body.
+            own_esc: f64,
+            own_m: f64,
+            own_shadowed: f64,
+            /// Through channel, summed over feeders, at feeder budget n_feed each.
+            reach: f64,
+            crossings: f64,
+            thru_esc: f64,
+            thru_m: f64,
+            /// Feeder charge the middle body absorbed (its intake).
+            fed_absorbed: f64,
+            /// Net z-momentum the middle body ABSORBED from feeder exhaust,
+            /// summed over feeders (units: photon momenta, per n_feed budget each).
+            mom_mid_z: f64,
+            /// Same for each feeder body itself (self-reabsorption + opposite
+            /// feeder's beam), keyed south (index 0) / north.
+            mom_feeders_z: f64,
+            /// Through species tally of crossed-and-escaped photons.
+            thru_chi_plus: f64,
+            thru_chi_minus: f64,
+        }
+
+        let mut rows: Vec<PnpRow> = Vec::new();
+        for (ci, cfg) in configs.iter().enumerate() {
+            let shut_p;
+            let shut_n;
+            let (gp, gn) = if cfg.lane_open {
+                (&gears_p, &gears_n)
+            } else {
+                shut_p = GearConfig { through_lane_rho: 0.0, ..gears_p };
+                shut_n = GearConfig { through_lane_rho: 0.0, ..gears_n };
+                (&shut_p, &shut_n)
+            };
+            let mut seed = 0x2607_0000_0B0D_1E5Eu64 ^ ((ci as u64) << 32);
+
+            // --- Own-emission pass: field body = probe = the middle body. ---
+            let mut own_esc = 0.0;
+            let mut own_m = 0.0;
+            let mut own_shadowed = 0.0;
+            for _ in 0..n_own {
+                let p = spawn_emitted_on(&mut seed, swing_boost, &cfg.bodies[cfg.middle]);
+                let out = march_stack(
+                    p, &cfg.bodies, cfg.middle, cfg.middle, &fa_n, sa_n, &fe_n, see_n, 30,
+                    gn, &mut seed,
+                );
+                if let Termination::Escaped { .. } = out.term {
+                    own_esc += 1.0;
+                    own_m += out.spin;
+                }
+                if out.other_absorbed {
+                    own_shadowed += 1.0;
+                }
+            }
+
+            // --- Feeder passes: field body = that feeder, probe = middle. ---
+            let mut reach = 0.0;
+            let mut crossings = 0.0;
+            let mut thru_esc = 0.0;
+            let mut thru_m = 0.0;
+            let mut fed_absorbed = 0.0;
+            let mut mom_mid_z = 0.0;
+            let mut mom_feeders_z = 0.0;
+            let mut thru_chi_plus = 0.0;
+            let mut thru_chi_minus = 0.0;
+            for &fi in &cfg.feeders {
+                let fclass = cfg.bodies[fi].class;
+                let (g, fa, sa, fe, see) = match fclass {
+                    ParticleClass::Proton => (gp, &fa_p, sa_p, &fe_p, see_p),
+                    _ => (gn, &fa_n, sa_n, &fe_n, see_n),
+                };
+                for _ in 0..n_feed {
+                    let p = spawn_emitted_on(&mut seed, swing_boost, &cfg.bodies[fi]);
+                    let chi = p.chirality;
+                    let out = march_stack(
+                        p, &cfg.bodies, fi, cfg.middle, fa, sa, fe, see, 30, g, &mut seed,
+                    );
+                    if out.probe_arrived {
+                        reach += 1.0;
+                    }
+                    if out.probe_crossed > 0 {
+                        crossings += 1.0;
+                        if let Termination::Escaped { .. } = out.term {
+                            thru_esc += 1.0;
+                            thru_m += out.spin;
+                            if chi >= 0.0 {
+                                thru_chi_plus += 1.0;
+                            } else {
+                                thru_chi_minus += 1.0;
+                            }
+                        }
+                    }
+                    if let (Some(bi), Termination::Absorbed { dir, .. }) =
+                        (out.absorbed_by, out.term)
+                    {
+                        if bi == cfg.middle {
+                            fed_absorbed += 1.0;
+                            mom_mid_z += dir.z;
+                        } else {
+                            mom_feeders_z += dir.z;
+                        }
+                    }
+                }
+            }
+
+            rows.push(PnpRow {
+                label: cfg.label,
+                own_esc,
+                own_m,
+                own_shadowed,
+                reach,
+                crossings,
+                thru_esc,
+                thru_m,
+                fed_absorbed,
+                mom_mid_z,
+                mom_feeders_z,
+                thru_chi_plus,
+                thru_chi_minus,
+            });
+        }
+
+        // -------------------------------------------------------------
+        println!("--- [1] The whole-particle sum, per config ---");
+        println!(
+            "own = the middle body's emission marched through the stack; thru = feeder photons that crossed the middle lane and then escaped, scaled x{w:.2} to the same budget. M values are spin sums over escaped photons."
+        );
+        println!(
+            "{:<22} {:>9} {:>10} {:>7} {:>9} {:>10} {:>13} {:>13}",
+            "config", "own esc", "own M/esc", "cross", "thru esc", "thru M/esc", "TOTAL M/esc", "|shift|"
+        );
+        let mut base_m: f64 = f64::NAN;
+        for r in &rows {
+            let own_per = r.own_m / r.own_esc.max(1.0);
+            let thru_per = if r.thru_esc > 0.0 { r.thru_m / r.thru_esc } else { f64::NAN };
+            let total = (r.own_m + w * r.thru_m) / (r.own_esc + w * r.thru_esc).max(1.0);
+            if r.label == "n alone" {
+                base_m = total;
+            }
+            println!(
+                "{:<22} {:>9.0} {:>10.4} {:>7.0} {:>9.0} {:>10.4} {:>13.4} {:>13.4}",
+                r.label,
+                r.own_esc,
+                own_per,
+                r.crossings,
+                r.thru_esc,
+                thru_per,
+                total,
+                (total - base_m).abs()
+            );
+            if r.thru_esc > 0.0 && r.thru_esc < 100.0 {
+                println!(
+                    "    NOTE {:.0} through-escapes is a small count: Poisson +-{:.0}, so thru M/esc carries ~{:.0}% relative error.",
+                    r.thru_esc,
+                    r.thru_esc.sqrt(),
+                    100.0 / r.thru_esc.max(1.0).sqrt()
+                );
+            }
+        }
+        println!("  Shadowing of the middle body's own emission by its neighbours (of {n_own} launched):");
+        for r in &rows {
+            println!(
+                "    {:<22} {:>6.0} ({:>5.2}%) — feeder reach into the middle body: {:>7.0} of {} per feeder pass",
+                r.label,
+                r.own_shadowed,
+                100.0 * r.own_shadowed / n_own as f64,
+                r.reach,
+                n_feed
+            );
+        }
+
+        // -------------------------------------------------------------
+        println!("\n--- [2] Dose-response and the feed multiple neutrality would need ---");
+        let one = rows.iter().find(|r| r.label.starts_with("p-n (1")).unwrap();
+        let two = rows.iter().find(|r| r.label.starts_with("p-n-p (2")).unwrap();
+        let nnn = rows.iter().find(|r| r.label.starts_with("n-n-n")).unwrap();
+        let shut = rows.iter().find(|r| r.label.ends_with("SHUT")).unwrap();
+        {
+            let m_of = |r: &PnpRow| (r.own_m + w * r.thru_m) / (r.own_esc + w * r.thru_esc).max(1.0);
+            let d1 = m_of(one) - base_m;
+            let d2 = m_of(two) - base_m;
+            println!(
+                "  shift per proton feeder: 1 feeder {d1:+.4}, 2 feeders {d2:+.4} (linear would be {:+.4}) — sign {} the neutron's own {base_m:+.4}.",
+                2.0 * d1,
+                if d1 * base_m < 0.0 { "OPPOSES" } else { "does NOT oppose" }
+            );
+            if nnn.thru_esc < 10.0 {
+                println!(
+                    "  same-species control: STARVED, not failed — pole-on neutron feeders barely couple (reach {:.0} vs the edge-on proton's {:.0} per {n_feed}), so the same-species lane got no flux to move the sum with. The control is one-sided; the species conclusion rests on the thru M/esc SIGN opposing the own sign, which needs no control.",
+                    nnn.reach / 2.0,
+                    two.reach / 2.0
+                );
+            } else {
+                println!(
+                    "  same-species control: n-n-n total {:+.4} vs isolated {base_m:+.4} — {}",
+                    m_of(nnn),
+                    if (m_of(nnn) - base_m) * base_m > 0.0 {
+                        "moves AWAY from zero, as species opposition requires"
+                    } else {
+                        "FAILS to move away from zero — the shift is not a species effect"
+                    }
+                );
+            }
+            let cap1 = 1.0 - one.thru_esc / one.crossings.max(1.0);
+            let cap2 = 1.0 - two.thru_esc / two.crossings.max(1.0);
+            println!(
+                "  HAND-OFF (found in the data, not designed for): of the middle-lane crossings, {:.1}% (p-n) vs {:.1}% (p-n-p) are absorbed before escaping the stack — the FAR feeder sits on the exit axis and eats the through-exhaust. That is nuclear charge hand-off along the stack, and it is why the ESCAPED-sum dose-response is not monotonic in feeder count: the second feeder both doubles the feed and captures most of what crosses.",
+                100.0 * cap1,
+                100.0 * cap2
+            );
+            println!(
+                "  NOISE FLOOR for the |shift| column: the lane-shut null moved {:+.4} with ZERO crossings (seed + shadowing), so config-to-config totals carry non-lane variation of that order. The thru columns ({:.0} escapes at {:+.2}) are the clean signal; the totals are illustrative.",
+                m_of(shut) - base_m,
+                one.thru_esc,
+                one.thru_m / one.thru_esc.max(1.0)
+            );
+            println!(
+                "  lane-shut null: total {:+.4} vs isolated {base_m:+.4} (crossings {:.0}) — {}",
+                m_of(shut),
+                shut.crossings,
+                if shut.crossings == 0.0 { "clean" } else { "BROKEN: lane fired while shut" }
+            );
+            // How much feed would zero the sum, holding the per-photon spins fixed?
+            let thru_m_per_feeder = w * two.thru_m / 2.0;
+            if thru_m_per_feeder.abs() > 0.0 {
+                let f_star = -one.own_m / thru_m_per_feeder;
+                println!(
+                    "  EXTRAPOLATION (linear in feed, per-photon spins held): zeroing the sum needs f* = {f_star:.0} proton-feeder equivalents = {:.0}x the p-n-p feed. A bare pitch-2.6 pair passes ~1% of a feeder's exhaust through the lane; f* says what multiple of that flux the sum actually needs. THAT is the quantity the nuclear papers claim the dense alpha-stack field supplies — the number to test when the probe owns a gas and feeds are self-consistent (Phase 2), not a verdict on Phase 1.",
+                    f_star / 2.0
+                );
+            }
+        }
+
+        // -------------------------------------------------------------
+        println!("\n--- [3] Species mix of the middle body's TOTAL output ---");
+        println!(
+            "CM-4's lane-only mix was 0.031 (monochiral). The whole-particle mix counts the own emission too, budget-weighted; opposition needs BOTH species present in what leaves the body."
+        );
+        for r in &rows {
+            // The middle body is a NEUTRON in every config here, so its own
+            // escaped emission is all chirality -1 by construction.
+            let plus = w * r.thru_chi_plus;
+            let minus = r.own_esc + w * r.thru_chi_minus;
+            let tot = plus + minus;
+            println!(
+                "  {:<22} chi+ {:>8.0}  chi- {:>8.0}  mix {:.4}",
+                r.label,
+                plus,
+                minus,
+                if tot > 0.0 { plus.min(minus) / tot } else { f64::NAN }
+            );
+        }
+
+        // -------------------------------------------------------------
+        println!("\n--- [4] Momentum: what the feeder streams PUSH on (bodies are static; this is the force a dynamic run would feel) ---");
+        println!(
+            "Sum of absorbed photon z-directions per body (cc.pdf open field: absorber force only, no emitter recoil — see project_momentum_open_field). Units: photon momenta per feeder budget of {n_feed}."
+        );
+        for r in &rows {
+            if r.reach == 0.0 {
+                continue;
+            }
+            println!(
+                "  {:<22} middle absorbed {:>7.0} photons, net z-push {:>+9.1} ({:+.4}/absorbed); feeders' own bodies {:>+9.1}",
+                r.label,
+                r.fed_absorbed,
+                r.mom_mid_z,
+                r.mom_mid_z / r.fed_absorbed.max(1.0),
+                r.mom_feeders_z
+            );
+        }
+        println!(
+            "  Read: p-n pushes the middle body OFF the feeder (one-sided cushion); p-n-p should cancel to ~0 net by symmetry while each side still bears the load. The through-crossing itself transfers nothing here — an uncollided crossing is a free pass by construction, which is exactly the salt.pdf gate."
+        );
+
+        // -------------------------------------------------------------
+        println!("\n--- [5] What Phase 1 does NOT march: optical depth across the gap ---");
+        println!(
+            "A lane photon from the south feeder crosses two gas columns Phase 1 ignores: the middle body's OWN gas (probe owns no gas => rates are upper bounds) and the FAR feeder's gas (the counter-stream: collisions there would gear-redirect lane charge into the equatorial whirlpool -> a denser disc, the alpha-densification effect the nuclear papers describe). Integrated straight-line tau over each column, on-axis:"
+        );
+        {
+            let mid = n_at(0.0);
+            let far = p_at(STACK_PITCH);
+            let seg = |a: f64, b: f64, body: &StackBody, field: &CollisionField, sigma: f64| {
+                let ds = 0.005;
+                let mut tau = 0.0;
+                let mut z = a;
+                while z < b {
+                    let (r, theta) = body.local_polar(DVec3::new(0.0, 0.0, z));
+                    tau += sigma * field.effective_density_at(r, theta) * ds;
+                    z += ds;
+                }
+                tau
+            };
+            // South gap: feeder surface to probe surface; north gap: probe exit
+            // to far-feeder surface.
+            let tau_mid_s = seg(-STACK_PITCH + R_IN, -R_IN, &mid, &fe_n, see_n)
+                + seg(-STACK_PITCH + R_IN, -R_IN, &mid, &fa_n, sa_n);
+            let tau_far_s = seg(-STACK_PITCH + R_IN, -R_IN, &far, &fe_p, see_p);
+            let tau_mid_n = seg(R_IN, STACK_PITCH - R_IN, &mid, &fe_n, see_n)
+                + seg(R_IN, STACK_PITCH - R_IN, &mid, &fa_n, sa_n);
+            let tau_far_n = seg(R_IN, STACK_PITCH - R_IN, &far, &fe_p, see_p);
+            println!(
+                "  south gap (feeder->probe): tau_middle-gas {tau_mid_s:.3} (survival {:.2}), tau_counter-stream {tau_far_s:.3} (survival {:.2})",
+                (-tau_mid_s).exp(),
+                (-tau_far_s).exp()
+            );
+            println!(
+                "  north gap (probe->far feeder): tau_middle-gas {tau_mid_n:.3} (survival {:.2}), tau_counter-stream {tau_far_n:.3} (survival {:.2})",
+                (-tau_mid_n).exp(),
+                (-tau_far_n).exp()
+            );
+            println!(
+                "  Read: 1-survival is the fraction of lane charge a self-consistent Phase 2 would strip from the lane per gap crossing and hand mostly to the DISC (gears funnel augments equatorial). It scales the Phase-1 through rates DOWN and the disc density UP — both worth keeping an eye on before trusting any Phase-1 magnitude to better than this factor."
+            );
+        }
+
+        println!(
+            "\nTotal report runtime: {:.1}s ({} configs, 2 converged gases)",
+            started.elapsed().as_secs_f64(),
+            rows.len()
+        );
+    }
+
+    /// Momentum bookkeeping needs the absorber's identity: a blocked photon
+    /// must name the blocker, an escaping or through-crossing photon must name
+    /// nobody. Pure geometry (sigma = 0).
+    #[test]
+    fn stack_absorber_identity_for_momentum_tally() {
+        let gears = GearConfig {
+            enabled: true,
+            photon_fraction: PHOTON_FRACTION,
+            cancel_redirect: 0.0,
+            pole_intake_bias: 0.0,
+            class: ParticleClass::Proton,
+            spin_transfer: 0.0,
+            through_lane_rho: THROUGH_LANE_RHO,
+        };
+        let f_e = CollisionField::pure_analytic(PhotonKind::Emitted, ParticleClass::Proton);
+        let f_a = CollisionField::pure_analytic(PhotonKind::Ambient, ParticleClass::Proton);
+        let mut rng = 0xD00D_0000_ABCD_2607u64;
+
+        let pair = [
+            StackBody {
+                center: DVec3::new(0.0, 0.0, -STACK_PITCH),
+                class: ParticleClass::Proton,
+                orient: StackOrient::EdgeOn,
+            },
+            StackBody {
+                center: DVec3::ZERO,
+                class: ParticleClass::Neutron,
+                orient: StackOrient::PoleOn,
+            },
+        ];
+
+        // Aimed at the edge-on feeder from outside: absorbed by body 0, and the
+        // stored direction is the momentum the absorber received.
+        let blocked = Photon {
+            pos: DVec3::new(0.0, 0.0, -(R_OUT - 0.5)),
+            dir: DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: 1.0,
+            spin: 0.0,
+        };
+        let out = march_stack(
+            blocked, &pair, 0, 1, &f_e, 0.0, &f_a, 0.0, 0, &gears, &mut rng,
+        );
+        assert_eq!(out.absorbed_by, Some(0), "the blocker must be named");
+        assert!(out.other_absorbed);
+        match out.term {
+            Termination::Absorbed { dir, .. } => {
+                assert!((dir.z - 1.0).abs() < 1e-12, "absorbed momentum is the photon's dir")
+            }
+            _ => panic!("expected absorption"),
+        }
+
+        // Fired outward: escapes, no absorber.
+        let escaping = Photon {
+            pos: DVec3::new(0.0, 3.0, 0.0),
+            dir: DVec3::Y,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: 1.0,
+            spin: 0.0,
+        };
+        let out = march_stack(
+            escaping, &pair, 0, 1, &f_e, 0.0, &f_a, 0.0, 0, &gears, &mut rng,
+        );
+        assert!(matches!(out.term, Termination::Escaped { .. }));
+        assert_eq!(out.absorbed_by, None);
+
+        // Down the pole-on body's open lane: crosses and leaves — a free pass
+        // must transfer nothing, so it names no absorber either.
+        let lane = Photon {
+            pos: DVec3::new(0.0, 0.0, 5.0),
+            dir: -DVec3::Z,
+            weight: 1.0,
+            kind: PhotonKind::Ambient,
+            bounces: 0,
+            chirality: 1.0,
+            spin: 0.0,
+        };
+        let out = march_stack(
+            lane, &[pair[1]], 0, 0, &f_e, 0.0, &f_a, 0.0, 0, &gears, &mut rng,
+        );
+        assert_eq!(out.probe_crossed, 1, "lane must be open on-axis");
+        assert!(matches!(out.term, Termination::Escaped { .. }));
+        assert_eq!(out.absorbed_by, None, "a free pass transfers no momentum");
     }
 
     /// The stack's seating convention must be the one graphene.pdf states and

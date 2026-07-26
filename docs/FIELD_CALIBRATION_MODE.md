@@ -1005,3 +1005,55 @@ independently gives ~0.1%. The ~7x gap is scattering loss.
 
 Suite 157/0/48 (3 new unit tests: seating matches Atom mode, lane gate is
 per-body-frame, stack-of-one matches single-body geometry and two bodies shadow).
+
+## CM-4b: the p-n-p whole-particle sum (2026-07-26)
+
+`report_pnp_stack` (ignored, ~22s, 5 configs x 2 converged gases). The question
+CM-4 could not ask: does the middle neutron's TOTAL magnetic output - its own
+emission (chirality -1, the anticharge in this model) plus the through-exhaust
+its proton neighbours feed it (+1) - sum toward zero, per ammon.pdf ("both
+charge and anticharge") and voyag.pdf ("the spins will offset as a sum")?
+
+### Results
+
+- **CONFIRMED, the sign**: through-exhaust escapes at spin +1.49 to +1.52 per
+  photon against the neutron's own -1.07. Species opposition is real and has
+  the right sign to cancel. The whole-particle sum moves TOWARD zero when fed
+  (p-n shift +0.029 on a -1.072 base).
+- **REFUTED, the magnitude at bare-pair rates**: the shift is ~2%. Linear
+  extrapolation says zeroing the sum needs f* ~ 379 proton-feeder equivalents
+  = ~190x the p-n-p feed. Neutrality is NOT delivered by a bare pitch-2.6
+  triplet at Phase-1 rates. The 190x is the number the nuclear papers' dense
+  alpha-stack field must supply - the Phase-2 question, stated quantitatively.
+- **EMERGENT - charge hand-off**: the far feeder sits on the exit axis and
+  absorbs ~79% of the middle body's through-exhaust (p-n-p: 1379 crossings,
+  283 stack-escapes vs p-n's 713/704). Charge crossing the middle body is
+  mostly handed to the next body in line - the nuclear channel picture, found
+  in the data, and the reason the escaped-sum dose-response is non-monotonic
+  in feeder count.
+- **Momentum (bodies static; the force a dynamic run would feel)**: one-sided
+  p-n pushes the middle body off the feeder at +0.88 z-momentum per absorbed
+  photon (3096 absorbed per 80k feeder budget); symmetric p-n-p cancels to
+  +0.0003/absorbed while each side still bears the load. Absorber-force-only
+  per cc.pdf (see project_momentum_open_field). New `StackOutcome.absorbed_by`
+  carries the identity; unit test `stack_absorber_identity_for_momentum_tally`.
+- **Counter-stream optical depth (what Phase 1 does not march)**: a lane
+  photon crossing the north gap toward the far feeder runs tau = 0.755 through
+  that feeder's disc gas - only 47% would survive uncollided. South gap: 7%
+  loss (far feeder is distant), middle body's own gas: ~2% per gap. So the
+  counter-stream collision channel is a factor-2 effect on inter-body hand-off
+  and feeds the equatorial disc (gears funnel augments equatorial) - the
+  alpha-densification mechanism, quantified but not yet marched.
+
+### Caveats
+
+- The |shift| column carries ~0.01 of non-lane variation (lane-shut null moved
+  +0.012 with zero crossings: per-config seeds + shadowing). The clean signal
+  is the thru column (704 escapes at +1.49); totals are illustrative.
+- The n-n-n same-species control STARVED rather than failed: pole-on neutron
+  feeders barely couple (reach 288 vs 3764 per feeder), so the species
+  conclusion rests on the thru-sign opposition, which needs no control.
+- Equal per-body emission budgets assumed when combining populations (19x
+  mass/sec scales with mass, p ~ n).
+
+Suite 158/0/49.
