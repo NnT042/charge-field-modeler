@@ -33,6 +33,10 @@ search_mathis("charge field photon recycling proton")
 search_mathis("axial spin radius electron")
 ```
 
+`docs/MATHIS_EQUATIONS.md` is a topic-indexed map of Mathis's equations with paper links —
+a fast way to find which paper holds a number, but unverified: confirm against the paper
+before using a constant.
+
 Never dispatch a web search or sub-agent to milesmathis.com — the mirror covers the
 full site and is available instantly.
 

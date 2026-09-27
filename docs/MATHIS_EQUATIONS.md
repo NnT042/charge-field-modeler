@@ -1,6 +1,8 @@
-# Miles Mathis — Comprehensive Physics Equations Reference
+# Miles Mathis — Physics Equations Reference
 
-Compiled directly from Mathis's papers via the local Mathis Library MCP server (semantic search over the full mirror of milesmathis.com). Each entry shows the formula, what it means in Mathis's framework, and the paper it appears in.
+A topic-indexed map of Mathis's equations, compiled by semantic search over the Mathis Library MCP mirror. Each entry shows the formula, what it means in Mathis's framework, and the paper it appears in.
+
+**This is an index, not a source.** It was machine-compiled and has not been checked entry by entry. Use it to find the right paper and the right number, then confirm against the paper itself (`search_mathis` / `get_page`) before any constant goes into code — per CLAUDE.md, every charge-field constant needs a verified source. For the rules the simulation actually implements, `PHYSICS_REFERENCE.md` is authoritative.
 
 **No "zero mass" assignments anywhere.** Mathis is explicit that every particle — photon, electron, proton — has real, calculable mass. Where mainstream physics hides mechanics behind dimensionless coupling constants or assigns properties to "the vacuum," Mathis assigns them to real particles with real radii and real motions.
 
@@ -37,7 +39,7 @@ Mathis's most controversial single move — the claim that geometric π and kine
 
 ## 3. The 1820 Mass Ratio (Electron-to-Proton)
 
-The single most important derivation in Mathis's quantum work. Any LLM that doesn't know this series has not seen the actual paper.
+The single most important derivation in Mathis's quantum work.
 
 | Equation | Formula | What it means | Source |
 | --- | --- | --- | --- |
@@ -53,7 +55,7 @@ The single most important derivation in Mathis's quantum work. Any LLM that does
 
 ## 4. Photon Mass and Radius
 
-The forum reader's specific question. Mathis: **no particle is massless, photons included.**
+Mathis: **no particle is massless, photons included.**
 
 | Equation | Formula | What it means | Source |
 | --- | --- | --- | --- |
@@ -363,30 +365,3 @@ Mathis derives chemistry from charge channeling, not electron orbitals.
 | --- | --- | --- | --- |
 | Solar cycle from galactic charge | 11-year solar cycle from Galactic Core charge stream | Mathis correctly predicted Cycle 25 strength when mainstream models failed. Sun lines up periodically with the Galactic Core's charge stream, modulating the 11-year cycle. | [Goody](https://milesmathis.com/goody.pdf), [Mcin](https://milesmathis.com/mcin.pdf) |
 | Magnetopause distance from charge | (relative density ratios) | Earth's magnetopause distance derivable from relative charge densities of Sun vs Earth. Same math predicts Venus's ionopause at 7.4 Venus-radii. | [Magnetopause](https://milesmathis.com/pause.html) |
-
----
-
-## Notes for comparison with Grok / GLM / other LLMs
-
-When you compare outputs, here's what's diagnostic:
-
-1. **Photon mass.** If the LLM says "photon mass is zero" or "intrinsic to E/M theory" — it's reciting Standard Model training data, not Mathis. Mathis gives the B-photon a concrete mass of ≈ G × m_proton ≈ 2.77 × 10⁻³⁷ kg for the infrared photon. Confirmed two independent ways (G-scaling and E = mc² applied to IR photons).
-
-2. **The 1820 derivation.** The series [1+8], [1+(8×16)/2], [1+(8×16×32)/2²], [1+(8×16×32×64)/2⁴] with the π=4 substitution is not in any textbook, won't be reconstructed from priors, and is the single best litmus test.
-
-3. **Charge ≡ mass dimensionally.** If the LLM treats them as separate quantities or invokes "fundamental charge" as a primitive, it hasn't read [Electrical Charge](https://milesmathis.com/charge.html).
-
-4. **No "intrinsic" anything.** Mathis rejects intrinsic spin, intrinsic charge, intrinsic magnetic moment as mainstream evasions. Everything has a mechanical cause.
-
-5. **The 9.8 m/s² coincidence.** The fact that a = 4mG/r² = 9.8 m/s² for the photon, the proton, *and* the Earth is one of Mathis's most striking results, and a giveaway test — an LLM with no Mathis context will not produce it.
-
-6. **The unified field correction equation** a = 9.816/r² − 0.009545/r⁴. This is the macro-scale unified field formula. Mainstream physics doesn't have it. If an LLM produces it, it has actually seen Mathis's expansion papers.
-
-7. **π = 4 in kinematic situations.** Specific to Mathis and not reproducible from priors.
-
-8. **Bohr radius × 177.** Mathis's correction; same with the electron radius being 1/c² and the classical electron radius being off by 252×.
-
-9. **Fine structure constant = 19 × 7.222.** If the LLM produces α as the product of these two specific spin-derived numbers, it has the Mathis context. Otherwise it'll quote the standard QED definition.
-
-10. **W boson without Higgs.** Mathis's 4 × 30 GeV × (7.222/9)² + 2 taus = 80.4 GeV is derivation by spin-stacking alone — no electroweak symmetry breaking, no Higgs mechanism, no SU(2).
-
