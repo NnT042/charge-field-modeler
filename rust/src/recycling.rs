@@ -206,6 +206,7 @@
 #![allow(dead_code)]
 
 use glam::{DQuat, DVec3};
+use rayon::prelude::*;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::OnceLock;
 
@@ -505,6 +506,20 @@ impl DensityField {
             DVec3::Z
         };
         (mean_dir, coherence)
+    }
+
+    /// Elementwise-adds `other` into `self`. Used to fold per-chunk partial
+    /// tallies from parallel photon loops back into one accumulator; every
+    /// field here is a running Σ over photons, so addition is exact — order
+    /// only matters for float-sum reproducibility, which `par_photons`
+    /// controls by always merging chunks in a fixed sequential order.
+    fn merge(&mut self, other: DensityField) {
+        for idx in 0..GRID_CELLS {
+            self.track_weight[idx] += other.track_weight[idx];
+            self.dir_accum[idx] += other.dir_accum[idx];
+            self.radial_flux[idx] += other.radial_flux[idx];
+            self.theta_flux[idx] += other.theta_flux[idx];
+        }
     }
 
     fn relax(&self, measured: &DensityField, alpha: f64) -> DensityField {
@@ -1378,6 +1393,65 @@ struct PassTally {
 }
 
 impl PassTally {
+    /// Elementwise-adds `other` into `self`. Every named field is a running
+    /// Σ or count over photons (`arrived`, `escaped_band`, `spin_*_sum`,
+    /// `dir_escaped_*`, `through_*`, `collisions_*_sum`, `lost`,
+    /// `lz_arrived`/`lz_escaped`, the `aim_*` counters), so plain addition is
+    /// correct for all of them — there are no max/min/last-value/non-additive
+    /// fields in this struct. `escaped_lat_hist` is the one field that needs
+    /// special handling: it is lazily sized (empty `Vec` until the first
+    /// escape, then a 180-element histogram), so a naive elementwise add
+    /// would panic or silently drop data if only one side has escapes yet.
+    fn merge(&mut self, other: PassTally) {
+        self.total += other.total;
+        self.arrived += other.arrived;
+        for i in 0..3 {
+            self.arrived_band[i] += other.arrived_band[i];
+        }
+        self.escaped += other.escaped;
+        for i in 0..3 {
+            self.escaped_band[i] += other.escaped_band[i];
+        }
+        self.chi_escaped_sum += other.chi_escaped_sum;
+        self.spin_escaped_sum += other.spin_escaped_sum;
+        for i in 0..3 {
+            self.spin_escaped_band[i] += other.spin_escaped_band[i];
+            self.spin_arrived_band[i] += other.spin_arrived_band[i];
+        }
+        self.dir_escaped_sum += other.dir_escaped_sum;
+        self.dir_escaped_xy_abs += other.dir_escaped_xy_abs;
+        self.dir_escaped_z_abs += other.dir_escaped_z_abs;
+        self.through_crossings += other.through_crossings;
+        self.through_photons += other.through_photons;
+        self.through_spin_escaped += other.through_spin_escaped;
+        for i in 0..3 {
+            self.through_escaped_band[i] += other.through_escaped_band[i];
+        }
+        match (self.escaped_lat_hist.is_empty(), other.escaped_lat_hist.is_empty()) {
+            (_, true) => {}
+            (true, false) => self.escaped_lat_hist = other.escaped_lat_hist,
+            (false, false) => {
+                for i in 0..180 {
+                    self.escaped_lat_hist[i] += other.escaped_lat_hist[i];
+                }
+            }
+        }
+        self.lost += other.lost;
+        self.lz_arrived += other.lz_arrived;
+        self.lz_escaped += other.lz_escaped;
+        self.collisions_cross_sum += other.collisions_cross_sum;
+        self.collisions_self_sum += other.collisions_self_sum;
+        self.arrived_bounce_sum += other.arrived_bounce_sum;
+        self.aim_eq_count += other.aim_eq_count;
+        self.aim_eq_arrived += other.aim_eq_arrived;
+        self.aim_eq_arrived_polar += other.aim_eq_arrived_polar;
+        self.aim_miss_count += other.aim_miss_count;
+        self.aim_miss_arrived += other.aim_miss_arrived;
+        for i in 0..3 {
+            self.aim_miss_arrived_band[i] += other.aim_miss_arrived_band[i];
+        }
+    }
+
     fn record_emitted(
         &mut self,
         term: &Termination,
@@ -1482,6 +1556,115 @@ impl PassTally {
     }
 }
 
+// ---------------------------------------------------------------------
+// Per-photon parallel RNG streams
+// ---------------------------------------------------------------------
+//
+// Each photon in a Monte Carlo pass previously drew from one shared `&mut
+// u64` xorshift stream, threaded sequentially photon-to-photon — a hard
+// serialization dependency. Since photons are otherwise independent (no
+// photon reads another's outcome), we can parallelize by giving photon `i`
+// its own deterministic seed derived from a per-pass `base` and `i`, via a
+// splitmix64-based hash. This keeps the RESULT deterministic and
+// independent of thread count / chunking, while allowing the chunks
+// themselves to run on any number of rayon threads.
+
+/// Standard splitmix64 mixing function (Vigna). Used only to derive
+/// well-distributed per-photon seeds — not itself an RNG stream.
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Deterministic per-photon xorshift64 seed: a function of only `base` and
+/// `index`, so photon `index`'s draw sequence never depends on execution
+/// order, thread count, or chunk size. xorshift64 requires a nonzero state.
+fn stream_seed(base: u64, index: u64) -> u64 {
+    let s = splitmix64(base ^ splitmix64(index));
+    if s == 0 {
+        0x9E37_79B9_7F4A_7C15
+    } else {
+        s
+    }
+}
+
+/// Derives a photon-pass base seed from the caller's running `&mut u64`
+/// stream, consuming exactly one draw. This is how a pass "checks out" a
+/// base for `par_photons` while leaving the caller's stream advanced by
+/// exactly one step — so existing `&mut seed` chains between successive
+/// passes/configs stay in the same relative order and remain deterministic,
+/// even though the pass's own photons no longer consume that stream one at
+/// a time.
+///
+/// `CFM_SEED_SALT` (env var, u64, default 0) is XORed into every pass base so
+/// a report can be re-run on an independent realisation without editing its
+/// hard-coded seeds — the seed-robustness check. Salt 0 is the canonical run.
+fn draw_base(rng: &mut u64) -> u64 {
+    xorshift64(rng);
+    *rng ^ seed_salt()
+}
+
+fn seed_salt() -> u64 {
+    static SALT: OnceLock<u64> = OnceLock::new();
+    *SALT.get_or_init(|| {
+        std::env::var("CFM_SEED_SALT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map_or(0, |v| if v == 0 { 0 } else { splitmix64(v) })
+    })
+}
+
+/// Fixed photon-chunk size for parallel photon loops. Deliberately NOT
+/// derived from thread count: chunk boundaries (and therefore the RNG
+/// streams contained within them, and the sequential merge order across
+/// chunks) must stay identical no matter how many rayon threads are
+/// available, which is what makes the result thread-count-independent.
+const PHOTON_CHUNK: usize = 2048;
+
+/// Runs `n` independent photon iterations in parallel chunks of
+/// `PHOTON_CHUNK`, giving photon `i` its own deterministic RNG stream seeded
+/// by `stream_seed(base, i)`, and merges the per-chunk accumulators back
+/// together in chunk order (0, 1, 2, ...) so floating-point sums are
+/// reproducible.
+///
+/// Determinism guarantee: for fixed `n` and `base`, the returned `A` is
+/// identical for any thread count and on any machine — photon `i`'s RNG
+/// stream depends only on `(base, i)`, never on which thread or chunk
+/// happened to process it or in what order chunks completed (chunks are
+/// collected into a `Vec` before the merge, so completion order is
+/// irrelevant), and the merge itself always folds chunk 0, then chunk 1,
+/// etc., in that fixed order.
+fn par_photons<A, I, B, M>(n: usize, base: u64, init: I, body: B, merge: M) -> A
+where
+    A: Send,
+    I: Fn() -> A + Sync,
+    B: Fn(&mut A, usize, &mut u64) + Sync,
+    M: Fn(&mut A, A),
+{
+    let n_chunks = n.div_ceil(PHOTON_CHUNK);
+    let parts: Vec<A> = (0..n_chunks)
+        .into_par_iter()
+        .map(|c| {
+            let mut acc = init();
+            let start = c * PHOTON_CHUNK;
+            let end = (n).min(start + PHOTON_CHUNK);
+            for i in start..end {
+                let mut rng = stream_seed(base, i as u64);
+                body(&mut acc, i, &mut rng);
+            }
+            acc
+        })
+        .collect();
+    let mut acc = init();
+    for part in parts {
+        merge(&mut acc, part);
+    }
+    acc
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn run_pass(
@@ -1496,30 +1679,39 @@ fn run_pass(
     gears: &GearConfig,
     rng: &mut u64,
 ) -> (DensityField, PassTally, f64) {
-    let mut field = DensityField::new();
-    let mut tally = PassTally::default();
-    let mut lz_source_total = 0.0;
-    for _ in 0..n {
-        match kind {
-            PhotonKind::Emitted => {
-                let photon = spawn_emitted(rng, swing_boost, gears.class);
-                lz_source_total += photon.pos.cross(photon.dir).z * photon.weight;
-                let (term, cb, sb, spin, _through) = march(
-                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
-                    &mut field,
-                );
-                tally.record_emitted(&term, cb, sb, photon.chirality, spin);
+    let base = draw_base(rng);
+    let (field, tally, lz_source_total) = par_photons(
+        n,
+        base,
+        || (DensityField::new(), PassTally::default(), 0.0f64),
+        |acc, _i, prng| {
+            let (field, tally, lz_source_total) = acc;
+            match kind {
+                PhotonKind::Emitted => {
+                    let photon = spawn_emitted(prng, swing_boost, gears.class);
+                    *lz_source_total += photon.pos.cross(photon.dir).z * photon.weight;
+                    let (term, cb, sb, spin, _through) = march(
+                        photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, prng,
+                        field,
+                    );
+                    tally.record_emitted(&term, cb, sb, photon.chirality, spin);
+                }
+                PhotonKind::Ambient => {
+                    let (photon, aim_lat) = spawn_ambient(prng, gears);
+                    let (term, cb, sb, spin, through) = march(
+                        photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, prng,
+                        field,
+                    );
+                    tally.record_ambient(&term, cb, sb, aim_lat, spin, through);
+                }
             }
-            PhotonKind::Ambient => {
-                let (photon, aim_lat) = spawn_ambient(rng, gears);
-                let (term, cb, sb, spin, through) = march(
-                    photon, cross, sigma_cross, selff, sigma_self, n_ricochet, gears, rng,
-                    &mut field,
-                );
-                tally.record_ambient(&term, cb, sb, aim_lat, spin, through);
-            }
-        }
-    }
+        },
+        |acc, part| {
+            acc.0.merge(part.0);
+            acc.1.merge(part.1);
+            acc.2 += part.2;
+        },
+    );
     (field, tally, lz_source_total)
 }
 
@@ -2081,7 +2273,6 @@ fn spawn_ambient_on_stack(rng: &mut u64, gears: &GearConfig, centroid: DVec3) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rayon::prelude::*;
 
     /// (a) TAU=0 (sigma=0, no collisions) with the v2 importance-sampled
     /// launch: every b ≤ 1 ambient photon must arrive at its straight-line
@@ -3392,68 +3583,86 @@ mod tests {
                     cell.final_ambient_field.clone(),
                 );
 
-                let mut crossed = 0.0;
-                let mut escaped = 0.0;
-                let mut spin_sum = 0.0;
-                let mut band = [0.0f64; 3];
-                for _ in 0..n_probe {
-                    let chi = if xorshift64(&mut probe_seed) < phi { 1.0 } else { -1.0 };
-                    // Species split: a photon (χ=+1) travels +z and so enters
-                    // the SOUTH pole; an antiphoton travels −z, entering NORTH.
-                    let along = chi;
-                    // Small axial tilt, uniform inside the 20° acceptance.
-                    let cos_t = THROUGH_COS_MAX_ANGLE
-                        + (1.0 - THROUGH_COS_MAX_ANGLE) * xorshift64(&mut probe_seed);
-                    let sin_t = (1.0 - cos_t * cos_t).max(0.0).sqrt();
-                    let psi = xorshift64(&mut probe_seed) * TAU;
-                    let dir = DVec3::new(sin_t * psi.cos(), sin_t * psi.sin(), along * cos_t)
-                        .normalize();
-                    // Area-weighted b inside the lane. The offset MUST be
-                    // perpendicular to `dir`, not to z: offsetting in the xy
-                    // plane while the direction carries a tilt of up to 20° over
-                    // an R_OUT=30 lever arm displaces the line by ~10 units and
-                    // the photon misses the body completely. Same construction
-                    // as `spawn_ambient`: start at −d·R_OUT + e·b with e ⊥ d, so
-                    // the closest approach to the origin is exactly b.
-                    let b = THROUGH_LANE_RHO * xorshift64(&mut probe_seed).sqrt();
-                    let helper = if dir.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
-                    let t_perp = dir.cross(helper).normalize();
-                    let b_perp = dir.cross(t_perp);
-                    let phi_b = xorshift64(&mut probe_seed) * TAU;
-                    let e = t_perp * phi_b.cos() + b_perp * phi_b.sin();
-                    let start = -dir * R_OUT + e * b;
-                    // Advance to the tallied shell so the march's escape test
-                    // doesn't fire on the launch point.
-                    let t_entry = R_OUT - (R_OUT * R_OUT - b * b).sqrt();
-                    let pos = start + dir * (t_entry + 1e-9);
-                    let photon = Photon {
-                        pos,
-                        dir,
-                        weight: 1.0,
-                        kind: PhotonKind::Ambient,
-                        bounces: 0,
-                        chirality: chi,
-                        spin: chi,
-                    };
-                    let mut scratch = DensityField::new();
-                    // An AMBIENT photon marches through the EMITTED field as its
-                    // cross channel (sigma_e) and its own population as self
-                    // (sigma_aa) — matching run_self_consistent's wiring. Using
-                    // sigma_a here would be the emitted photon's coupling.
-                    let (term, _cb, _sb, spin, through) = march(
-                        photon, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut probe_seed,
-                        &mut scratch,
-                    );
-                    let _ = (sigma_a, sigma_ee);
-                    if through > 0 {
-                        crossed += 1.0;
-                        if let Termination::Escaped { pos, .. } = term {
-                            escaped += 1.0;
-                            spin_sum += spin;
-                            band[lat_band(arrival_latitude(pos)) as usize] += 1.0;
-                        }
-                    }
+                #[derive(Default, Clone)]
+                struct ProbeAcc {
+                    crossed: f64,
+                    escaped: f64,
+                    spin_sum: f64,
+                    band: [f64; 3],
                 }
+                let probe_base = draw_base(&mut probe_seed);
+                let acc = par_photons(
+                    n_probe,
+                    probe_base,
+                    ProbeAcc::default,
+                    |acc, _i, prng| {
+                        let chi = if xorshift64(prng) < phi { 1.0 } else { -1.0 };
+                        // Species split: a photon (χ=+1) travels +z and so enters
+                        // the SOUTH pole; an antiphoton travels −z, entering NORTH.
+                        let along = chi;
+                        // Small axial tilt, uniform inside the 20° acceptance.
+                        let cos_t = THROUGH_COS_MAX_ANGLE
+                            + (1.0 - THROUGH_COS_MAX_ANGLE) * xorshift64(prng);
+                        let sin_t = (1.0 - cos_t * cos_t).max(0.0).sqrt();
+                        let psi = xorshift64(prng) * TAU;
+                        let dir = DVec3::new(sin_t * psi.cos(), sin_t * psi.sin(), along * cos_t)
+                            .normalize();
+                        // Area-weighted b inside the lane. The offset MUST be
+                        // perpendicular to `dir`, not to z: offsetting in the xy
+                        // plane while the direction carries a tilt of up to 20° over
+                        // an R_OUT=30 lever arm displaces the line by ~10 units and
+                        // the photon misses the body completely. Same construction
+                        // as `spawn_ambient`: start at −d·R_OUT + e·b with e ⊥ d, so
+                        // the closest approach to the origin is exactly b.
+                        let b = THROUGH_LANE_RHO * xorshift64(prng).sqrt();
+                        let helper = if dir.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                        let t_perp = dir.cross(helper).normalize();
+                        let b_perp = dir.cross(t_perp);
+                        let phi_b = xorshift64(prng) * TAU;
+                        let e = t_perp * phi_b.cos() + b_perp * phi_b.sin();
+                        let start = -dir * R_OUT + e * b;
+                        // Advance to the tallied shell so the march's escape test
+                        // doesn't fire on the launch point.
+                        let t_entry = R_OUT - (R_OUT * R_OUT - b * b).sqrt();
+                        let pos = start + dir * (t_entry + 1e-9);
+                        let photon = Photon {
+                            pos,
+                            dir,
+                            weight: 1.0,
+                            kind: PhotonKind::Ambient,
+                            bounces: 0,
+                            chirality: chi,
+                            spin: chi,
+                        };
+                        let mut scratch = DensityField::new();
+                        // An AMBIENT photon marches through the EMITTED field as its
+                        // cross channel (sigma_e) and its own population as self
+                        // (sigma_aa) — matching run_self_consistent's wiring. Using
+                        // sigma_a here would be the emitted photon's coupling.
+                        let (term, _cb, _sb, spin, through) = march(
+                            photon, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, prng,
+                            &mut scratch,
+                        );
+                        let _ = (sigma_a, sigma_ee);
+                        if through > 0 {
+                            acc.crossed += 1.0;
+                            if let Termination::Escaped { pos, .. } = term {
+                                acc.escaped += 1.0;
+                                acc.spin_sum += spin;
+                                acc.band[lat_band(arrival_latitude(pos)) as usize] += 1.0;
+                            }
+                        }
+                    },
+                    |acc, other| {
+                        acc.crossed += other.crossed;
+                        acc.escaped += other.escaped;
+                        acc.spin_sum += other.spin_sum;
+                        for i in 0..3 {
+                            acc.band[i] += other.band[i];
+                        }
+                    },
+                );
+                let (crossed, escaped, spin_sum, band) = (acc.crossed, acc.escaped, acc.spin_sum, acc.band);
                 let per = if escaped > 0.0 { spin_sum / escaped } else { f64::NAN };
                 println!(
                     "{:<9} {:<10} {:>9} {:>9.0} {:>11.0} {:>13.4} {:>8.0}{:>8.0}{:>8.0}",
@@ -3681,20 +3890,28 @@ mod tests {
                     class: pclass,
                     orient,
                 }];
-                let mut arrivals = 0.0f64;
-                let mut crossings = 0.0f64;
-                for _ in 0..n_iso {
-                    let p = spawn_ambient_on_stack(&mut seed, &gears, DVec3::ZERO);
-                    let out = march_stack(
-                        p, &bodies, 0, 0, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
-                    );
-                    if out.probe_arrived {
-                        arrivals += 1.0;
-                    }
-                    if out.probe_crossed > 0 {
-                        crossings += 1.0;
-                    }
-                }
+                let base = draw_base(&mut seed);
+                let (arrivals, crossings) = par_photons(
+                    n_iso,
+                    base,
+                    || (0.0f64, 0.0f64),
+                    |acc, _i, prng| {
+                        let p = spawn_ambient_on_stack(prng, &gears, DVec3::ZERO);
+                        let out = march_stack(
+                            p, &bodies, 0, 0, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, prng,
+                        );
+                        if out.probe_arrived {
+                            acc.0 += 1.0;
+                        }
+                        if out.probe_crossed > 0 {
+                            acc.1 += 1.0;
+                        }
+                    },
+                    |acc, other| {
+                        acc.0 += other.0;
+                        acc.1 += other.1;
+                    },
+                );
                 let rate = 100.0 * crossings / arrivals.max(1.0);
                 (pname, orient.label(), arrivals, crossings, rate)
             })
@@ -3749,16 +3966,21 @@ mod tests {
                     orient: StackOrient::PoleOn,
                 },
             ];
-            let mut shut_cross = 0.0;
             let mut shut_seed = seed;
-            for _ in 0..n {
-                let p = spawn_emitted_on(&mut shut_seed, swing_boost, &bodies[0]);
-                let out = march_stack(
-                    p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears_shut,
-                    &mut shut_seed,
-                );
-                shut_cross += out.probe_crossed as f64;
-            }
+            let shut_base = draw_base(&mut shut_seed);
+            let shut_cross: f64 = par_photons(
+                n,
+                shut_base,
+                || 0.0f64,
+                |acc, _i, prng| {
+                    let p = spawn_emitted_on(prng, swing_boost, &bodies[0]);
+                    let out = march_stack(
+                        p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears_shut, prng,
+                    );
+                    *acc += out.probe_crossed as f64;
+                },
+                |acc, other| *acc += other,
+            );
             println!(
                 "  lane=0.000 over {n} feeder-emitted launches: {shut_cross:.0} crossings — {}",
                 if shut_cross == 0.0 {
@@ -3848,60 +4070,96 @@ mod tests {
             ];
             let centroid = (bodies[0].center + bodies[1].center) * 0.5;
 
-            let mut emit = (0.0, 0.0);
-            let mut amb = (0.0, 0.0);
-            let mut chi_plus = 0.0;
-            let mut chi_minus = 0.0;
-            let mut spin_sum = 0.0;
-            let mut spin_n = 0.0;
-            let mut emit_self_lost = 0.0;
+            #[derive(Default, Clone)]
+            struct StackAcc {
+                arrived: f64,
+                crossed: f64,
+                chi_plus: f64,
+                chi_minus: f64,
+                spin_sum: f64,
+                spin_n: f64,
+                self_lost: f64,
+            }
+            let merge_acc = |acc: &mut StackAcc, other: StackAcc| {
+                acc.arrived += other.arrived;
+                acc.crossed += other.crossed;
+                acc.chi_plus += other.chi_plus;
+                acc.chi_minus += other.chi_minus;
+                acc.spin_sum += other.spin_sum;
+                acc.spin_n += other.spin_n;
+                acc.self_lost += other.self_lost;
+            };
 
-            for _ in 0..n {
-                let p = spawn_emitted_on(&mut seed, swing_boost, &bodies[0]);
-                let chi = p.chirality;
-                let out = march_stack(
-                    p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears, &mut seed,
-                );
-                if out.probe_arrived {
-                    emit.0 += 1.0;
-                }
-                if out.probe_crossed > 0 {
-                    emit.1 += 1.0;
-                    if chi >= 0.0 {
-                        chi_plus += 1.0
-                    } else {
-                        chi_minus += 1.0
+            let emit_base = draw_base(&mut seed);
+            let emit_acc: StackAcc = par_photons(
+                n,
+                emit_base,
+                StackAcc::default,
+                |acc, _i, prng| {
+                    let p = spawn_emitted_on(prng, swing_boost, &bodies[0]);
+                    let chi = p.chirality;
+                    let out = march_stack(
+                        p, &bodies, 0, 1, &f_a, sigma_a, &f_e, sigma_ee, 30, &gears, prng,
+                    );
+                    if out.probe_arrived {
+                        acc.arrived += 1.0;
                     }
-                    if let Termination::Escaped { .. } = out.term {
-                        spin_sum += out.spin;
-                        spin_n += 1.0;
+                    if out.probe_crossed > 0 {
+                        acc.crossed += 1.0;
+                        if chi >= 0.0 {
+                            acc.chi_plus += 1.0
+                        } else {
+                            acc.chi_minus += 1.0
+                        }
+                        if let Termination::Escaped { .. } = out.term {
+                            acc.spin_sum += out.spin;
+                            acc.spin_n += 1.0;
+                        }
+                    } else if out.other_absorbed {
+                        acc.self_lost += 1.0;
                     }
-                } else if out.other_absorbed {
-                    emit_self_lost += 1.0;
-                }
-            }
-            for _ in 0..n_amb {
-                let p = spawn_ambient_on_stack(&mut seed, &gears, centroid);
-                let chi = p.chirality;
-                let out = march_stack(
-                    p, &bodies, 0, 1, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
-                );
-                if out.probe_arrived {
-                    amb.0 += 1.0;
-                }
-                if out.probe_crossed > 0 {
-                    amb.1 += 1.0;
-                    if chi >= 0.0 {
-                        chi_plus += 1.0
-                    } else {
-                        chi_minus += 1.0
+                },
+                merge_acc,
+            );
+
+            let amb_base = draw_base(&mut seed);
+            let amb_acc: StackAcc = par_photons(
+                n_amb,
+                amb_base,
+                StackAcc::default,
+                |acc, _i, prng| {
+                    let p = spawn_ambient_on_stack(prng, &gears, centroid);
+                    let chi = p.chirality;
+                    let out = march_stack(
+                        p, &bodies, 0, 1, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, prng,
+                    );
+                    if out.probe_arrived {
+                        acc.arrived += 1.0;
                     }
-                    if let Termination::Escaped { .. } = out.term {
-                        spin_sum += out.spin;
-                        spin_n += 1.0;
+                    if out.probe_crossed > 0 {
+                        acc.crossed += 1.0;
+                        if chi >= 0.0 {
+                            acc.chi_plus += 1.0
+                        } else {
+                            acc.chi_minus += 1.0
+                        }
+                        if let Termination::Escaped { .. } = out.term {
+                            acc.spin_sum += out.spin;
+                            acc.spin_n += 1.0;
+                        }
                     }
-                }
-            }
+                },
+                merge_acc,
+            );
+
+            let emit = (emit_acc.arrived, emit_acc.crossed);
+            let amb = (amb_acc.arrived, amb_acc.crossed);
+            let chi_plus = emit_acc.chi_plus + amb_acc.chi_plus;
+            let chi_minus = emit_acc.chi_minus + amb_acc.chi_minus;
+            let spin_sum = emit_acc.spin_sum + amb_acc.spin_sum;
+            let spin_n = emit_acc.spin_n + amb_acc.spin_n;
+            let emit_self_lost = emit_acc.self_lost;
+
             rows.push(StackRow {
                 label: cfg.label.to_string(),
                 sep: cfg.sep,
@@ -4250,73 +4508,122 @@ mod tests {
             let mut seed = 0x2607_0000_0B0D_1E5Eu64 ^ ((ci as u64) << 32);
 
             // --- Own-emission pass: field body = probe = the middle body. ---
-            let mut own_esc = 0.0;
-            let mut own_m = 0.0;
-            let mut own_shadowed = 0.0;
-            for _ in 0..n_own {
-                let p = spawn_emitted_on(&mut seed, swing_boost, &cfg.bodies[cfg.middle]);
-                let out = march_stack(
-                    p, &cfg.bodies, cfg.middle, cfg.middle, &fa_n, sa_n, &fe_n, see_n, 30,
-                    gn, &mut seed,
-                );
-                if let Termination::Escaped { .. } = out.term {
-                    own_esc += 1.0;
-                    own_m += out.spin;
-                }
-                if out.other_absorbed {
-                    own_shadowed += 1.0;
-                }
+            #[derive(Default, Clone)]
+            struct OwnAcc {
+                esc: f64,
+                m: f64,
+                shadowed: f64,
             }
+            let own_base = draw_base(&mut seed);
+            let own_acc: OwnAcc = par_photons(
+                n_own,
+                own_base,
+                OwnAcc::default,
+                |acc, _i, prng| {
+                    let p = spawn_emitted_on(prng, swing_boost, &cfg.bodies[cfg.middle]);
+                    let out = march_stack(
+                        p, &cfg.bodies, cfg.middle, cfg.middle, &fa_n, sa_n, &fe_n, see_n, 30,
+                        gn, prng,
+                    );
+                    if let Termination::Escaped { .. } = out.term {
+                        acc.esc += 1.0;
+                        acc.m += out.spin;
+                    }
+                    if out.other_absorbed {
+                        acc.shadowed += 1.0;
+                    }
+                },
+                |acc, other| {
+                    acc.esc += other.esc;
+                    acc.m += other.m;
+                    acc.shadowed += other.shadowed;
+                },
+            );
+            let (own_esc, own_m, own_shadowed) = (own_acc.esc, own_acc.m, own_acc.shadowed);
 
             // --- Feeder passes: field body = that feeder, probe = middle. ---
-            let mut reach = 0.0;
-            let mut crossings = 0.0;
-            let mut thru_esc = 0.0;
-            let mut thru_m = 0.0;
-            let mut fed_absorbed = 0.0;
-            let mut mom_mid_z = 0.0;
-            let mut mom_feeders_z = 0.0;
-            let mut thru_chi_plus = 0.0;
-            let mut thru_chi_minus = 0.0;
+            #[derive(Default, Clone)]
+            struct FeedAcc {
+                reach: f64,
+                crossings: f64,
+                thru_esc: f64,
+                thru_m: f64,
+                fed_absorbed: f64,
+                mom_mid_z: f64,
+                mom_feeders_z: f64,
+                thru_chi_plus: f64,
+                thru_chi_minus: f64,
+            }
+            let merge_feed = |acc: &mut FeedAcc, other: FeedAcc| {
+                acc.reach += other.reach;
+                acc.crossings += other.crossings;
+                acc.thru_esc += other.thru_esc;
+                acc.thru_m += other.thru_m;
+                acc.fed_absorbed += other.fed_absorbed;
+                acc.mom_mid_z += other.mom_mid_z;
+                acc.mom_feeders_z += other.mom_feeders_z;
+                acc.thru_chi_plus += other.thru_chi_plus;
+                acc.thru_chi_minus += other.thru_chi_minus;
+            };
+            let mut feed_total = FeedAcc::default();
             for &fi in &cfg.feeders {
                 let fclass = cfg.bodies[fi].class;
                 let (g, fa, sa, fe, see) = match fclass {
                     ParticleClass::Proton => (gp, &fa_p, sa_p, &fe_p, see_p),
                     _ => (gn, &fa_n, sa_n, &fe_n, see_n),
                 };
-                for _ in 0..n_feed {
-                    let p = spawn_emitted_on(&mut seed, swing_boost, &cfg.bodies[fi]);
-                    let chi = p.chirality;
-                    let out = march_stack(
-                        p, &cfg.bodies, fi, cfg.middle, fa, sa, fe, see, 30, g, &mut seed,
-                    );
-                    if out.probe_arrived {
-                        reach += 1.0;
-                    }
-                    if out.probe_crossed > 0 {
-                        crossings += 1.0;
-                        if let Termination::Escaped { .. } = out.term {
-                            thru_esc += 1.0;
-                            thru_m += out.spin;
-                            if chi >= 0.0 {
-                                thru_chi_plus += 1.0;
-                            } else {
-                                thru_chi_minus += 1.0;
+                let feed_base = draw_base(&mut seed);
+                let feed_acc: FeedAcc = par_photons(
+                    n_feed,
+                    feed_base,
+                    FeedAcc::default,
+                    |acc, _i, prng| {
+                        let p = spawn_emitted_on(prng, swing_boost, &cfg.bodies[fi]);
+                        let chi = p.chirality;
+                        let out = march_stack(
+                            p, &cfg.bodies, fi, cfg.middle, fa, sa, fe, see, 30, g, prng,
+                        );
+                        if out.probe_arrived {
+                            acc.reach += 1.0;
+                        }
+                        if out.probe_crossed > 0 {
+                            acc.crossings += 1.0;
+                            if let Termination::Escaped { .. } = out.term {
+                                acc.thru_esc += 1.0;
+                                acc.thru_m += out.spin;
+                                if chi >= 0.0 {
+                                    acc.thru_chi_plus += 1.0;
+                                } else {
+                                    acc.thru_chi_minus += 1.0;
+                                }
                             }
                         }
-                    }
-                    if let (Some(bi), Termination::Absorbed { dir, .. }) =
-                        (out.absorbed_by, out.term)
-                    {
-                        if bi == cfg.middle {
-                            fed_absorbed += 1.0;
-                            mom_mid_z += dir.z;
-                        } else {
-                            mom_feeders_z += dir.z;
+                        if let (Some(bi), Termination::Absorbed { dir, .. }) =
+                            (out.absorbed_by, out.term)
+                        {
+                            if bi == cfg.middle {
+                                acc.fed_absorbed += 1.0;
+                                acc.mom_mid_z += dir.z;
+                            } else {
+                                acc.mom_feeders_z += dir.z;
+                            }
                         }
-                    }
-                }
+                    },
+                    merge_feed,
+                );
+                merge_feed(&mut feed_total, feed_acc);
             }
+            let FeedAcc {
+                reach,
+                crossings,
+                thru_esc,
+                thru_m,
+                fed_absorbed,
+                mom_mid_z,
+                mom_feeders_z,
+                thru_chi_plus,
+                thru_chi_minus,
+            } = feed_total;
 
             PnpRow {
                 label: cfg.label,
