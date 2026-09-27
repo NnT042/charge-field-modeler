@@ -21,6 +21,7 @@
 //! ```
 
 pub mod context;
+pub mod dsmc;
 pub mod kernel;
 pub mod sort;
 

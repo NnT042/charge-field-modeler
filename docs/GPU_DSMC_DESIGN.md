@@ -135,6 +135,19 @@ B_MAX (a uniform isotropic gas is invariant under self-scattering). The engine k
 as a flag, off by default: with real pairs, the far field *is* the physics and costs
 nothing extra. *Gates: on; physics: off.*
 
+**D6 — Exchange rule (added after B1).** The §3.1 swap-then-renormalise keeps
+|v| = c, but G1 measured it creating or destroying **~0.30 photon-momenta per
+collision** (mean |Σ drift| over both photons). That averages out in an isotropic box,
+but not in directed streams, where it could fake the momentum-push observable.
+
+A rule exists that conserves both speed c and momentum exactly. For two equal-speed
+photons, the relative vector g = d₁ − d₂ is always ⟂ to the mean V = (d₁ + d₂)/2 (since
+|d₁| = |d₂|). Rotating g about V by a scattering angle χ gives d₁,₂' = V ± g'/2, with
+|d₁,₂'| = 1 exactly and d₁' + d₂' unchanged. The glancing bias (arp.pdf) becomes a
+small-χ-biased angle distribution. `SwapRenorm` (Phase-1-like) vs `RotateRelative`.
+*Recommend `RotateRelative` for physics runs: sourced constraints (speed c) and
+conservation both hold, and no parameter is added.*
+
 ## 5. Geometry and discretisation
 
 - **Bodies:** static unit spheres (R_IN = 1) at fixed centres with a seating
@@ -269,6 +282,38 @@ by halving N.
 - **B2 — observables + G2 + G3 reports** (ignored tests, CM-4b-style printout).
 - **B3 — physics runs:** the D1/D2 grid on the p-n-p stack plus density maps. That
   answers whether densification closes f\*.
+
+## 11b. B1 findings (2026-09-27)
+
+- **Gates pass:** G0 single body, G0 p-n-p (isotropic and bias 0.5), G1 (`Constant`
+  0.96%, `Catch` 0.37% rate error), and determinism.
+- **Two bugs caught by G0:**
+  1. The boundary injector tilted cosine-weighted boundary directions, which is only
+     correct for an untilted field. It now uses the Phase-1 construction (direction
+     first, then a uniform line over the ⟂ disk).
+  2. The first G0 stack test let feeder *exhaust* inflate the middle body's
+     lane-crossing tally against an ambient-only CPU reference. This produced a
+     spurious 40σ "disagreement" that was nearly waved through as a geometry effect.
+     Emission and ambient now run separately.
+- **Finding:** at σ = 0 no ambient photon crosses the p-n-p middle lane in either engine.
+  The feeders shadow it completely. Through-charge in the stack is entirely
+  feeder-fed or collision-fed.
+- **Gate statistics:** a per-bin 3σ rule over ~100 comparisons false-alarms on noise.
+  The gate is now 4σ family-wise, with emission at 1M photons per side (a 4.2σ bin at
+  20k fell to 1.7σ at 1M).
+- **Lane rule:** a photon crosses body *i*'s lane unless it was emitted by body *i*.
+  `march_stack` itself has no exclusion; the difference only matters for a body's own
+  exhaust re-entering its own lane after scattering.
+- **Collide RNG key** was a linear combination of (cell, step) that aliases; it is now
+  hash-mixed.
+- **B2 must fix first — per-cell cap.** `dsmc_collide` pairs only the first 64 photons
+  (by id) while computing the collision count from the full population. In any cell
+  over 64, those 64 absorb all of the cell's collisions. That is biased exactly where
+  the densification physics lives.
+  - Fix: one workgroup per cell, a shared-memory bitonic sort by id (≤ 1024), then the
+    sequential candidate loop over the full sorted list.
+  - Cells over 1024: a loud tally (refine h), never a silent cap.
+  - Also D6 `RotateRelative`, pump mode exercised, the G2/G3 reports and density maps.
 
 ## 12. Out of scope for this step
 

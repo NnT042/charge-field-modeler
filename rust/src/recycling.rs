@@ -5868,3 +5868,547 @@ mod tests {
         println!("done in {:.1}s", started.elapsed().as_secs_f64());
     }
 }
+
+/// GPU DSMC engine validation gates G0 (transport) and G1 (kinetics), per
+/// docs/GPU_DSMC_DESIGN.md §9/§11 (B1). Lives here (not in `gpu::dsmc`) so it
+/// can reach Phase-1's private samplers/marchers directly via `super::*` --
+/// the CPU reference for G0 IS the production `spawn_emitted`/`spawn_ambient`/
+/// `march_stack`, not a reimplementation.
+#[cfg(all(test, feature = "gpu"))]
+mod dsmc_gates {
+    use super::*;
+    use crate::gpu::context::GpuContext;
+    use crate::gpu::dsmc::gpu_types::{HIST_ARRIVAL_BLOCK, HIST_BINS, HIST_EMISSION_BLOCK};
+    use crate::gpu::dsmc::{BodyConfig, Boundary, DsmcConfig, DsmcEngine, EmissionMode, GpuClass, GpuOrient, MeshMode, RateKernel, Totals};
+
+    macro_rules! require_gpu {
+        () => {
+            match GpuContext::new() {
+                Some(ctx) => ctx,
+                None => {
+                    println!("no GPU adapter, skipping");
+                    return;
+                }
+            }
+        };
+    }
+
+    fn class_to_gpu(c: ParticleClass) -> GpuClass {
+        match c {
+            ParticleClass::Proton => GpuClass::Proton,
+            ParticleClass::Neutron => GpuClass::Neutron,
+            ParticleClass::Electron => GpuClass::Electron,
+        }
+    }
+
+    fn orient_to_gpu(o: StackOrient) -> GpuOrient {
+        match o {
+            StackOrient::PoleOn => GpuOrient::PoleOn,
+            StackOrient::EdgeOn => GpuOrient::EdgeOn,
+        }
+    }
+
+    fn hist_bin_idx(lat_deg: f64) -> usize {
+        (((lat_deg + 90.0) / 5.0).floor() as isize).clamp(0, HIST_BINS as isize - 1) as usize
+    }
+
+    /// Two-proportion z-test on normalized histogram shape (bins with fewer
+    /// than 5 counts on either side are skipped as statistically unusable,
+    /// and reported as such). Returns the worst |z| over compared bins.
+    fn compare_hist(label: &str, cpu: &[u64], gpu: &[u64]) -> f64 {
+        let cpu_total: u64 = cpu.iter().sum();
+        let gpu_total: u64 = gpu.iter().sum();
+        let mut worst = 0.0f64;
+        let mut worst_bin = 0usize;
+        let mut skipped = 0usize;
+        for i in 0..cpu.len() {
+            if cpu[i] < 5 || gpu[i] < 5 {
+                skipped += 1;
+                continue;
+            }
+            let p1 = cpu[i] as f64 / cpu_total as f64;
+            let p2 = gpu[i] as f64 / gpu_total as f64;
+            let p = (cpu[i] + gpu[i]) as f64 / (cpu_total + gpu_total) as f64;
+            let se = (p * (1.0 - p) * (1.0 / cpu_total as f64 + 1.0 / gpu_total as f64)).sqrt();
+            if se > 1e-12 {
+                let z = (p1 - p2) / se;
+                if z.abs() > worst.abs() {
+                    worst = z;
+                    worst_bin = i;
+                }
+            }
+        }
+        println!(
+            "{label}: cpu_n={cpu_total} gpu_n={gpu_total} bins_skipped(<5)={skipped}/{} worst |z|={:.3} at bin [{}, {})deg",
+            cpu.len(),
+            worst.abs(),
+            worst_bin as i64 * 5 - 90,
+            worst_bin as i64 * 5 - 85
+        );
+        worst.abs()
+    }
+
+    /// Two-proportion z-test on a single conditional fraction (e.g. P(crossed
+    /// | arrived)).
+    fn compare_prop(label: &str, cpu_k: u64, cpu_n: u64, gpu_k: u64, gpu_n: u64) -> f64 {
+        if cpu_n == 0 || gpu_n == 0 {
+            println!("{label}: skipped (cpu_n={cpu_n}, gpu_n={gpu_n})");
+            return 0.0;
+        }
+        let p1 = cpu_k as f64 / cpu_n as f64;
+        let p2 = gpu_k as f64 / gpu_n as f64;
+        let p = (cpu_k + gpu_k) as f64 / (cpu_n + gpu_n) as f64;
+        let se = (p * (1.0 - p) * (1.0 / cpu_n as f64 + 1.0 / gpu_n as f64)).sqrt();
+        let z = if se > 1e-12 { (p1 - p2) / se } else { 0.0 };
+        println!("{label}: cpu={cpu_k}/{cpu_n}={p1:.4} gpu={gpu_k}/{gpu_n}={p2:.4} z={z:.3}");
+        z.abs()
+    }
+
+    fn gears_g0(class: ParticleClass, bias: f64) -> GearConfig {
+        GearConfig {
+            enabled: true,
+            photon_fraction: PHOTON_FRACTION,
+            cancel_redirect: 0.0, // unused: sigma=0 never enters the collision branch
+            pole_intake_bias: bias,
+            class,
+            spin_transfer: 0.0,
+            through_lane_rho: THROUGH_LANE_RHO,
+        }
+    }
+
+    fn body_config_for(sb: &StackBody) -> BodyConfig {
+        BodyConfig {
+            center: sb.center,
+            class: class_to_gpu(sb.class),
+            orient: orient_to_gpu(sb.orient),
+            through_lane_rho: THROUGH_LANE_RHO,
+        }
+    }
+
+    fn gpu_config(bodies: Vec<BodyConfig>, capacity: u32, seed: u64, bias: f64) -> DsmcConfig {
+        DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies,
+            h: 0.5,
+            dt: 0.05,
+            capacity,
+            seed,
+            n_ambient: 0.0, // unused: G0 injects fixed bursts directly, not a flux rate
+            sigma: 0.0,
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: bias,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Constant,
+            mesh_mode: MeshMode::ChiralityOnly,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: true,
+            b_max: B_MAX,
+        }
+    }
+
+    /// Runs one G0 transport comparison (CPU `march_stack` reference vs the
+    /// GPU DSMC engine at sigma=0) over `bodies`, probing `probe`. Returns the
+    /// worst |z| across every compared statistic -- all of them gated.
+    /// `bias` = species intake tilt (pole_intake_bias) on both sides.
+    /// Per-comparison gate. Each G0 run makes ~100 comparisons (36-bin
+    /// histograms plus proportions), so a per-bin 3-sigma rule would fail on
+    /// pure noise ~20% of the time. 4 sigma keeps the family-wise false-alarm
+    /// rate near 0.6% while a real transport bug grows as sqrt(N) (a biased
+    /// sampler shows up far above 4 at these counts -- checked: the one 4.2
+    /// sigma emission bin seen at N=20k fell to 1.7 at N=1M).
+    const G0_Z_LIMIT: f64 = 4.0;
+
+    fn run_g0(
+        label: &str,
+        bodies: Vec<StackBody>,
+        probe: usize,
+        n_emit_per_body: usize,
+        n_ambient: usize,
+        seed: u64,
+        bias: f64,
+    ) -> f64 {
+        use std::time::Instant;
+        println!("=== G0 transport: {label} ===");
+        let started = Instant::now();
+
+        // --- CPU reference (production spawn_emitted_on / spawn_ambient_on_stack / march_stack) ---
+        let dummy_cross = CollisionField::pure_analytic(PhotonKind::Ambient, ParticleClass::Proton);
+        let dummy_self = CollisionField::pure_analytic(PhotonKind::Emitted, ParticleClass::Proton);
+        let centroid: DVec3 = bodies.iter().map(|b| b.center).sum::<DVec3>() / bodies.len() as f64;
+
+        let mut cpu_emit_hist = vec![0u64; HIST_BINS];
+        let mut rng_cpu = seed ^ 0x51D3_0001;
+        for (bi, body) in bodies.iter().enumerate() {
+            if bi != probe {
+                continue; // G0 compares the probe's own emission profile only
+            }
+            for _ in 0..n_emit_per_body {
+                let p = spawn_emitted_on(&mut rng_cpu, DEFAULT_SWING_BOOST, body);
+                cpu_emit_hist[hist_bin_idx(body.local_latitude(p.pos))] += 1;
+            }
+        }
+
+        let mut cpu_arrival_hist = vec![0u64; HIST_BINS];
+        let mut cpu_arrived = 0u64;
+        let mut cpu_crossed = 0u64;
+        let mut cpu_other_absorbed = 0u64;
+        let mut cpu_absorbed_by = vec![0u64; bodies.len()];
+        let mut cpu_escaped = 0u64;
+        let gears_ambient = gears_g0(bodies[probe].class, bias);
+        let mut rng_amb = seed ^ 0x51D3_0002;
+        for _ in 0..n_ambient {
+            let photon = spawn_ambient_on_stack(&mut rng_amb, &gears_ambient, centroid);
+            let outcome = march_stack(
+                photon,
+                &bodies,
+                probe,
+                probe,
+                &dummy_cross,
+                0.0,
+                &dummy_self,
+                0.0,
+                0,
+                &gears_ambient,
+                &mut rng_amb,
+            );
+            if outcome.probe_arrived {
+                cpu_arrived += 1;
+                cpu_arrival_hist[hist_bin_idx(outcome.probe_arrival_lat)] += 1;
+                if outcome.probe_crossed > 0 {
+                    cpu_crossed += 1;
+                }
+            }
+            if outcome.other_absorbed {
+                cpu_other_absorbed += 1;
+            }
+            match outcome.term {
+                Termination::Absorbed { .. } => {
+                    if let Some(bi) = outcome.absorbed_by {
+                        cpu_absorbed_by[bi] += 1;
+                    }
+                }
+                Termination::Escaped { .. } => cpu_escaped += 1,
+                Termination::Lost => {}
+            }
+        }
+        println!("  CPU per-body absorbed breakdown: {cpu_absorbed_by:?}  escaped={cpu_escaped}");
+
+        // --- GPU DSMC reference (sigma = 0: transport only, no sort/collide) ---
+        let ctx = match GpuContext::new() {
+            Some(ctx) => ctx,
+            None => {
+                println!("no GPU adapter, skipping");
+                return 0.0;
+            }
+        };
+        let gpu_bodies: Vec<BodyConfig> = bodies.iter().map(body_config_for).collect();
+        // TWO separate engine runs, so each GPU tally sees exactly the
+        // population its CPU counterpart marched: emission-only for the probe's
+        // exit profile, ambient-only for arrival/crossing/absorption. (One
+        // combined run let feeder EXHAUST cross the middle body's lane and
+        // inflate its crossing tally against an ambient-only CPU reference.)
+        // c*dt = 0.05, R_D = 12 -> <= 2*R_D/dt = 480 steps to cross; 520 margin.
+        const N_STEPS: u32 = 520;
+        let run_engine = |n_amb: u32, emit: u32, salt: u64| -> (Totals, Vec<u32>, u32) {
+            let capacity = (emit as usize * bodies.len()) as u32 + n_amb + 1024;
+            let config = gpu_config(gpu_bodies.clone(), capacity, seed ^ 0xC0FFEE ^ salt, bias);
+            let mut engine = DsmcEngine::new(&ctx, config);
+            let emit_counts: Vec<u32> = (0..bodies.len()).map(|_| emit).collect();
+            engine.inject_batch(&ctx, n_amb, &emit_counts);
+            let mut totals = Totals::default();
+            for _ in 0..N_STEPS {
+                engine.step_transport_only(&ctx, &mut totals);
+            }
+            (totals, engine.read_hist(&ctx), engine.n_used)
+        };
+        let (_, hist_emit, _) = run_engine(0, n_emit_per_body as u32, 0x1);
+        let (totals, hist_amb, n_used) = run_engine(n_ambient as u32, 0, 0x2);
+        let elapsed = started.elapsed();
+        println!(
+            "  {:.1} ms/step ({} steps x 2 runs, {} slots in ambient run)",
+            elapsed.as_secs_f64() * 1000.0 / (2 * N_STEPS) as f64,
+            N_STEPS,
+            n_used
+        );
+
+        let gpu_emit_hist: Vec<u64> =
+            hist_emit[HIST_EMISSION_BLOCK + probe * HIST_BINS..HIST_EMISSION_BLOCK + (probe + 1) * HIST_BINS]
+                .iter()
+                .map(|&v| v as u64)
+                .collect();
+        let gpu_arrival_hist: Vec<u64> =
+            hist_amb[HIST_ARRIVAL_BLOCK + probe * HIST_BINS..HIST_ARRIVAL_BLOCK + (probe + 1) * HIST_BINS]
+                .iter()
+                .map(|&v| v as u64)
+                .collect();
+        let gpu_arrived: u64 = gpu_arrival_hist.iter().sum();
+        let gpu_crossed: u64 = (totals.crossings[probe][0] + totals.crossings[probe][1]).max(0) as u64;
+        let gpu_other_absorbed: u64 = (0..bodies.len())
+            .filter(|&i| i != probe)
+            .map(|i| (0..2).map(|s| totals.absorbed[i][0][s].max(0) as u64).sum::<u64>())
+            .sum();
+        let gpu_absorbed_by: Vec<u64> = (0..bodies.len())
+            .map(|i| (0..2).map(|s| totals.absorbed[i][0][s].max(0) as u64).sum::<u64>())
+            .collect();
+        println!("  GPU per-body absorbed breakdown (ambient only): {gpu_absorbed_by:?}");
+
+        println!(
+            "  CPU: launched emit={} ambient={} arrived={} crossed={} other_absorbed={}",
+            n_emit_per_body, n_ambient, cpu_arrived, cpu_crossed, cpu_other_absorbed
+        );
+        println!(
+            "  GPU: launched emit={} ambient={} arrived={} crossed={} other_absorbed={}",
+            n_emit_per_body, n_ambient, gpu_arrived, gpu_crossed, gpu_other_absorbed
+        );
+
+        // Emission exit-latitude is a fair comparison unconditionally: it
+        // depends only on the probe's own emitter geometry, never on the
+        // ambient launch ensemble.
+        let mut worst = compare_hist(&format!("{label}: emission exit-latitude (probe)"), &cpu_emit_hist, &gpu_emit_hist);
+
+        let arrival_z = compare_hist(
+            &format!("{label}: ambient arrival-latitude | arrived (probe)"),
+            &cpu_arrival_hist,
+            &gpu_arrival_hist,
+        );
+        let crossed_z = compare_prop(&format!("{label}: P(crossed | arrived)"), cpu_crossed, cpu_arrived, gpu_crossed, gpu_arrived);
+        // Per-LAUNCHED rates need the two launch ensembles on one footing.
+        // CPU lines are uniform over the b <= B_MAX disk about the centroid;
+        // GPU lines are uniform over the b <= R_D disk (same construction,
+        // wider). Every line that can touch a body has b <= 3.6 < B_MAX, so the
+        // GPU's comparable launch count is n * (B_MAX / R_D)^2.
+        let gpu_eff_launched = (n_ambient as f64 * (B_MAX / 12.0).powi(2)).round() as u64;
+        let arrived_rate_z = compare_prop(
+            &format!("{label}: P(arrived at probe | launched, b<=B_MAX)"),
+            cpu_arrived,
+            n_ambient as u64,
+            gpu_arrived,
+            gpu_eff_launched,
+        );
+        let other_z = if bodies.len() > 1 {
+            compare_prop(
+                &format!("{label}: P(absorbed-by-other | launched, b<=B_MAX)"),
+                cpu_other_absorbed,
+                n_ambient as u64,
+                gpu_other_absorbed,
+                gpu_eff_launched,
+            )
+        } else {
+            0.0
+        };
+        worst = worst.max(arrival_z).max(crossed_z).max(arrived_rate_z).max(other_z);
+        worst
+    }
+
+    #[test]
+    fn g0_single_body_transport() {
+        // Doc's exact G0 config: single proton, forced emission, gears on
+        // for species, collisions off. A lone body has no "stack" rotation,
+        // so a 1-element StackBody list with PoleOn (axis = Z) is exactly
+        // Phase-1's single-body convention.
+        let bodies = vec![StackBody { center: DVec3::ZERO, class: ParticleClass::Proton, orient: StackOrient::PoleOn }];
+        let worst = run_g0("single proton", bodies, 0, 1_000_000, 400_000, 0x5750_0001, 0.0);
+        assert!(worst < G0_Z_LIMIT, "G0 single-body worst |z| = {worst:.3} exceeds {G0_Z_LIMIT}");
+    }
+
+    fn pnp_bodies() -> Vec<StackBody> {
+        // report_pnp_stack's geometry: proton feeders EdgeOn at +-STACK_PITCH,
+        // neutron middle PoleOn at the origin.
+        vec![
+            StackBody { center: DVec3::new(0.0, 0.0, -STACK_PITCH), class: ParticleClass::Proton, orient: StackOrient::EdgeOn },
+            StackBody { center: DVec3::ZERO, class: ParticleClass::Neutron, orient: StackOrient::PoleOn },
+            StackBody { center: DVec3::new(0.0, 0.0, STACK_PITCH), class: ParticleClass::Proton, orient: StackOrient::EdgeOn },
+        ]
+    }
+
+    #[test]
+    fn g0_pnp_stack_transport() {
+        let worst = run_g0("p-n-p stack, isotropic", pnp_bodies(), 1, 1_000_000, 600_000, 0x5750_0002, 0.0);
+        assert!(worst < G0_Z_LIMIT, "G0 p-n-p (isotropic) worst |z| = {worst:.3} exceeds {G0_Z_LIMIT}");
+    }
+
+    /// Same stack with report_pnp_stack's species intake tilt (0.5): gates the
+    /// boundary injector's handling of a DIRECTED homogeneous field.
+    #[test]
+    fn g0_pnp_stack_transport_tilted() {
+        let worst = run_g0("p-n-p stack, intake bias 0.5", pnp_bodies(), 1, 1_000_000, 600_000, 0x5750_0003, 0.5);
+        assert!(worst < G0_Z_LIMIT, "G0 p-n-p (bias 0.5) worst |z| = {worst:.3} exceeds {G0_Z_LIMIT}");
+    }
+
+    /// G1 kinetics: ambient-only box, no bodies, isotropic, D5 off. Uses the
+    /// engine's `PeriodicBox` boundary so the population is exactly conserved
+    /// (no injection/escape bookkeeping needed to hold n_a fixed) -- see
+    /// `DsmcConfig::boundary`'s doc comment.
+    fn run_g1(rate_kernel: RateKernel, seed: u64) -> (f64, f64, f64, f64, bool) {
+        use std::time::Instant;
+        let label = match rate_kernel {
+            RateKernel::Constant => "Constant",
+            RateKernel::Catch => "Catch",
+        };
+        println!("=== G1 kinetics: {label} ===");
+
+        const HALF_EXTENT: f64 = 5.0;
+        const N: u32 = 200_000;
+        const SIGMA: f64 = 0.002;
+        const H: f64 = 0.5;
+        const DT: f64 = 0.05;
+        const K: u32 = 200;
+
+        let volume = (2.0 * HALF_EXTENT).powi(3);
+        let n_density = N as f64 / volume;
+
+        let config = DsmcConfig {
+            boundary: Boundary::PeriodicBox { half_extent: HALF_EXTENT },
+            bodies: vec![],
+            h: H,
+            dt: DT,
+            capacity: N + 16,
+            seed,
+            n_ambient: n_density,
+            sigma: SIGMA,
+            photon_fraction: 0.5,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: 0.0,
+            rate_kernel,
+            mesh_mode: MeshMode::ChiralityOnly,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        let ctx = match GpuContext::new() {
+            Some(ctx) => ctx,
+            None => {
+                println!("no GPU adapter, skipping");
+                return (0.0, 0.0, 0.0, 0.0, true);
+            }
+        };
+        let started = Instant::now();
+        let mut engine = DsmcEngine::new(&ctx, config);
+        engine.inject_batch(&ctx, N, &[]);
+
+        let mut totals = Totals::default();
+        for _ in 0..K {
+            engine.step_collide(&ctx, &mut totals);
+        }
+        // Isotropy needs its OWN, single-step sample: pooling dir_sum/dz2_sum
+        // across many steps of the SAME slowly-evolving population (each
+        // photon collides only a handful of times over the whole run) is not
+        // pooling independent trials -- it is re-measuring a strongly
+        // autocorrelated population and treating the re-measurements as
+        // independent, which understates the true standard error by roughly
+        // sqrt(K) and turns an ordinary few-sigma sampling fluctuation into a
+        // spurious ~15-sigma "failure" (caught by running this gate: the
+        // very first version pooled all K steps and every run failed at
+        // z ~ 10-27 even though the rate check passed cleanly). One extra
+        // step with a fresh accumulator gives a valid N = photon-count
+        // sample instead.
+        let mut iso_totals = Totals::default();
+        engine.step_collide(&ctx, &mut iso_totals);
+        let elapsed = started.elapsed();
+        let ms_per_step = elapsed.as_secs_f64() * 1000.0 / K as f64;
+        println!("  {ms_per_step:.2} ms/step ({N} photons, {K} steps)");
+
+        let g_max = if rate_kernel == RateKernel::Catch { 2.0 } else { 1.0 };
+        let total_path = N as f64 * DT * K as f64;
+        let measured_rate = 2.0 * totals.collisions as f64 / total_path;
+        let expected_g_bar = if rate_kernel == RateKernel::Catch { 4.0 / 3.0 } else { 1.0 };
+        let expected_rate = SIGMA * n_density * expected_g_bar;
+        let rel_err = (measured_rate - expected_rate).abs() / expected_rate;
+        println!(
+            "  collisions={} measured_rate={measured_rate:.6} expected_rate={expected_rate:.6} (g_max={g_max}) rel_err={:.4}",
+            totals.collisions,
+            rel_err
+        );
+
+        let n_samp = iso_totals.dir_sum_samples.max(1) as f64;
+        let mean_dir = [iso_totals.dir_sum[0] / n_samp, iso_totals.dir_sum[1] / n_samp, iso_totals.dir_sum[2] / n_samp];
+        let se_mean = (1.0f64 / 3.0 / n_samp).sqrt();
+        let z_mean = [mean_dir[0] / se_mean, mean_dir[1] / se_mean, mean_dir[2] / se_mean];
+        let mean_dz2 = iso_totals.dz2_sum / n_samp;
+        let se_dz2 = (4.0f64 / 45.0 / n_samp).sqrt();
+        let z_dz2 = (mean_dz2 - 1.0 / 3.0) / se_dz2;
+        println!(
+            "  isotropy: mean_dir=({:.5},{:.5},{:.5}) z=({:.2},{:.2},{:.2}); <dz^2>={mean_dz2:.5} (expect 1/3) z={z_dz2:.2}",
+            mean_dir[0], mean_dir[1], mean_dir[2], z_mean[0], z_mean[1], z_mean[2]
+        );
+
+        let mean_drift = if totals.mom_drift_count > 0 { totals.mom_drift_sum / totals.mom_drift_count as f64 } else { 0.0 };
+        println!("  mean |sum of renorm drift| per collision (both photons) = {mean_drift:.6}, n={}", totals.mom_drift_count);
+
+        let worst_iso_z = z_mean.iter().fold(z_dz2.abs(), |acc, z| acc.max(z.abs()));
+        let rate_ok = rel_err < 0.02;
+        (rel_err, worst_iso_z, mean_drift, ms_per_step, rate_ok)
+    }
+
+    #[test]
+    fn g1_kinetics_constant() {
+        let (rel_err, worst_iso_z, _drift, _ms, rate_ok) = run_g1(RateKernel::Constant, 0x6115_0001);
+        assert!(rate_ok, "G1 Constant: measured rate off by {:.2}% (limit 2%)", rel_err * 100.0);
+        assert!(worst_iso_z < 3.0, "G1 Constant: isotropy worst |z| = {worst_iso_z:.3} exceeds 3-sigma");
+    }
+
+    #[test]
+    fn g1_kinetics_catch() {
+        let (rel_err, worst_iso_z, _drift, _ms, rate_ok) = run_g1(RateKernel::Catch, 0x6115_0002);
+        assert!(rate_ok, "G1 Catch: measured rate off by {:.2}% (limit 2%)", rel_err * 100.0);
+        assert!(worst_iso_z < 3.0, "G1 Catch: isotropy worst |z| = {worst_iso_z:.3} exceeds 3-sigma");
+    }
+
+    #[test]
+    fn g1_determinism() {
+        const HALF_EXTENT: f64 = 5.0;
+        const N: u32 = 50_000;
+        let config_for = || DsmcConfig {
+            boundary: Boundary::PeriodicBox { half_extent: HALF_EXTENT },
+            bodies: vec![],
+            h: 0.5,
+            dt: 0.05,
+            capacity: N + 16,
+            seed: 0x6115_00FF,
+            n_ambient: N as f64 / (2.0 * HALF_EXTENT).powi(3),
+            sigma: 0.002,
+            photon_fraction: 0.5,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: 0.0,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        let ctx = require_gpu!();
+        let run = || {
+            let mut engine = DsmcEngine::new(&ctx, config_for());
+            engine.inject_batch(&ctx, N, &[]);
+            let mut totals = Totals::default();
+            for _ in 0..50 {
+                engine.step_collide(&ctx, &mut totals);
+            }
+            totals
+        };
+
+        let a = run();
+        let b = run();
+        println!("g1_determinism: run A collisions={} run B collisions={}", a.collisions, b.collisions);
+        assert_eq!(a.collisions, b.collisions, "same seed twice must give identical collision counts");
+        assert!(
+            (a.dir_sum[0] - b.dir_sum[0]).abs() < 1e-9
+                && (a.dir_sum[1] - b.dir_sum[1]).abs() < 1e-9
+                && (a.dir_sum[2] - b.dir_sum[2]).abs() < 1e-9,
+            "same seed twice must give identical direction sums: {:?} vs {:?}",
+            a.dir_sum,
+            b.dir_sum
+        );
+    }
+}

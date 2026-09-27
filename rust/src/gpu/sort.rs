@@ -43,6 +43,7 @@ struct ScanLevel {
 
 pub struct CellSorter {
     cell_count: Kernel,
+    cell_count_from_index: Kernel,
     scan_block: Kernel,
     add_block_sums: Kernel,
     cell_scatter: Kernel,
@@ -55,12 +56,27 @@ pub struct CellSorter {
     pub cell_of: wgpu::Buffer,
     pub sorted: wgpu::Buffer,
     count_params: wgpu::Buffer,
+    count_from_index_params: wgpu::Buffer,
     scatter_params: wgpu::Buffer,
     levels: Vec<ScanLevel>,
 }
 
 impl CellSorter {
     pub fn new(ctx: &GpuContext, grid_dim: u32, n_max: u32) -> Self {
+        Self::new_impl(ctx, grid_dim, grid_dim.pow(3), n_max)
+    }
+
+    /// A sorter over an arbitrary cell count with no position-based path --
+    /// for callers (like the DSMC engine) whose own move kernel computes
+    /// `cell_of` (bodies, lane gates, boundary) and just needs binning +
+    /// counting-sort from that precomputed buffer via
+    /// [`Self::record_from_cell_of`]. `num_cells` here is whatever the caller
+    /// wants, e.g. a spatial grid's cell count *plus one* dead-photon bucket.
+    pub fn new_generic(ctx: &GpuContext, num_cells: u32, n_max: u32) -> Self {
+        Self::new_impl(ctx, 0, num_cells, n_max)
+    }
+
+    fn new_impl(ctx: &GpuContext, grid_dim: u32, num_cells: u32, n_max: u32) -> Self {
         let load = |src: &str| {
             let module = ctx.load_wgsl_compute(src);
             Kernel::new(ctx, &module, "main")
@@ -68,11 +84,11 @@ impl CellSorter {
         // WGSL, not GLSL: naga's GLSL frontend has no atomics, and its GLSL
         // `barrier()` lowers to a subgroup-scoped barrier (see scan_block.wgsl).
         let cell_count = load(include_str!("../../shaders/cell_count.wgsl"));
+        let cell_count_from_index = load(include_str!("../../shaders/cell_count_from_index.wgsl"));
         let scan_block = load(include_str!("../../shaders/scan_block.wgsl"));
         let add_block_sums = load(include_str!("../../shaders/add_block_sums.wgsl"));
         let cell_scatter = load(include_str!("../../shaders/cell_scatter.wgsl"));
 
-        let num_cells = grid_dim.pow(3);
         let buf_u32 = |count: u32| ctx.zeroed_storage_buffer::<u32>(count.max(1) as usize, wgpu::BufferUsages::empty());
 
         // Scan levels: level 0 scans `offsets` (num_cells); each further level
@@ -94,6 +110,7 @@ impl CellSorter {
 
         Self {
             cell_count,
+            cell_count_from_index,
             scan_block,
             add_block_sums,
             cell_scatter,
@@ -106,6 +123,7 @@ impl CellSorter {
             cell_of: buf_u32(n_max),
             sorted: buf_u32(n_max),
             count_params: ctx.uniform_buffer(&CountParams { n: n_max, grid_dim, _pad0: 0, _pad1: 0 }),
+            count_from_index_params: ctx.uniform_buffer(&NParams { n: n_max, _pad0: 0, _pad1: 0, _pad2: 0 }),
             scatter_params: ctx.uniform_buffer(&NParams { n: n_max, _pad0: 0, _pad1: 0, _pad2: 0 }),
             levels,
         }
@@ -125,6 +143,50 @@ impl CellSorter {
         self.cell_count
             .record(ctx, encoder, &[positions, &self.counts, &self.cell_of], Some(&self.count_params), grid_n);
 
+        self.scan_and_scatter(ctx, encoder, n, cells_bytes, grid_n);
+    }
+
+    /// Encode a full sort of the first `n` photons using an already-computed
+    /// `cell_of_src` buffer (e.g. the DSMC move kernel's output, which folds
+    /// in body/lane/boundary logic no generic position-based pass could know
+    /// about). `cell_of_src[i] == self.num_cells - 1`'s bucket is the
+    /// convention callers use for "dead" -- this sorter does not interpret
+    /// it, it just bins whatever indices it is given.
+    pub fn record_from_cell_of(
+        &self,
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        cell_of_src: &wgpu::Buffer,
+        n: u32,
+    ) {
+        assert!(n <= self.n_max, "CellSorter sized for {} particles, got {n}", self.n_max);
+        ctx.write_buffer(&self.count_from_index_params, &[NParams { n, _pad0: 0, _pad1: 0, _pad2: 0 }]);
+        ctx.write_buffer(&self.scatter_params, &[NParams { n, _pad0: 0, _pad1: 0, _pad2: 0 }]);
+
+        let cells_bytes = self.num_cells as u64 * 4;
+        let grid_n = workgroup_grid_for_threads(n, BLOCK_SIZE);
+
+        encoder.clear_buffer(&self.counts, 0, None);
+        self.cell_count_from_index.record(
+            ctx,
+            encoder,
+            &[cell_of_src, &self.counts, &self.cell_of],
+            Some(&self.count_from_index_params),
+            grid_n,
+        );
+
+        self.scan_and_scatter(ctx, encoder, n, cells_bytes, grid_n);
+    }
+
+    fn scan_and_scatter(
+        &self,
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        n: u32,
+        cells_bytes: u64,
+        grid_n: (u32, u32, u32),
+    ) {
+        let _ = n;
         encoder.copy_buffer_to_buffer(&self.counts, 0, &self.offsets, 0, cells_bytes);
         // Down-sweep: scan every level into its block sums...
         for (i, level) in self.levels.iter().enumerate() {
