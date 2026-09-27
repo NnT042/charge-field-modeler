@@ -14,9 +14,18 @@ For development tasks (Rust, GDScript, shaders, Godot wiring), load the `cfm-dev
 
 **Use the `search_mathis` MCP tool. Do not browse milesmathis.com.**
 
-The mathis-library MCP server is connected to this project and has 12,000+ chunks from
-the full site indexed locally. It is faster, more reliable, and returns source URLs for
-verification.
+The Mathis Library is a home-lab-hosted MCP server attached as an account-level
+connector (not a project `.mcp.json` entry). Its tools may be deferred — load them with
+ToolSearch (`search_mathis`) before calling. It holds complete mirrors of both of
+Mathis's sites and returns passages with source URLs for verification.
+
+| Tool | Use |
+|---|---|
+| `search_mathis` | Science papers (milesmathis.com) — the default for physics lookups |
+| `search_mathis_all` | Both sites at once |
+| `search_mathis_art` | Art/history/genealogy site (mileswmathis.com) — rarely relevant here |
+| `get_page` | Read a whole paper by URL once a search hit looks relevant |
+| `list_pages` | Browse papers by title if you're not sure what to search for |
 
 ```
 search_mathis("stacked spins angular momentum")
@@ -24,9 +33,7 @@ search_mathis("charge field photon recycling proton")
 search_mathis("axial spin radius electron")
 ```
 
-Use `list_pages` to browse available papers by title if you're not sure what to search for.
-
-Never dispatch a web search or sub-agent to milesmathis.com — the local index covers the
+Never dispatch a web search or sub-agent to milesmathis.com — the mirror covers the
 full site and is available instantly.
 
 ---
