@@ -2081,6 +2081,7 @@ fn spawn_ambient_on_stack(rng: &mut u64, gears: &GearConfig, centroid: DVec3) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::prelude::*;
 
     /// (a) TAU=0 (sigma=0, no collisions) with the v2 importance-sampled
     /// launch: every b ≤ 1 ambient photon must arrive at its straight-line
@@ -2504,12 +2505,30 @@ mod tests {
             (true, 0.0, 3.0, 30, ITERS_PUMP),
         ];
 
-        let mut cells: Vec<ReportCell> = Vec::new();
-        for &(pump, tau, tau_self, nr, iters) in &specs {
-            seed = seed.wrapping_add(1);
-            let cell = run_self_consistent(
-                n, swing_boost, tau, tau_self, nr, iters, pump, &gears, &emitted0, &ambient0, seed,
-            );
+        // Each spec's seed only depends on the running `.wrapping_add(1)`
+        // counter (no shared-RNG mutation crosses cells: run_self_consistent
+        // takes `seed` by value), so the per-cell seeds can be precomputed
+        // sequentially and the cells then computed independently in
+        // parallel. Printing is deferred until after the collect so the
+        // console output stays in the original per-cell order.
+        let cell_seeds: Vec<u64> = specs
+            .iter()
+            .map(|_| {
+                seed = seed.wrapping_add(1);
+                seed
+            })
+            .collect();
+        let cells: Vec<ReportCell> = specs
+            .par_iter()
+            .zip(cell_seeds.par_iter())
+            .map(|(&(pump, tau, tau_self, nr, iters), &cell_seed)| {
+                run_self_consistent(
+                    n, swing_boost, tau, tau_self, nr, iters, pump, &gears, &emitted0, &ambient0,
+                    cell_seed,
+                )
+            })
+            .collect();
+        for (&(pump, tau, tau_self, nr, iters), cell) in specs.iter().zip(cells.iter()) {
             println!(
                 "cell {} TAU={tau:.1} TAU_SELF={tau_self:.1} Nric={nr} iters={iters} -> sigma_e={:.4} sigma_a={:.6} sigma_ee={:.4} sigma_aa={:.6} n_emit_final={}",
                 if pump { "PUMP" } else { "FORCED" },
@@ -2519,7 +2538,6 @@ mod tests {
                 cell.sigma_aa,
                 cell.n_emit_final
             );
-            cells.push(cell);
         }
 
         println!();
@@ -2970,8 +2988,27 @@ mod tests {
             seed = seed.wrapping_add(0x100);
             let (emitted0, ambient0) = run_iteration0(n, swing_boost, &seed_gears, &mut seed);
 
-            for (phi_label, phi) in phis {
-                for &redirect in &redirects {
+            // The (phi, redirect) sweep only reads `emitted0`/`ambient0` (already
+            // converged above) and calls run_self_consistent with a running,
+            // precomputed seed (no `&mut seed`-threaded RNG inside this inner
+            // loop), so the 6 cells per class are independent and safe to
+            // compute in parallel; the outer class loop stays sequential
+            // because it DOES thread `seed` through `run_iteration0`.
+            let combos: Vec<(&'static str, f64, f64)> = phis
+                .iter()
+                .flat_map(|&(phi_label, phi)| redirects.iter().map(move |&redirect| (phi_label, phi, redirect)))
+                .collect();
+            let combo_seeds: Vec<u64> = combos
+                .iter()
+                .map(|_| {
+                    seed = seed.wrapping_add(1);
+                    seed
+                })
+                .collect();
+            let new_rows: Vec<Row> = combos
+                .par_iter()
+                .zip(combo_seeds.par_iter())
+                .map(|(&(phi_label, phi, redirect), &combo_seed)| {
                     let gears = GearConfig {
                         enabled: true,
                         photon_fraction: phi,
@@ -2981,16 +3018,15 @@ mod tests {
                         spin_transfer: DEFAULT_SPIN_TRANSFER,
                         through_lane_rho: 0.0,
                     };
-                    seed = seed.wrapping_add(1);
                     let cell = run_self_consistent(
                         n, swing_boost, 3.0, 3.0, 30, ITERS_PUMP, true, &gears, &emitted0,
-                        &ambient0, seed,
+                        &ambient0, combo_seed,
                     );
                     let e = &cell.emitted_tally;
                     let tot = e.total.max(1.0);
                     let esc = e.escaped.max(0.0);
                     let esc_den = esc.max(1.0);
-                    rows.push(Row {
+                    Row {
                         class: cname,
                         phi_label,
                         redirect,
@@ -3003,9 +3039,10 @@ mod tests {
                         // Near-surface = r bins 0..8 (r ≈ 1 → 2.9).
                         pole_in: band_radial_flow(&cell.final_ambient_field, 0, 8, true),
                         eq_in: band_radial_flow(&cell.final_ambient_field, 0, 8, false),
-                    });
-                }
-            }
+                    }
+                })
+                .collect();
+            rows.extend(new_rows);
         }
 
         println!(
@@ -3616,45 +3653,58 @@ mod tests {
             "{:<22} {:>10} {:>11} {:>13} {:>16}",
             "probe", "launched", "arrivals", "crossings", "% of arrivals"
         );
+        // Each probe below builds its OWN seed from a class-keyed formula
+        // (`0x5741... ^ ((pclass as u64) << 40)`), not a value threaded from
+        // the previous probe, and `feeder_gas`/the march loop only mutate
+        // that local seed — so the two probes are fully independent and can
+        // run in parallel; only the printing (and Poisson-note derived from
+        // it) needs to stay in the original order afterward.
+        let probe_specs = [("neutron", ParticleClass::Neutron), ("proton", ParticleClass::Proton)];
+        let base_results: Vec<(&str, &'static str, f64, f64, f64)> = probe_specs
+            .par_iter()
+            .map(|&(pname, pclass)| {
+                let orient = StackOrient::nuclear_for(pclass);
+                let gears = GearConfig {
+                    enabled: true,
+                    photon_fraction: 2.0 / 3.0,
+                    cancel_redirect: redirect,
+                    pole_intake_bias: intake_bias,
+                    class: pclass,
+                    spin_transfer: DEFAULT_SPIN_TRANSFER,
+                    through_lane_rho: THROUGH_LANE_RHO,
+                };
+                let mut seed = 0x5741_0000_C0DE_2407u64 ^ ((pclass as u64) << 40);
+                let (f_e, f_a, sigma_e, _sigma_a, _sigma_ee, sigma_aa) =
+                    feeder_gas(n, swing_boost, &gears, &mut seed);
+                let bodies = [StackBody {
+                    center: DVec3::ZERO,
+                    class: pclass,
+                    orient,
+                }];
+                let mut arrivals = 0.0f64;
+                let mut crossings = 0.0f64;
+                for _ in 0..n_iso {
+                    let p = spawn_ambient_on_stack(&mut seed, &gears, DVec3::ZERO);
+                    let out = march_stack(
+                        p, &bodies, 0, 0, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
+                    );
+                    if out.probe_arrived {
+                        arrivals += 1.0;
+                    }
+                    if out.probe_crossed > 0 {
+                        crossings += 1.0;
+                    }
+                }
+                let rate = 100.0 * crossings / arrivals.max(1.0);
+                (pname, orient.label(), arrivals, crossings, rate)
+            })
+            .collect();
+
         let mut base_rate: Vec<(&str, f64)> = Vec::new();
-        for (pname, pclass) in [("neutron", ParticleClass::Neutron), ("proton", ParticleClass::Proton)]
-        {
-            let orient = StackOrient::nuclear_for(pclass);
-            let gears = GearConfig {
-                enabled: true,
-                photon_fraction: 2.0 / 3.0,
-                cancel_redirect: redirect,
-                pole_intake_bias: intake_bias,
-                class: pclass,
-                spin_transfer: DEFAULT_SPIN_TRANSFER,
-                through_lane_rho: THROUGH_LANE_RHO,
-            };
-            let mut seed = 0x5741_0000_C0DE_2407u64 ^ ((pclass as u64) << 40);
-            let (f_e, f_a, sigma_e, _sigma_a, _sigma_ee, sigma_aa) =
-                feeder_gas(n, swing_boost, &gears, &mut seed);
-            let bodies = [StackBody {
-                center: DVec3::ZERO,
-                class: pclass,
-                orient,
-            }];
-            let mut arrivals = 0.0f64;
-            let mut crossings = 0.0f64;
-            for _ in 0..n_iso {
-                let p = spawn_ambient_on_stack(&mut seed, &gears, DVec3::ZERO);
-                let out = march_stack(
-                    p, &bodies, 0, 0, &f_e, sigma_e, &f_a, sigma_aa, 30, &gears, &mut seed,
-                );
-                if out.probe_arrived {
-                    arrivals += 1.0;
-                }
-                if out.probe_crossed > 0 {
-                    crossings += 1.0;
-                }
-            }
-            let rate = 100.0 * crossings / arrivals.max(1.0);
+        for &(pname, orient_label, arrivals, crossings, rate) in &base_results {
             println!(
                 "{:<22} {:>10} {:>11.0} {:>13.0} {:>15.3}%",
-                format!("{pname} ({})", orient.label()),
+                format!("{pname} ({orient_label})"),
                 n_iso,
                 arrivals,
                 crossings,
@@ -4177,8 +4227,17 @@ mod tests {
             thru_chi_minus: f64,
         }
 
-        let mut rows: Vec<PnpRow> = Vec::new();
-        for (ci, cfg) in configs.iter().enumerate() {
+        // Each config's seed is freshly derived from its index `ci` (not
+        // threaded from the previous config), and every value it reads
+        // (`gears_p`/`gears_n`, the converged `fe_*`/`fa_*`/`s*_*` fields,
+        // and `configs[ci]` itself) is immutable and shared read-only — so
+        // the 5 configs are independent and safe to run in parallel. Using
+        // an index range keeps the row order identical to the sequential
+        // push order.
+        let rows: Vec<PnpRow> = (0..configs.len())
+            .into_par_iter()
+            .map(|ci| {
+            let cfg = &configs[ci];
             let shut_p;
             let shut_n;
             let (gp, gn) = if cfg.lane_open {
@@ -4259,7 +4318,7 @@ mod tests {
                 }
             }
 
-            rows.push(PnpRow {
+            PnpRow {
                 label: cfg.label,
                 own_esc,
                 own_m,
@@ -4273,8 +4332,9 @@ mod tests {
                 mom_feeders_z,
                 thru_chi_plus,
                 thru_chi_minus,
-            });
-        }
+            }
+        })
+        .collect();
 
         // -------------------------------------------------------------
         println!("--- [1] The whole-particle sum, per config ---");

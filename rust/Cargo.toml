@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 godot = "0.5"
 glam = "0.32"
+rayon = "1"
 
 [profile.release]
 lto = "thin"

@@ -1247,6 +1247,7 @@ impl AmbientField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::prelude::*;
     use crate::hitbox::bake_loop_velocities;
     use std::f64::consts::TAU;
 
@@ -1545,8 +1546,14 @@ mod tests {
             0x1234_5678_9abc_def0, 0x2234_5678_9abc_def0, 0x3234_5678_9abc_def0, 0x4234_5678_9abc_def0,
             0x5234_5678_9abc_def0, 0x6234_5678_9abc_def0, 0x7234_5678_9abc_def0, 0x8234_5678_9abc_def0,
         ];
+        // Each seed's run is fully independent (run_seed takes the seed by
+        // value and owns a fresh particle/rng), so the per-seed values can
+        // be computed in parallel; summing the collected Vec sequentially,
+        // in the original seed order, keeps the float reduction
+        // bit-identical to the old sequential `.map(..).sum()`.
         let run = |photon_fraction: f64| -> f64 {
-            seeds.iter().map(|&s| run_seed(photon_fraction, s)).sum::<f64>() / seeds.len() as f64
+            let vals: Vec<f64> = seeds.par_iter().map(|&s| run_seed(photon_fraction, s)).collect();
+            vals.iter().sum::<f64>() / seeds.len() as f64
         };
 
         let balanced = run(0.5);
@@ -2416,17 +2423,28 @@ mod tests {
     /// are taken from the LAST seed (display only, not part of the averaged
     /// quantity); `transmuted` is true if ANY seed transmuted.
     fn run_settle_avg(
-        make: &dyn Fn() -> CalibrationParticle,
+        make: &(dyn Fn() -> CalibrationParticle + Sync),
         field: &AmbientField,
         seeds: &[u64],
         steps: usize,
     ) -> (f64, usize, f64, bool) {
+        // Each seed's `run_settle` call is independent (fresh particle from
+        // `make`, its own local rng started at that seed), so the per-seed
+        // results can be computed in parallel; `last_step`/`last_dt` must
+        // still come from the LAST seed IN ORDER (matching the old
+        // sequential semantics), and `any_transmuted` is an OR over all of
+        // them (order-independent), so those are folded sequentially over
+        // the collected, order-preserved Vec rather than during the
+        // parallel map.
+        let results: Vec<(f64, usize, f64, bool)> = seeds
+            .par_iter()
+            .map(|&seed| run_settle(make, field, seed, steps))
+            .collect();
         let mut sum = 0.0;
         let mut any_transmuted = false;
         let mut last_step = 0;
         let mut last_dt = 0.0;
-        for &seed in seeds {
-            let (settled, settle_step, dt, transmuted) = run_settle(make, field, seed, steps);
+        for &(settled, settle_step, dt, transmuted) in &results {
             sum += settled;
             any_transmuted |= transmuted;
             last_step = settle_step;
@@ -2561,7 +2579,7 @@ mod tests {
         field_a.occlusion = false;
         field_b.occlusion = false;
 
-        let make_electron: Box<dyn Fn() -> CalibrationParticle> = Box::new(|| {
+        let make_electron: Box<dyn Fn() -> CalibrationParticle + Sync> = Box::new(|| {
             let mut p = CalibrationParticle::new(bake_loop(8, 256), 1.0);
             p.gear_efficiency = GEAR_LADDER_ELECTRON;
             p
