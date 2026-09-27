@@ -417,6 +417,25 @@ by halving N.
   - Cells over 1024: a loud tally (refine h), never a silent cap.
   - Also D6 `RotateRelative`, pump mode exercised, the G2/G3 reports and density maps.
 
+## 11c. B2a done (2026-09-27)
+
+- **Collide rewrite:** one workgroup per cell, a shared-memory bitonic sort of up to
+  2048 photons by id, and a candidate loop over the full cell. The pair draw is fixed
+  (j = i+1 was double-weighted). Cells over 2048 print a warning every step, never
+  silently.
+- **G1-dense** (~300 photons per cell) passes. An aggregate rate check can't see the old
+  bug (the old kernel counted candidates from the full cell, so its rate was right).
+  The gate instead measures the fraction of collisions where both partners have an
+  id-rank below 64: 0.045 measured vs (64/300)² ≈ 0.045 expected, where the old kernel
+  gives exactly 1.
+- **D6 `RotateRelative`:** the total box momentum is read back in f64 before and
+  after 200 steps. Over ~530k collisions it changes by 1.0e-4 (f32 rounding) vs
+  2.8e2 for `SwapRenorm`, and max ||d|−1| < 1e-5. The fixed-point drift tally has a
+  resolution of only 1/4096 per collision, so it is report-only, never a gate.
+- **Still to do (B2b/B2c):** pump-mode test, the full §8 observables (density maps,
+  counter-stream survival), σ calibration, and the G2/G3 reports with the first B3
+  table.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

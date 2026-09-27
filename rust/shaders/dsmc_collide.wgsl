@@ -1,17 +1,25 @@
-// DSMC step 5: one thread per grid cell. NTC (no-time-counter) candidate
-// selection + pairwise exchange, per doc §3.1/§7. dsmc_common.wgsl is
-// concatenated ahead of this source by engine.rs.
+// DSMC step 5: one WORKGROUP per cell (B2 rewrite; dsmc_common.wgsl is
+// concatenated ahead of this source by engine.rs).
 //
-// Determinism: cells hold "tens" of photons (doc §5), so each thread copies
-// its cell's slot list into a small local array and insertion-sorts it by
-// photon id before pairing -- this is what makes results independent of the
-// GPU's atomic-scatter order in CellSorter (doc §7 step 5).
+// B1 limitation this replaces: the old kernel paired only the first
+// MAX_CELL=64 photons (by id) while computing the NTC candidate count from
+// the FULL cell population, so any cell over 64 was biased -- exactly where
+// the densification physics (doc §1) lives. Fix (doc §11b, work item 1):
+// load up to MAX_CELL id-ordered (id, slot) pairs into workgroup shared
+// memory, bitonic-sort them in parallel, then have thread 0 run the
+// sequential NTC candidate loop over the full sorted list. Cells whose live
+// count exceeds MAX_CELL still only pair among the first MAX_CELL (a correct
+// fallback is prohibitively slow per doc's own analysis), but now increment
+// TALLY_CELL_OVERFLOW so the host can print a loud warning every step instead
+// of silently mismodeling dense cells.
 //
-// Simplification vs the full doc: cells with more than MAX_CELL live
-// photons only pair among the first MAX_CELL (by id); this is a documented
-// B1 limitation, not expected to bite at gate densities.
+// Determinism: unchanged in spirit -- pairing depends only on the photon ids
+// present in a cell, never on CellSorter's atomic-scatter order, because the
+// shared-memory sort re-establishes id order before any pairing happens.
 
-const MAX_CELL: u32 = 64u;
+const MAX_CELL: u32 = 2048u;
+const SORT_LOCAL: u32 = 256u;
+const SORT_STRIDE: u32 = MAX_CELL / SORT_LOCAL; // 8
 
 struct GpuPhoton {
     a: vec4<f32>,
@@ -34,21 +42,30 @@ struct Params {
     bounce_cap: u32, d5_far_zone_gate: u32, grid_dim_x: u32, grid_dim_y: u32,
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
-    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, _pad2: f32,
+    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
 const FLAG_SPECIES_PLUS: u32 = 4u;
 const FLAG_COLLIDED_SINCE_CROSS: u32 = 1u << 13u;
 const TALLY_SCALE: f32 = 4096.0;
+// Tally indices (must stay in sync with gpu_types.rs).
+const TALLY_COLLISIONS_IDX: u32 = 61u;
+const TALLY_MOM_DRIFT_COUNT_IDX: u32 = 62u;
+const TALLY_MOM_DRIFT_SUM_IDX: u32 = 67u;
+const TALLY_CELL_OVERFLOW_IDX: u32 = 68u;
+const TALLY_EXCHANGE_DRIFT_SUM_IDX: u32 = 69u;
+const TALLY_REDIRECT_DRIFT_SUM_IDX: u32 = 70u;
+const TALLY_LOW_RANK64_IDX: u32 = 71u;
+// The pre-rewrite kernel's fixed candidate cap -- used only to measure how
+// concentrated collisions are among the lowest-id photons per cell (see
+// TALLY_LOW_RANK64_IDX doc in gpu_types.rs), not as a limit here.
+const RANK64: u32 = 64u;
 
 // NOTE: `photons` here is the POST-GATHER buffer -- dsmc_gather.wgsl already
 // wrote `dst[k] = src[sorted[k]]`, so position `off+k` (from `offsets`/
 // `counts`, which describe that same sorted layout) already IS the photon;
-// there is no `sorted` permutation left to apply here. (An earlier version
-// of this kernel re-indexed through `sorted` a second time, which silently
-// scrambled pairings and showed up as non-reproducible collision counts
-// across identical-seed runs -- see g1_determinism.)
+// there is no `sorted` permutation left to apply here.
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> offsets: array<u32>;
 @group(0) @binding(2) var<storage, read> counts: array<u32>;
@@ -60,47 +77,87 @@ const TALLY_SCALE: f32 = 4096.0;
 @group(0) @binding(8) var<storage, read_write> tallies: array<atomic<i32>>;
 @group(0) @binding(9) var<uniform> params: Params;
 
+var<workgroup> sh_ids: array<u32, MAX_CELL>;
+var<workgroup> sh_slots: array<u32, MAX_CELL>;
+
 fn chi_of(flags: u32) -> f32 {
     return select(-1.0, 1.0, (flags & FLAG_SPECIES_PLUS) != 0u);
 }
 
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
-    let linear_wg = wid.x + wid.y * nwg.x;
-    let cell = linear_wg * 64u + lid.x;
-    // The grid's own cells only -- the trailing "dead" bucket (index
-    // grid_num_cells) is never dispatched over (see engine.rs).
+@compute @workgroup_size(SORT_LOCAL)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    let cell = wid.x + wid.y * nwg.x;
     if (cell >= params.num_cells) {
         return;
     }
     let count = counts[cell];
+    // sigma<=0 and count<2 are workgroup-uniform (both depend only on `cell`
+    // / global params), so this early-out ahead of any barrier is legal.
     if (count < 2u || params.sigma <= 0.0) {
         return;
     }
     let off = offsets[cell];
     let capn = min(count, MAX_CELL);
-
-    var idxs: array<u32, MAX_CELL>;
-    for (var k = 0u; k < capn; k = k + 1u) {
-        idxs[k] = off + k;
+    if (count > MAX_CELL && lid.x == 0u) {
+        atomicAdd(&tallies[TALLY_CELL_OVERFLOW_IDX], 1);
     }
-    // Insertion sort by photon id (capn is small: tens of entries).
-    for (var a = 1u; a < capn; a = a + 1u) {
-        let key = idxs[a];
-        let key_id = bitcast<u32>(photons[key].a.w);
-        var b = a;
-        loop {
-            if (b == 0u) {
-                break;
-            }
-            let prev = idxs[b - 1u];
-            if (bitcast<u32>(photons[prev].a.w) <= key_id) {
-                break;
-            }
-            idxs[b] = idxs[b - 1u];
-            b = b - 1u;
+
+    // --- Load (id, slot) pairs into shared memory, pad the tail with the
+    // max sentinel so the bitonic network (which needs a power-of-two
+    // length) sorts real entries to the front. ---
+    for (var m = 0u; m < SORT_STRIDE; m = m + 1u) {
+        let i = lid.x + m * SORT_LOCAL;
+        if (i < capn) {
+            sh_ids[i] = bitcast<u32>(photons[off + i].a.w);
+            sh_slots[i] = off + i;
+        } else {
+            sh_ids[i] = 0xFFFFFFFFu;
+            sh_slots[i] = 0xFFFFFFFFu;
         }
-        idxs[b] = key;
+    }
+    workgroupBarrier();
+
+    // --- Parallel bitonic sort by id over MAX_CELL elements. Shared memory
+    // is workgroup-visible, so a thread may touch indices it doesn't "own"
+    // (i, i^j) as long as every (i, ixj) pair with i<ixj is only handled
+    // once -- guaranteed by the `ixj > i` guard below, independent of which
+    // thread's loop iteration reaches it. ---
+    var k = 2u;
+    loop {
+        if (k > MAX_CELL) { break; }
+        var j = k >> 1u;
+        loop {
+            if (j == 0u) { break; }
+            for (var m = 0u; m < SORT_STRIDE; m = m + 1u) {
+                let i = lid.x + m * SORT_LOCAL;
+                let ixj = i ^ j;
+                if (ixj > i) {
+                    let ascending = (i & k) == 0u;
+                    let vi = sh_ids[i];
+                    let vx = sh_ids[ixj];
+                    if ((vi > vx) == ascending) {
+                        sh_ids[i] = vx;
+                        sh_ids[ixj] = vi;
+                        let si = sh_slots[i];
+                        sh_slots[i] = sh_slots[ixj];
+                        sh_slots[ixj] = si;
+                    }
+                }
+            }
+            workgroupBarrier();
+            j = j >> 1u;
+        }
+        k = k << 1u;
+    }
+    // sh_ids/sh_slots[0..capn) are now id-ordered; [capn..MAX_CELL) hold the
+    // sentinel and are never touched below.
+
+    if (lid.x != 0u) {
+        return;
     }
 
     var axis = vec3<f32>(0.0, 0.0, 1.0);
@@ -128,21 +185,21 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     }
     let m = u32(m_i);
 
-    // Hash-mixed so distinct (cell, step) pairs never share an RNG stream
-    // (a linear combination aliases: 7919*dc == -104729*ds mod 2^32).
+    // Hash-mixed so distinct (cell, step) pairs never share an RNG stream.
     let key_base = hash_u32(cell ^ hash_u32(params.step ^ 0x9E3779B9u));
     for (var c = 0u; c < m; c = c + 1u) {
         let draw0 = c * 8u;
         let ui = rand01(params.seed_hi, params.seed_lo, key_base, draw0);
-        let uj0 = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 1u);
+        // j drawn uniformly from the n-1 slots != i (doc's fix -- the old
+        // "bump j to j+1 when j==i" double-weighted i+1).
+        let uj = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 1u);
         let i = min(u32(ui * f32(capn)), capn - 1u);
-        var j = min(u32(uj0 * f32(capn)), capn - 1u);
-        if (j == i) {
-            j = (j + 1u) % capn;
-        }
+        let n_minus_1 = max(capn, 2u) - 1u;
+        let j_off = min(u32(uj * f32(n_minus_1)), n_minus_1 - 1u);
+        let j = (i + 1u + j_off) % capn;
 
-        let slot_a = idxs[i];
-        let slot_b = idxs[j];
+        let slot_a = sh_slots[i];
+        let slot_b = sh_slots[j];
         var pa = photons[slot_a];
         var pb = photons[slot_b];
         let da = pa.b.xyz;
@@ -164,20 +221,75 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if (rel_len < 1e-6) {
             continue;
         }
-        let rel_hat = rel / rel_len;
-        let nhat = sample_contact_normal(rel_hat, params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
 
-        let new_da_raw = da - dot(da, nhat) * nhat + dot(db, nhat) * nhat;
-        let new_db_raw = db - dot(db, nhat) * nhat + dot(da, nhat) * nhat;
-        let len_a = max(length(new_da_raw), 1e-6);
-        let len_b = max(length(new_db_raw), 1e-6);
-        var new_da = new_da_raw / len_a;
-        var new_db = new_db_raw / len_b;
+        // --- D6 exchange: SwapRenorm (legacy, |v|=c only) or RotateRelative
+        // (conserves |v|=c AND d1+d2 exactly; doc §4 D6). ---
+        var new_da: vec3<f32>;
+        var new_db: vec3<f32>;
+        var renorm_drift = 0.0;
+        if (params.exchange_rule == 1u) {
+            // RotateRelative. V = mean, g = relative; |V|>0 case rotates g
+            // about V-hat (always perpendicular for equal-speed vectors);
+            // the exact head-on case (|V|~=0) rotates g about a random axis
+            // perpendicular to g instead.
+            let v_vec = (da + db) * 0.5;
+            let g_vec = da - db;
+            let v_len = length(v_vec);
+            // Glancing-biased scattering angle: same u-skew as
+            // sample_contact_normal (arp.pdf), mapped through the
+            // hard-sphere impact-parameter relation b=sin(chi/2)... doc's
+            // exact mapping: b = sqrt(u), chi = pi - 2*asin(b).
+            let u0 = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+            let one_minus_u0 = 1.0 - u0;
+            let u = 1.0 - one_minus_u0 * one_minus_u0 * one_minus_u0;
+            let b_impact = sqrt(clamp(u, 0.0, 1.0));
+            let chi_ang = PI - 2.0 * asin(clamp(b_impact, 0.0, 1.0));
+            let s = select(-1.0, 1.0, rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) < 0.5);
 
-        let drift = length(new_da_raw - new_da) + length(new_db_raw - new_db);
-        atomicAdd(&tallies[67], i32(drift * TALLY_SCALE)); // TALLY_MOM_DRIFT_SUM
-        atomicAdd(&tallies[62], 1); // TALLY_MOM_DRIFT_COUNT
-        atomicAdd(&tallies[61], 1); // TALLY_COLLISIONS
+            var g_rot: vec3<f32>;
+            if (v_len > 1e-6) {
+                let vhat = v_vec / v_len;
+                let theta = s * chi_ang;
+                g_rot = g_vec * cos(theta) + cross(vhat, g_vec) * sin(theta);
+            } else {
+                let ghat = g_vec / max(length(g_vec), 1e-6);
+                let helper = perp_helper(ghat);
+                let t = normalize(cross(ghat, helper));
+                let bperp = cross(ghat, t);
+                let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 5u) * TAU;
+                let raxis = t * cos(psi) + bperp * sin(psi);
+                g_rot = g_vec * cos(chi_ang) + cross(raxis, g_vec) * sin(chi_ang);
+            }
+            let raw_da = v_vec + g_rot * 0.5;
+            let raw_db = v_vec - g_rot * 0.5;
+            new_da = normalize(raw_da); // defensive re-normalise: f32 error only
+            new_db = normalize(raw_db);
+            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
+        } else {
+            // SwapRenorm (legacy exchange rule, Phase-1-like): sample a
+            // grazing-biased contact normal, swap its component between the
+            // pair, renormalise both to c. Does not conserve d1+d2 exactly
+            // (measured ~0.30 photon-momenta/collision in G1) -- reported
+            // for comparison, not used for physics runs.
+            let rel_hat = rel / rel_len;
+            let nhat = sample_contact_normal(rel_hat, params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+            let raw_da = da - dot(da, nhat) * nhat + dot(db, nhat) * nhat;
+            let raw_db = db - dot(db, nhat) * nhat + dot(da, nhat) * nhat;
+            let len_a = max(length(raw_da), 1e-6);
+            let len_b = max(length(raw_db), 1e-6);
+            new_da = raw_da / len_a;
+            new_db = raw_db / len_b;
+            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
+        }
+
+        let exchange_drift = length((new_da + new_db) - (da + db));
+        atomicAdd(&tallies[TALLY_MOM_DRIFT_SUM_IDX], i32(renorm_drift * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_EXCHANGE_DRIFT_SUM_IDX], i32(exchange_drift * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_MOM_DRIFT_COUNT_IDX], 1); // TALLY_MOM_DRIFT_COUNT (shared denominator)
+        atomicAdd(&tallies[TALLY_COLLISIONS_IDX], 1);
+        if (max(i, j) < RANK64) {
+            atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
+        }
 
         let chi_a = chi_of(pa.c[0]);
         let chi_b = chi_of(pb.c[0]);
@@ -193,6 +305,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         let spin_delta_a = params.spin_transfer * chi_b * dir_sign;
         let spin_delta_b = params.spin_transfer * chi_a * dir_sign;
 
+        let pre_redirect_sum = new_da + new_db;
         if (params.cancel_redirect > 0.0 && params.n_bodies > 0u) {
             let pos_a = pa.a.xyz - body_center;
             let pos_b = pb.a.xyz - body_center;
@@ -224,6 +337,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 }
             }
         }
+        let redirect_drift = length((new_da + new_db) - pre_redirect_sum);
+        atomicAdd(&tallies[TALLY_REDIRECT_DRIFT_SUM_IDX], i32(redirect_drift * TALLY_SCALE));
 
         let bounces_a = pa.c[1];
         let bounces_b = pb.c[1];

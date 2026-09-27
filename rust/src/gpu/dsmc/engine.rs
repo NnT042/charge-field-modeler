@@ -21,7 +21,7 @@ use crate::gpu::context::GpuContext;
 use crate::gpu::kernel::{workgroup_grid_for_threads, Kernel};
 use crate::gpu::sort::CellSorter;
 
-use super::config::{Boundary, DsmcConfig, EmissionMode, GpuOrient, MeshMode, RateKernel};
+use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel};
 use super::gpu_types::{GpuBody, GpuInjectParams, GpuParams, GpuPhoton, HIST_LEN, TALLY_LEN};
 use super::precompute::{precompute, Grid};
 
@@ -48,6 +48,10 @@ pub struct Totals {
     pub dz2_sum: f64,
     pub mom_drift_sum: f64,
     pub dir_sum_samples: i64,
+    pub cell_overflow: i64,
+    pub exchange_drift_sum: f64,
+    pub redirect_drift_sum: f64,
+    pub low_rank64_collisions: i64,
 }
 
 impl Totals {
@@ -74,6 +78,19 @@ impl Totals {
         self.dir_sum[2] += raw[65] as f64 / SCALE;
         self.dz2_sum += raw[66] as f64 / SCALE;
         self.mom_drift_sum += raw[67] as f64 / SCALE;
+        self.cell_overflow += raw[68] as i64;
+        // Never silent: a cell above MAX_CELL only pairs its first MAX_CELL
+        // photons (by id), which biases exactly the dense gas we care about.
+        // Callers should refine `h` if this ever prints.
+        if raw[68] > 0 {
+            eprintln!(
+                "DSMC WARNING: {} cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h",
+                raw[68]
+            );
+        }
+        self.exchange_drift_sum += raw[69] as f64 / SCALE;
+        self.redirect_drift_sum += raw[70] as f64 / SCALE;
+        self.low_rank64_collisions += raw[71] as i64;
         self.dir_sum_samples += sample_count as i64;
     }
 }
@@ -257,7 +274,7 @@ impl DsmcEngine {
             domain_center_x: center.x as f32,
             domain_center_y: center.y as f32,
             domain_center_z: center.z as f32,
-            _pad2: 0.0,
+            exchange_rule: if c.exchange_rule == ExchangeRule::RotateRelative { 1 } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }
@@ -351,7 +368,13 @@ impl DsmcEngine {
                 Some(&self.gather_params_buf),
                 grid_n,
             );
-            let grid_cells = workgroup_grid_for_threads(self.grid.num_cells, 64);
+            // One workgroup PER CELL (not 64 cells/workgroup as before): the
+            // collide kernel now sorts and pairs the whole cell in workgroup
+            // shared memory, so `local_size=1` here just turns
+            // `workgroup_grid_for_threads` into "however many 2-D workgroups
+            // it takes to cover num_cells", matching dsmc_collide.wgsl's
+            // `cell = wid.x + wid.y * nwg.x` indexing.
+            let grid_cells = workgroup_grid_for_threads(self.grid.num_cells, 1);
             self.collide_kernel.record(
                 ctx,
                 &mut encoder,
@@ -397,6 +420,13 @@ impl DsmcEngine {
 
     pub fn read_hist(&self, ctx: &GpuContext) -> Vec<u32> {
         ctx.read_buffer(&self.hist_buf, HIST_LEN)
+    }
+
+    /// Reads back the first `n_used` photon records from the live buffer.
+    /// Test/report use only (e.g. G1-dense's per-photon collision-fairness
+    /// check) -- not on any hot path.
+    pub fn read_photons(&self, ctx: &GpuContext) -> Vec<GpuPhoton> {
+        ctx.read_buffer(self.cur_buf(), self.n_used as usize)
     }
 
     /// Doc §3.3 flux formulas, exposed so gate/report code doesn't duplicate

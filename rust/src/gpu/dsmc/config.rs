@@ -36,6 +36,18 @@ pub enum EmissionMode {
 
 pub const PUMP_EMA_STEPS: f64 = 50.0;
 
+/// D6 — exchange rule (doc §4 D6, extended post-B1). `SwapRenorm`: sample a
+/// contact normal, swap its component between d1/d2, renormalise both to c
+/// (Phase-1-like; measured ~0.30 photon-momenta drift per collision in G1).
+/// `RotateRelative`: rotate the relative vector g = d1-d2 about the mean
+/// V = (d1+d2)/2 (or, when |V| ~ 0, about a random axis perp to g) by a
+/// glancing-biased scattering angle; conserves |d|=1 and momentum exactly.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExchangeRule {
+    SwapRenorm,
+    RotateRelative,
+}
+
 /// Nucleon seating in a stack (recycling.rs `StackOrient`, duplicated here so
 /// the GPU module has no dependency on the CPU Phase-1 module).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -136,6 +148,7 @@ pub struct DsmcConfig {
 
     pub rate_kernel: RateKernel,
     pub mesh_mode: MeshMode,
+    pub exchange_rule: ExchangeRule,
     pub emission_mode: EmissionMode,
     /// D4: per-photon bounce cap; 0 disables the cap.
     pub bounce_cap: u32,

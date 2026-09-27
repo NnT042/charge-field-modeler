@@ -5878,8 +5878,10 @@ mod tests {
 mod dsmc_gates {
     use super::*;
     use crate::gpu::context::GpuContext;
-    use crate::gpu::dsmc::gpu_types::{HIST_ARRIVAL_BLOCK, HIST_BINS, HIST_EMISSION_BLOCK};
-    use crate::gpu::dsmc::{BodyConfig, Boundary, DsmcConfig, DsmcEngine, EmissionMode, GpuClass, GpuOrient, MeshMode, RateKernel, Totals};
+    use crate::gpu::dsmc::gpu_types::{GpuPhoton, FLAG_ALIVE, HIST_ARRIVAL_BLOCK, HIST_BINS, HIST_EMISSION_BLOCK};
+    use crate::gpu::dsmc::{
+        BodyConfig, Boundary, DsmcConfig, DsmcEngine, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel, Totals,
+    };
 
     macro_rules! require_gpu {
         () => {
@@ -6002,6 +6004,7 @@ mod dsmc_gates {
             swing_boost: DEFAULT_SWING_BOOST,
             rate_kernel: RateKernel::Constant,
             mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::SwapRenorm,
             emission_mode: EmissionMode::Forced,
             bounce_cap: 0,
             d5_far_zone_gate: true,
@@ -6276,6 +6279,7 @@ mod dsmc_gates {
             swing_boost: 0.0,
             rate_kernel,
             mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::SwapRenorm,
             emission_mode: EmissionMode::Forced,
             bounce_cap: 0,
             d5_far_zone_gate: false,
@@ -6381,6 +6385,7 @@ mod dsmc_gates {
             swing_boost: 0.0,
             rate_kernel: RateKernel::Catch,
             mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::SwapRenorm,
             emission_mode: EmissionMode::Forced,
             bounce_cap: 0,
             d5_far_zone_gate: false,
@@ -6410,5 +6415,260 @@ mod dsmc_gates {
             a.dir_sum,
             b.dir_sum
         );
+    }
+
+    /// B2 work item 1: a dense periodic box (~300 live photons/cell, so most
+    /// cells exceed the old kernel's MAX_CELL=64) exercising the rewritten
+    /// one-workgroup-per-cell `dsmc_collide`. Two independent checks:
+    ///   - rate: measured collision rate within 2% of kinetic theory (same
+    ///     statistic as `run_g1`, but now at a density where the OLD kernel's
+    ///     candidate-count formula still integrates to the right TOTAL even
+    ///     though it draws candidates from only the 64 lowest-id photons per
+    ///     cell -- so this by itself would NOT have caught the bug);
+    ///   - fairness: the fraction of live photons that collided at least once
+    ///     (`bounces > 0`, uncapped) over the run. Under fair per-cell
+    ///     pairing over ~300 photons/cell this should approach 1; under the
+    ///     old 64-cap it is bounded near 64/300 per cell regardless of run
+    ///     length (measured separately against the pre-rewrite kernel below,
+    ///     `g1_dense_old_kernel_would_fail`).
+    fn run_g1_dense(rate_kernel: RateKernel, exchange_rule: ExchangeRule, seed: u64) -> (f64, f64, f64) {
+        use std::time::Instant;
+        println!("=== G1-dense: {rate_kernel:?} / {exchange_rule:?} (~300 photons/cell) ===");
+        macro_rules! require_gpu_ret {
+            () => {
+                match GpuContext::new() {
+                    Some(ctx) => ctx,
+                    None => {
+                        println!("no GPU adapter, skipping");
+                        return (0.0, 1.0, 0.0);
+                    }
+                }
+            };
+        }
+
+        const HALF_EXTENT: f64 = 2.5;
+        const N: u32 = 300_000;
+        const SIGMA: f64 = 0.002;
+        const H: f64 = 0.5;
+        const DT: f64 = 0.05;
+        const K: u32 = 25;
+
+        let volume = (2.0 * HALF_EXTENT).powi(3);
+        let n_density = N as f64 / volume;
+        let num_cells = ((2.0 * HALF_EXTENT / H).round() as u64).pow(3);
+        println!("  {num_cells} cells, ~{:.0} photons/cell avg", N as f64 / num_cells as f64);
+
+        let config = DsmcConfig {
+            boundary: Boundary::PeriodicBox { half_extent: HALF_EXTENT },
+            bodies: vec![],
+            h: H,
+            dt: DT,
+            capacity: N + 16,
+            seed,
+            n_ambient: n_density,
+            sigma: SIGMA,
+            photon_fraction: 0.5,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: 0.0,
+            rate_kernel,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        let ctx = require_gpu_ret!();
+        let started = Instant::now();
+        let mut engine = DsmcEngine::new(&ctx, config);
+        engine.inject_batch(&ctx, N, &[]);
+
+        let mut totals = Totals::default();
+        for _ in 0..K {
+            engine.step_collide(&ctx, &mut totals);
+        }
+        let elapsed = started.elapsed();
+        let ms_per_step = elapsed.as_secs_f64() * 1000.0 / K as f64;
+
+        let g_max = if rate_kernel == RateKernel::Catch { 2.0 } else { 1.0 };
+        let expected_g_bar = if rate_kernel == RateKernel::Catch { 4.0 / 3.0 } else { 1.0 };
+        let total_path = N as f64 * DT * K as f64;
+        let measured_rate = 2.0 * totals.collisions as f64 / total_path;
+        let expected_rate = SIGMA * n_density * expected_g_bar;
+        let rel_err = (measured_rate - expected_rate).abs() / expected_rate;
+
+        let photons = engine.read_photons(&ctx);
+        let touched = photons.iter().filter(|p| p.c[1] > 0).count();
+        let touched_frac = touched as f64 / photons.len() as f64;
+        // Primary fairness discriminator (see TALLY_LOW_RANK64_COLLISIONS
+        // doc): fraction of accepted collisions where BOTH partners rank
+        // <64 by id within their cell. Single-step-sufficient, unlike
+        // `touched_frac` above (informational only -- a moving population
+        // washes that one out within ~20 steps as cell membership
+        // reshuffles, so it does NOT reliably separate old from new kernel;
+        // measured directly against the pre-rewrite kernel, see report).
+        let low_rank_frac = totals.low_rank64_collisions as f64 / totals.collisions.max(1) as f64;
+
+        println!(
+            "  {ms_per_step:.2} ms/step ({N} photons, {K} steps, g_max={g_max}): collisions={} measured_rate={measured_rate:.6} expected_rate={expected_rate:.6} rel_err={:.4}",
+            totals.collisions, rel_err
+        );
+        println!(
+            "  fairness: low_rank64_frac={:.4} (expect ~few % for a fair draw from ~300/cell; old kernel measured ~1.0); touched>=1x {touched}/{} ({:.2}%, informational); cell_overflow={} exchange_drift/coll={:.6} redirect_drift/coll={:.6}",
+            low_rank_frac,
+            photons.len(),
+            touched_frac * 100.0,
+            totals.cell_overflow,
+            if totals.mom_drift_count > 0 { totals.exchange_drift_sum / totals.mom_drift_count as f64 } else { 0.0 },
+            if totals.mom_drift_count > 0 { totals.redirect_drift_sum / totals.mom_drift_count as f64 } else { 0.0 },
+        );
+        (rel_err, low_rank_frac, ms_per_step)
+    }
+
+    #[test]
+    fn g1_dense_constant() {
+        let (rel_err, low_rank_frac, _ms) = run_g1_dense(RateKernel::Constant, ExchangeRule::SwapRenorm, 0x6105_0001);
+        assert!(rel_err < 0.02, "G1-dense Constant: rate off by {:.2}% (limit 2%)", rel_err * 100.0);
+        assert!(
+            low_rank_frac < 0.2,
+            "G1-dense Constant: {:.1}% of collisions had both partners rank<64 (expect a few %, biased-kernel measured ~100%)",
+            low_rank_frac * 100.0
+        );
+    }
+
+    #[test]
+    fn g1_dense_catch() {
+        let (rel_err, low_rank_frac, _ms) = run_g1_dense(RateKernel::Catch, ExchangeRule::SwapRenorm, 0x6105_0002);
+        assert!(rel_err < 0.02, "G1-dense Catch: rate off by {:.2}% (limit 2%)", rel_err * 100.0);
+        assert!(
+            low_rank_frac < 0.2,
+            "G1-dense Catch: {:.1}% of collisions had both partners rank<64 (expect a few %, biased-kernel measured ~100%)",
+            low_rank_frac * 100.0
+        );
+    }
+
+    #[test]
+    fn g1_dense_determinism() {
+        let (_, a, _) = run_g1_dense(RateKernel::Catch, ExchangeRule::SwapRenorm, 0x6105_00AA);
+        let (_, b, _) = run_g1_dense(RateKernel::Catch, ExchangeRule::SwapRenorm, 0x6105_00AA);
+        assert!((a - b).abs() < 1e-12, "same seed twice must give identical low-rank fraction: {a} vs {b}");
+    }
+
+    /// D6 extension of G1: under `RotateRelative`, the exchange step itself
+    /// must conserve momentum to f32 noise (<1e-5/collision) and preserve
+    /// |d|=1, while rate and isotropy still pass -- vs `SwapRenorm`'s
+    /// measured ~0.30 (see `g1_kinetics_catch`'s printed drift).
+    #[test]
+    fn g1_d6_rotate_relative_conserves_momentum() {
+        let rot = run_d6_box(ExchangeRule::RotateRelative);
+        let swap = run_d6_box(ExchangeRule::SwapRenorm);
+        println!(
+            "  |dP_total| over the run: RotateRelative {:.3e}, SwapRenorm {:.3e} (collisions {} / {})",
+            rot.dp, swap.dp, rot.collisions, swap.collisions
+        );
+        // Sensitivity: the non-conserving rule must visibly fail the same
+        // measurement, or the conservation check below proves nothing.
+        assert!(swap.dp > 1.0, "SwapRenorm |dP| = {:.3e}: measurement not sensitive", swap.dp);
+        // f32 rounding random-walks at ~1e-7 per update over ~5e5 collisions
+        // (~1e-4 total); 1e-2 is a hundred times that and ~1e4 below SwapRenorm.
+        assert!(rot.dp < 1e-2, "RotateRelative: total momentum drifted by {:.3e}", rot.dp);
+        assert!(rot.max_norm_err < 1e-5, "RotateRelative: max ||d|-1| = {:.3e}", rot.max_norm_err);
+    }
+
+    struct D6Outcome {
+        dp: f64,
+        max_norm_err: f64,
+        collisions: i64,
+    }
+
+    fn box_momentum(ph: &[GpuPhoton]) -> ([f64; 3], f64) {
+        let mut p = [0.0f64; 3];
+        let mut max_err = 0.0f64;
+        for q in ph.iter().filter(|q| q.c[0] & FLAG_ALIVE != 0) {
+            let d = [q.b[0] as f64, q.b[1] as f64, q.b[2] as f64];
+            for k in 0..3 {
+                p[k] += d[k];
+            }
+            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            max_err = max_err.max((n - 1.0).abs());
+        }
+        (p, max_err)
+    }
+
+    fn run_d6_box(rule: ExchangeRule) -> D6Outcome {
+        use std::time::Instant;
+        const HALF_EXTENT: f64 = 5.0;
+        const N: u32 = 200_000;
+        const SIGMA: f64 = 0.002;
+        const K: u32 = 200;
+
+        let volume = (2.0 * HALF_EXTENT).powi(3);
+        let n_density = N as f64 / volume;
+        let config = DsmcConfig {
+            boundary: Boundary::PeriodicBox { half_extent: HALF_EXTENT },
+            bodies: vec![],
+            h: 0.5,
+            dt: 0.05,
+            capacity: N + 16,
+            seed: 0x6D06_0001,
+            n_ambient: n_density,
+            sigma: SIGMA,
+            photon_fraction: 0.5,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: 0.0,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: rule,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        let ctx = GpuContext::new().expect("G1 D6 needs a GPU adapter");
+        let started = Instant::now();
+        let mut engine = DsmcEngine::new(&ctx, config);
+        engine.inject_batch(&ctx, N, &[]);
+        // Inject writes the photons; one transport-free readback needs them
+        // resident, so take P0 after the first collide-free state is settled.
+        let (p0, _) = box_momentum(&engine.read_photons(&ctx));
+        let mut totals = Totals::default();
+        for _ in 0..K {
+            engine.step_collide(&ctx, &mut totals);
+        }
+        let mut iso_totals = Totals::default();
+        engine.step_collide(&ctx, &mut iso_totals);
+        let ms_per_step = started.elapsed().as_secs_f64() * 1000.0 / K as f64;
+
+        let expected_rate = SIGMA * n_density * (4.0 / 3.0);
+        let measured_rate = 2.0 * totals.collisions as f64 / (N as f64 * 0.05 * K as f64);
+        let rel_err = (measured_rate - expected_rate).abs() / expected_rate;
+
+        let n_samp = iso_totals.dir_sum_samples.max(1) as f64;
+        let mean_dir = [iso_totals.dir_sum[0] / n_samp, iso_totals.dir_sum[1] / n_samp, iso_totals.dir_sum[2] / n_samp];
+        let se_mean = (1.0f64 / 3.0 / n_samp).sqrt();
+        let worst_iso_z = mean_dir.iter().map(|d| (d / se_mean).abs()).fold(0.0f64, f64::max);
+
+        let exchange_drift_per_coll = if totals.mom_drift_count > 0 { totals.exchange_drift_sum / totals.mom_drift_count as f64 } else { 0.0 };
+        let renorm_drift_per_coll = if totals.mom_drift_count > 0 { totals.mom_drift_sum / totals.mom_drift_count as f64 } else { 0.0 };
+
+        println!(
+            "=== G1 D6 {rule:?} === {ms_per_step:.2} ms/step, collisions={} rel_err={:.4} worst_iso_z={worst_iso_z:.2}",
+            totals.collisions, rel_err
+        );
+        println!(
+            "  [{rule:?}] tally (fixed-point, resolution 1/4096 per collision, report-only): exchange drift/collision = {exchange_drift_per_coll:.6}; renorm |d|-correction/collision = {renorm_drift_per_coll:.6}"
+        );
+
+        assert!(rel_err < 0.02, "{rule:?}: rate off by {:.2}% (limit 2%)", rel_err * 100.0);
+        assert!(worst_iso_z < 3.0, "{rule:?}: isotropy worst |z| = {worst_iso_z:.3} exceeds 3-sigma");
+        let (p1, max_norm_err) = box_momentum(&engine.read_photons(&ctx));
+        let dp = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) + (p1[2] - p0[2]).powi(2)).sqrt();
+        D6Outcome { dp, max_norm_err, collisions: totals.collisions }
     }
 }

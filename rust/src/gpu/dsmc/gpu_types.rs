@@ -12,7 +12,7 @@ use bytemuck::{Pod, Zeroable};
 /// 3-4 source body index, 5-8 crossed-lane mask, 9-12 arrived mask,
 /// 13 collided-since-last-crossing, 14-31 spare.
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, Default)]
 pub struct GpuPhoton {
     pub a: [f32; 4],
     pub b: [f32; 4],
@@ -141,7 +141,8 @@ pub struct GpuParams {
     pub domain_center_x: f32,
     pub domain_center_y: f32,
     pub domain_center_z: f32,
-    pub _pad2: f32,
+    /// D6: 0 = SwapRenorm, 1 = RotateRelative.
+    pub exchange_rule: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -182,7 +183,18 @@ pub const TALLY_COLLISIONS: usize = 61; // len 1
 pub const TALLY_MOM_DRIFT_COUNT: usize = 62; // len 1
 pub const TALLY_DIR_SUM: usize = 63; // [x,y,z] fixed-point, len 3
 pub const TALLY_DZ2_SUM: usize = 66; // fixed-point, len 1
-pub const TALLY_MOM_DRIFT_SUM: usize = 67; // fixed-point, len 1
+pub const TALLY_MOM_DRIFT_SUM: usize = 67; // fixed-point, len 1 (SwapRenorm-only renorm-correction magnitude, legacy)
+pub const TALLY_CELL_OVERFLOW: usize = 68; // count of cells with live count > dsmc_collide::MAX_CELL this dispatch
+pub const TALLY_EXCHANGE_DRIFT_SUM: usize = 69; // fixed-point: |sum((d1'+d2')-(d1+d2))| from the exchange step alone (D6)
+pub const TALLY_REDIRECT_DRIFT_SUM: usize = 70; // fixed-point: same, from the gear-redirect step alone
+/// Count of accepted collisions where BOTH partners' id-rank within their
+/// (sorted) cell are < 64 -- the old kernel's dead-fixed MAX_CELL. In a fair
+/// draw over a cell of size n>64 this should be ~(64/n)^2 (a few percent at
+/// n~300); a kernel wrongly capped at 64 candidates gives ~1.0 regardless of
+/// n, by construction -- a single-step-sufficient discriminator (unlike a
+/// multi-step "fraction of photons ever touched", which a moving population
+/// washes out within ~20 steps as cell membership reshuffles).
+pub const TALLY_LOW_RANK64_COLLISIONS: usize = 71;
 pub const TALLY_LEN: usize = 72;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]

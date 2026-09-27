@@ -7,5 +7,5 @@ pub mod engine;
 pub mod gpu_types;
 pub mod precompute;
 
-pub use config::{BodyConfig, Boundary, DsmcConfig, EmissionMode, GpuClass, GpuOrient, MeshMode, RateKernel};
+pub use config::{BodyConfig, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel};
 pub use engine::{DsmcEngine, Totals};
