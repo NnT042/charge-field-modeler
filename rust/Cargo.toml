@@ -11,7 +11,14 @@ crate-type = ["cdylib", "rlib"]
 godot = "0.5"
 glam = "0.32"
 rayon = "1"
+wgpu = { version = "30.0.1", features = ["glsl", "vulkan"], optional = true }
+pollster = { version = "1.0.1", optional = true }
+bytemuck = { version = "1.25.2", features = ["derive"], optional = true }
+rand = { version = "0.10.3", optional = true }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[features]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:rand"]

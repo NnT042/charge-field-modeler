@@ -5,6 +5,8 @@ pub mod atom_scenarios;
 pub mod calibration;
 mod calibration_view;
 pub mod charge_flow;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 mod atom_sim;
 mod field_sim;
 mod focus_particle;
