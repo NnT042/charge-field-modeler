@@ -6,6 +6,108 @@ option so the choice is a config flag, not a rewrite.
 
 ---
 
+## 0. Glossary
+
+**Simulation method**
+- **DSMC:** Direct Simulation Monte Carlo. Keep many real particles in flight at
+  once; each time step, move them, sort them into grid cells, and collide randomly
+  chosen pairs *within the same cell* at the rate kinetic theory gives. The standard
+  method for rarefied gases (Bird 1994).
+- **Monte Carlo:** answering a question by sampling many random cases and counting
+  outcomes.
+- **Phase 1:** the existing CPU model in `recycling.rs`. It marches *one* photon at a
+  time through a precomputed, frozen density field, then re-tallies the field and
+  repeats until it stops changing.
+- **Phantom partner:** in Phase 1, when a photon "collides", its partner's direction is
+  invented from the local field's average. The partner doesn't exist, so it never
+  recoils.
+- **Cell:** one cube of the collision grid (0.25 body radii on a side). Only photons in
+  the same cell can collide.
+- **NTC:** No-Time-Counter, Bird's recipe for how many candidate pairs to test per
+  cell per step so the collision rate comes out right.
+- **Cross-section σ:** the effective target area a photon presents; collision rate =
+  σ × density × closing speed. *Not the same σ as "3σ" below.*
+- **Mean free path λ:** average distance a photon travels between collisions,
+  = 1/(σ·n). The engine's main physical knob.
+- **TAU (τ), optical depth:** the expected number of collisions along a given path.
+  τ = 1 means a photon crossing that path collides once on average; the survival
+  fraction is e^(−τ).
+- **Reciprocity:** one collision involves two photons, so the rate at which A-photons
+  hit B-photons must equal the rate at which B-photons get hit by A-photons.
+- **Renormalise:** rescale a direction vector back to length 1, i.e. speed c.
+- **Steady state:** the flow has settled, so inflow equals outflow and averages stop
+  drifting.
+- **Kernel (GPU):** one small program the GPU runs on thousands of items in parallel.
+  "Rate kernel" (D1) instead means the formula for the collision rate.
+- **Seed / salt:** the number a random-number stream starts from. Same seed = identical
+  run. `CFM_SEED_SALT` gives a different, equally valid set of random draws.
+
+**Validation**
+- **Gate:** a pass/fail check the engine must pass before its physics numbers are
+  trusted. It is named for the gate you pass through, not a logic gate.
+  - **G0 transport:** collisions off; photons must fly, hit, cross and escape
+    exactly as the CPU Phase-1 code predicts.
+  - **G1 kinetics:** in a plain box of photons, the measured collision rate must match
+    textbook kinetic theory.
+  - **G2 single body, G3 p-n-p stack:** report-only comparisons with Phase 1, which
+    are *expected* to differ once the partner is real.
+- **z / "3σ" (statistics):** how many standard deviations apart two measurements are.
+  Noise alone rarely exceeds 3–4; a real disagreement grows with more samples.
+- **Family-wise threshold:** when you make ~100 comparisons, a few will hit 3σ by
+  luck, so the gate uses 4σ.
+
+**Mathis mechanics (as modelled)**
+- **Chirality χ:** a photon's spin sense, +1 (photon) or −1 (antiphoton). A frozen
+  *tag*: it says which species the photon is.
+- **Spin (carried):** the photon's magnetic degree of freedom. It starts equal to χ and
+  is stacked or cancelled by collisions. The magnetic observables sum this, not χ.
+- **Species:** photon (χ = +1) vs antiphoton (χ = −1). Near Earth the ambient field is
+  2/3 photon (`photon_fraction`).
+- **Ambient vs emitted:** ambient = the background charge field flowing in from
+  outside; emitted = charge a body puts out (its recycled exhaust).
+- **Gears / gearing:** Mathis's picture of two spinning photons edge-hitting like cog
+  wheels. Whether the cogs *mesh* decides the outcome:
+  - **Augment** (they mesh): spins stack; the charge escapes normally, and is nudged
+    toward the body's equatorial disc.
+  - **Cancel** (they catch): spins cancel; the charge is blocked, and is nudged toward
+    the nearer pole (the through-channel).
+- **Mesh sign:** the number that decides augment (+) or cancel (−). Phase 1 uses
+  χ₁·χ₂; D2 is about whether travel direction also enters.
+- **Redirect (`cancel_redirect`):** how strongly a cancel or augment nudges the
+  photon's direction toward the pole or the disc (0 = none, 1 = fully).
+- **Spin transfer (`spin_transfer`):** how much of the partner's spin a photon picks up
+  per collision.
+- **Glancing hit:** photons hit edge to edge, almost never head-on (arp.pdf). So
+  collisions mostly change direction slightly and change spin, rather than bouncing
+  photons back.
+- **Lane / through-lane / through-charge:** the narrow polar hole (radius 1/3 of the
+  body) where charge arriving nearly along the spin axis passes straight through the
+  body pole-to-pole, keeping its species and spin, instead of being absorbed.
+- **Disc:** a body's equatorial emission, where ~95–99% of its output leaves.
+- **Seating:** how a body sits in a stack. **PoleOn** = spin axis along the stack (the
+  lane faces its neighbours; neutrons). **EdgeOn** = spin axis sideways (the disc
+  fires along the stack; protons).
+- **Feeder / probe / middle:** in the p-n-p stack, the two outer protons are *feeders*
+  whose disc exhaust feeds the *middle* neutron. *Probe* = whichever body is being
+  measured.
+- **Hand-off:** charge that crosses the middle body's lane and is then absorbed by the
+  far feeder, i.e. passed along the stack. It measured ~78% in Phase 1.
+- **f\*:** how many times more feed the middle neutron needs for its escaping spin sum
+  to reach zero (neutral). Phase 1: ~170–180× the p-n-p feed.
+- **Densification:** gas piling up in and around a stack so the feed gets stronger.
+  This is the mechanism that would have to supply f\*.
+- **Pump mode vs forced mode:** pump = each body emits exactly what it absorbs, so it
+  is an engine and intake drives output. Forced = fixed emission rate (a Phase-1
+  comparison mode).
+- **Intake tilt (`pole_intake_bias`):** ambient photons are steered along the pole
+  axis by species (photons enter south, antiphotons north; venus2.pdf).
+- **Near zone / B_MAX = 6:** the region within 6 body radii, where Phase 1 does its
+  detailed bookkeeping.
+- **R_D = 12:** radius of the DSMC domain. Photons crossing it outward have escaped.
+- **Ricochet cap:** Phase 1's maximum collisions per photon (30).
+- **Swing boost:** a small sideways kick given to emitted photons by the body's outer
+  spin (0.05 c).
+
 ## 1. Why, and what Phase 1 cannot do
 
 Phase 1 (`recycling.rs`) marches one test photon at a time through a *frozen*
