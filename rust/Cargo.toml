@@ -22,3 +22,14 @@ codegen-units = 1
 
 [features]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:rand"]
+
+# Tests and reports: release-speed code without the whole-program LTO and
+# single codegen unit that make `--release` test builds take ~20 min with
+# wgpu. Same IEEE float results (Rust never fast-maths).
+#   cargo test --profile fast --manifest-path rust/Cargo.toml ...
+# The Godot .dll still builds with --release.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
