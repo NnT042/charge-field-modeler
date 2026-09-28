@@ -3,9 +3,13 @@
 //! the physics this ports from `recycling.rs`.
 
 pub mod config;
+pub mod density;
 pub mod engine;
 pub mod gpu_types;
 pub mod precompute;
+pub mod sigma_calib;
 
 pub use config::{BodyConfig, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel};
-pub use engine::{DsmcEngine, Totals};
+pub use density::DensityMap;
+pub use engine::{DsmcEngine, SteadyBlock, SteadyReport, Totals};
+pub use sigma_calib::{calibrate_sigma_for_tau_in, measure_taus, SigmaCalibration};

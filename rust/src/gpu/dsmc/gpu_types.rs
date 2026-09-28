@@ -143,6 +143,14 @@ pub struct GpuParams {
     pub domain_center_z: f32,
     /// D6: 0 = SwapRenorm, 1 = RotateRelative.
     pub exchange_rule: u32,
+
+    /// Density map (doc §8): 1 while the caller wants `dsmc_move.wgsl` to
+    /// accumulate this step's live population into `density_buf` (the
+    /// steady-state averaging window only -- never during warm-up).
+    pub density_accumulate: u32,
+    pub _pad9a: u32,
+    pub _pad9b: u32,
+    pub _pad9c: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -195,7 +203,43 @@ pub const TALLY_REDIRECT_DRIFT_SUM: usize = 70; // fixed-point: same, from the g
 /// multi-step "fraction of photons ever touched", which a moving population
 /// washes out within ~20 steps as cell membership reshuffles).
 pub const TALLY_LOW_RANK64_COLLISIONS: usize = 71;
-pub const TALLY_LEN: usize = 72;
+
+// --- B2b work item 3 (doc §8 observables) ---
+
+/// Absorbed momentum: Sigma dir.xyz per body, fixed-point (open-field
+/// absorber force). [body*3 + axis], len 12.
+pub const TALLY_ABSORBED_MOM: usize = 72;
+/// Number of source-body "slots" for the escape tallies below: bodies 0..3
+/// plus slot 4 = "none" (ambient has no source body -- doc §8: "ambient
+/// source = none -> use band in stack frame").
+pub const ESCAPE_SRC_SLOTS: usize = 5;
+/// Latitude bands for the exit/escape topology (doc §8): 0 = polar (>60 deg),
+/// 1 = mid (30-60 deg), 2 = equatorial (<30 deg), of |latitude| in the
+/// relevant frame (source body's own frame if emitted, stack frame -- axis Z
+/// through the domain centroid -- if ambient).
+pub const ESCAPE_BANDS: usize = 3;
+/// Escapes by source-body-slot x species x exit-latitude band.
+/// [slot*2*3 + species*3 + band], len 5*2*3 = 30.
+pub const TALLY_ESCAPED_BAND: usize = 84;
+/// Spin sum (fixed-point) over the same index space, len 30.
+pub const TALLY_ESCAPED_BAND_SPIN: usize = 114;
+/// Of escaped photons, how many had crossed body i's lane at some point
+/// during their flight (a photon may set more than one bit, so these are NOT
+/// mutually exclusive with each other or with TALLY_ESCAPED_BAND -- they
+/// answer "crossed body i" independently for i=0..3, per doc §8's explicit
+/// "keep crossed body i for i=0..3"). [crossed_body*2 + species], len 8.
+pub const TALLY_ESCAPED_CROSSED_BODY: usize = 144;
+/// Spin sum (fixed-point) over the same index space, len 8.
+pub const TALLY_ESCAPED_CROSSED_BODY_SPIN: usize = 152;
+/// Counter-stream survival (doc §8, "measured not integrated"): whenever a
+/// photon that crossed body `i`'s lane at some earlier point arrives at
+/// (hits, whether absorbed or crossing again) a DIFFERENT body `j`, tally
+/// whether FLAG_COLLIDED_SINCE_CROSS is still clear (survived uninterrupted)
+/// or set (scattered somewhere in between). [i*4*2 + j*2 + collided(0/1)],
+/// len 4*4*2 = 32. Diagonal i==j entries are never written (a photon cannot
+/// "arrive at" the body whose lane it just crossed without leaving first).
+pub const TALLY_SURVIVAL: usize = 160;
+pub const TALLY_LEN: usize = 192;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;
@@ -205,4 +249,16 @@ pub const HIST_LEN: usize = HIST_MAX_BODIES * HIST_BINS * 2;
 
 pub fn hist_bin(lat_deg: f64) -> usize {
     (((lat_deg + 90.0) / 5.0).floor() as isize).clamp(0, HIST_BINS as isize - 1) as usize
+}
+
+/// Escape/exit latitude band (doc §8): 0 = polar (>60 deg), 1 = mid
+/// (30-60 deg), 2 = equatorial (<30 deg), of the ABSOLUTE latitude.
+pub fn escape_band(abs_lat_deg: f64) -> usize {
+    if abs_lat_deg > 60.0 {
+        0
+    } else if abs_lat_deg >= 30.0 {
+        1
+    } else {
+        2
+    }
 }

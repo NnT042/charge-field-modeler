@@ -34,7 +34,8 @@ struct Params {
     bounce_cap: u32, d5_far_zone_gate: u32, grid_dim_x: u32, grid_dim_y: u32,
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
-    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, _pad2: f32,
+    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
+    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;

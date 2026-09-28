@@ -5880,7 +5880,8 @@ mod dsmc_gates {
     use crate::gpu::context::GpuContext;
     use crate::gpu::dsmc::gpu_types::{GpuPhoton, FLAG_ALIVE, HIST_ARRIVAL_BLOCK, HIST_BINS, HIST_EMISSION_BLOCK};
     use crate::gpu::dsmc::{
-        BodyConfig, Boundary, DsmcConfig, DsmcEngine, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel, Totals,
+        calibrate_sigma_for_tau_in, measure_taus, BodyConfig, Boundary, DensityMap, DsmcConfig, DsmcEngine, EmissionMode, ExchangeRule, GpuClass,
+        GpuOrient, MeshMode, RateKernel, Totals,
     };
 
     macro_rules! require_gpu {
@@ -6670,5 +6671,578 @@ mod dsmc_gates {
         let (p1, max_norm_err) = box_momentum(&engine.read_photons(&ctx));
         let dp = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) + (p1[2] - p0[2]).powi(2)).sqrt();
         D6Outcome { dp, max_norm_err, collisions: totals.collisions }
+    }
+
+    // ---- B2b work item 1/2: steady-state driver + pump mode ----
+
+    /// The doc's conservation identity (§8): injected + emitted = absorbed +
+    /// escaped + delta(live), evaluated for ONE step from that step's own
+    /// (non-cumulative) tallies plus the engine's live count immediately
+    /// before and after the step. Pulled out as a free function so the
+    /// negative-control test below can exercise it directly without spinning
+    /// up a GPU context.
+    fn conservation_holds(injected: i64, emitted: i64, absorbed: i64, escaped: i64, live_before: i64, live_after: i64) -> bool {
+        injected + emitted == absorbed + escaped + (live_after - live_before)
+    }
+
+    /// Negative control for the conservation check used by
+    /// `dsmc_pump_tracks_absorption`: an off-by-one in ANY of the six
+    /// quantities must be caught. A check that silently tolerated small
+    /// mismatches (e.g. an `abs() < some_tolerance`) would miss exactly the
+    /// kind of one-photon accounting bug (double-counted escape, absorbed
+    /// photon not marked dead, etc.) this identity exists to catch -- so this
+    /// asserts perturbing any single term by +-1 flips a balanced tuple from
+    /// held to violated.
+    #[test]
+    fn dsmc_conservation_identity_catches_off_by_one() {
+        // A balanced tuple (arbitrary but internally consistent numbers).
+        let (injected, emitted, absorbed, escaped, live_before, live_after) = (37i64, 12i64, 20i64, 15i64, 100i64, 114i64);
+        assert!(
+            conservation_holds(injected, emitted, absorbed, escaped, live_before, live_after),
+            "sanity: the balanced tuple must hold (37+12 == 20+15+(114-100) == 49)"
+        );
+        // Perturb each term by +1 in turn: every one must break the identity.
+        assert!(!conservation_holds(injected + 1, emitted, absorbed, escaped, live_before, live_after), "+1 injected must be caught");
+        assert!(!conservation_holds(injected, emitted + 1, absorbed, escaped, live_before, live_after), "+1 emitted must be caught");
+        assert!(!conservation_holds(injected, emitted, absorbed + 1, escaped, live_before, live_after), "+1 absorbed must be caught");
+        assert!(!conservation_holds(injected, emitted, absorbed, escaped + 1, live_before, live_after), "+1 escaped must be caught");
+        assert!(!conservation_holds(injected, emitted, absorbed, escaped, live_before + 1, live_after), "+1 live_before must be caught");
+        assert!(!conservation_holds(injected, emitted, absorbed, escaped, live_before, live_after + 1), "+1 live_after must be caught");
+    }
+
+    #[test]
+    fn dsmc_sigma_zero_flux_run_stays_bounded() {
+        // Regression: at sigma = 0 step_collide used to skip sort+gather, which
+        // is also what compacts dead slots, so a flux-driven run grew by the
+        // whole injection every step until capacity panicked. With compaction
+        // the live count must level off near n_a * (4/3) pi R_D^3 minus the
+        // body -- a leaking engine exceeds 3x that inside this many steps.
+        let ctx = require_gpu!();
+        let body = BodyConfig { center: DVec3::ZERO, class: GpuClass::Proton, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        let n_a = 2.0;
+        let config = DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity: 200_000,
+            seed: 0x5160_0001,
+            n_ambient: n_a,
+            sigma: 0.0,
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Constant,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Pump,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        // 2000 steps = 4 domain diameters: a leak would add ~9k x 2000 = 18M.
+        for _ in 0..2000 {
+            engine.step_flux(&ctx);
+        }
+        let expected = n_a * 4.0 / 3.0 * PI * (12.0f64.powi(3) - 1.0);
+        let live = engine.n_live as f64;
+        println!("sigma=0 flux run: live={live} expected~{expected:.0} n_used={}", engine.n_used);
+        assert_eq!(engine.n_used, engine.n_live, "slots not compacted to the live range");
+        assert!((live / expected - 1.0).abs() < 0.1, "sigma=0 steady live count {live} vs analytic {expected:.0}");
+    }
+
+    /// B2b item 2: single proton, pump mode, physics defaults (Catch,
+    /// ChiralityOnly per the item's note -- DirRel is the D2 side-by-side
+    /// comparison for B3, not this test -- RotateRelative, cap 0, D5 off),
+    /// sigma moderate. Checks (a) the conservation identity EXACTLY every
+    /// step of the whole run (warm-up included: it must never depend on
+    /// having reached steady state), and (b) after warm-up, the body's mean
+    /// emission rate equals its mean absorption rate within 3-sigma
+    /// (Poisson: pump mode's whole design is "intake determines output", so
+    /// at steady state the EMA's long-run mean must track the signal it
+    /// smooths).
+    #[test]
+    fn dsmc_pump_tracks_absorption() {
+        let ctx = require_gpu!();
+
+        let body = BodyConfig { center: DVec3::ZERO, class: GpuClass::Proton, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        let config = DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity: 60_000,
+            seed: 0x7A57_0001,
+            n_ambient: 2.0,
+            sigma: 0.05, // moderate: lambda = 1/(sigma*n_ambient) = 10 body radii, comparable to the domain
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.5,
+            cancel_redirect: 0.5,
+            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Pump,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        let mut engine = DsmcEngine::new(&ctx, config);
+
+        const WARMUP: u32 = 800;
+        const AVG: u32 = 2500;
+
+        let mut absorbed_sum = 0i64;
+        let mut emitted_sum = 0i64;
+
+        use std::time::Instant;
+        let started = Instant::now();
+        for step in 0..(WARMUP + AVG) {
+            let live_before = engine.n_live as i64;
+            let step_totals = engine.step_flux(&ctx);
+            let live_after = engine.n_live as i64;
+
+            let absorbed = step_totals.absorbed_total(0);
+            let escaped: i64 = (0..2).flat_map(|k| (0..2).map(move |s| (k, s))).map(|(k, s)| step_totals.escaped[0][k][s]).sum();
+
+            assert!(
+                conservation_holds(step_totals.injected, step_totals.emitted[0], absorbed, escaped, live_before, live_after),
+                "step {step}: conservation identity broke: injected={} emitted={} absorbed={} escaped={} live_before={} live_after={}",
+                step_totals.injected,
+                step_totals.emitted[0],
+                absorbed,
+                escaped,
+                live_before,
+                live_after
+            );
+
+            if step >= WARMUP {
+                absorbed_sum += absorbed;
+                emitted_sum += step_totals.emitted[0];
+            }
+        }
+        let ms_per_step = started.elapsed().as_secs_f64() * 1000.0 / (WARMUP + AVG) as f64;
+
+        // Poisson: both sums are counts of independent-ish discrete events
+        // over the averaging window; se(A-E) ~= sqrt(A+E).
+        let se = ((absorbed_sum + emitted_sum) as f64).sqrt().max(1.0);
+        let z = (emitted_sum - absorbed_sum) as f64 / se;
+        println!(
+            "dsmc_pump_tracks_absorption: {ms_per_step:.3} ms/step, n_live={}, absorbed_sum={absorbed_sum} emitted_sum={emitted_sum} z={z:.3}",
+            engine.n_live
+        );
+        assert!(
+            z.abs() < 3.0,
+            "pump emission did not track absorption: absorbed_sum={absorbed_sum} emitted_sum={emitted_sum} z={z:.3} (limit 3.0)"
+        );
+    }
+
+    /// B2b item 1: the steady-state driver itself. A warmed-up run must pass
+    /// its own first-half/second-half check; a run given NO warm-up on a
+    /// config whose live population is still filling the (large) domain from
+    /// empty must show visibly larger |z| on the SAME check -- proving the
+    /// check is sensitive to a still-transient run rather than trivially
+    /// passing everything (the "show it can fail" requirement for a new
+    /// gate). Uses Forced emission (simpler, avoids coupling to the pump
+    /// EMA's own settling time so the transient is purely "domain still
+    /// filling").
+    fn steady_config(capacity: u32) -> DsmcConfig {
+        let body = BodyConfig { center: DVec3::ZERO, class: GpuClass::Neutron, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity,
+            seed: 0x57EA_0001,
+            n_ambient: 3.0,
+            sigma: 0.03,
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        }
+    }
+
+    #[test]
+    fn dsmc_run_steady_basic() {
+        let ctx = require_gpu!();
+        let mut engine = DsmcEngine::new(&ctx, steady_config(80_000));
+        // ~2 domain-crossing times (2*R_D/(c*dt) = 480) before averaging.
+        let report = engine.run_steady(&ctx, 1000, 2400, 200);
+        println!(
+            "dsmc_run_steady_basic: {} blocks, steady_ok={} ({})",
+            report.blocks.len(),
+            report.steady_ok,
+            report.steady_detail
+        );
+        for b in &report.blocks {
+            println!(
+                "  step={} live={} absorbed_rate={:?} emitted_rate={:?} collisions_rate={:.2}",
+                b.step, b.live, b.absorbed_rate, b.emitted_rate, b.collisions_rate
+            );
+        }
+        assert!(report.steady_ok, "warmed-up run failed its own steady-state check: {}", report.steady_detail);
+    }
+
+    #[test]
+    fn dsmc_run_steady_detects_non_steady() {
+        let ctx = require_gpu!();
+        // No warm-up: the block series starts from an EMPTY domain and rises
+        // toward steady state over ~480 steps (the crossing time), so the
+        // first blocks of a 2400-step window are still well below the later
+        // ones -- the same first-half/second-half live-count check that
+        // passes on a warmed-up run must now trip.
+        // Small blocks over a window that straddles the ~480-step crossing
+        // time, so the rising first half is compared against the
+        // already-near-steady second half (a window many crossing-times long
+        // averages the rise away inside a single early block instead).
+        let mut engine = DsmcEngine::new(&ctx, steady_config(80_000));
+        let report = engine.run_steady(&ctx, 0, 800, 50);
+        println!("dsmc_run_steady_detects_non_steady: steady_ok={} ({})", report.steady_ok, report.steady_detail);
+        for b in &report.blocks {
+            println!("  step={} live={}", b.step, b.live);
+        }
+        assert!(!report.steady_ok, "the steady-state check should have flagged an un-warmed-up (still-filling) run, but passed: {}", report.steady_detail);
+    }
+
+    // ---- B2b work item 3: observables (doc §8) ----
+
+    fn single_body_g0_config(class: GpuClass, bias: f64, capacity: u32) -> DsmcConfig {
+        let body = BodyConfig { center: DVec3::ZERO, class, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity,
+            seed: 0x0B5E_0001,
+            n_ambient: 0.0, // G0-style fixed burst, not a flux rate
+            sigma: 0.0,
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: bias,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Constant,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::SwapRenorm,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: true,
+            b_max: B_MAX,
+        }
+    }
+
+    /// New-observable self-consistency (doc §8 work item 3), all on a
+    /// SINGLE body so several pairs of tallies are provably forced to agree
+    /// -- any indexing slip in the new WGSL code breaks an EXACT equality,
+    /// not just a fuzzy statistical comparison. Ambient-only, sigma=0
+    /// transport (like G0), single proton, biased intake so both the escape
+    /// band and absorbed-momentum checks have something non-trivial to see.
+    #[test]
+    fn dsmc_observables_self_consistency() {
+        let ctx = require_gpu!();
+        let mut engine = DsmcEngine::new(&ctx, single_body_g0_config(GpuClass::Proton, 0.5, 500_000));
+        const N_AMBIENT: u32 = 300_000;
+        engine.inject_batch(&ctx, N_AMBIENT, &[]);
+
+        let mut totals = Totals::default();
+        const N_STEPS: u32 = 520; // 2*R_D/dt = 480, margin to fully clear the domain
+        for _ in 0..N_STEPS {
+            engine.step_transport_only(&ctx, &mut totals);
+        }
+
+        // (1) Ambient-only run: every escape's legacy source-body slot is 0
+        // (ambient never sets the SOURCE bits), so the legacy "body 0" escape
+        // total and the new escape-band "none" slot (4, doc's "ambient
+        // source = none") describe the exact SAME population.
+        let legacy_escaped_body0: i64 = (0..2).flat_map(|k| (0..2).map(move |s| (k, s))).map(|(k, s)| totals.escaped[0][k][s]).sum();
+        let band_none_total: i64 = (0..2).flat_map(|s| (0..3).map(move |b| (s, b))).map(|(s, b)| totals.escaped_band[4][s][b]).sum();
+        assert_eq!(legacy_escaped_body0, band_none_total, "escaped_band 'none' slot must exactly match the legacy ambient escape total");
+        assert!(band_none_total > 0, "sanity: some ambient photons should have escaped");
+
+        // (2) With only ONE body, "crossed any" (legacy crossed_any=1 bucket)
+        // and "crossed body 0" (the new per-crossed-body breakdown) are the
+        // exact same set of escaped photons.
+        for species in 0..2 {
+            assert_eq!(
+                totals.escaped[0][1][species], totals.escaped_crossed_body[0][species],
+                "single-body: crossed-any escapes must equal crossed-body-0 escapes for species {species}"
+            );
+        }
+        assert!(totals.escaped_crossed_body[0][0] + totals.escaped_crossed_body[0][1] > 0, "sanity: expected some through-lane escapes");
+
+        // (3) Survival is only meaningful BETWEEN bodies (i != j guard in the
+        // shader); with a single body it must be structurally zero -- a
+        // confused body index would show up here as a nonzero count.
+        let mut survival_total = 0i64;
+        for a in totals.survival.iter() {
+            for b in a.iter() {
+                for c in b.iter() {
+                    survival_total += c;
+                }
+            }
+        }
+        assert_eq!(survival_total, 0, "single-body run must never tally counter-stream survival (no second body to arrive at)");
+
+        // (4) Absorbed momentum is a sum of unit vectors over absorbed
+        // photons, so its magnitude can never exceed the absorbed count, and
+        // a directional intake bias must give a visibly nonzero net vector.
+        let absorbed0 = totals.absorbed_total(0) as f64;
+        let mom = totals.absorbed_mom[0];
+        let mom_mag = (mom[0] * mom[0] + mom[1] * mom[1] + mom[2] * mom[2]).sqrt();
+        assert!(mom_mag <= absorbed0 + 1.0, "absorbed momentum magnitude {mom_mag} exceeds absorbed count {absorbed0}");
+        assert!(mom_mag > 0.0, "sanity: directional intake bias should give a nonzero net absorbed momentum");
+
+        println!(
+            "dsmc_observables_self_consistency: escaped_band(none)={band_none_total} crossed_body0={:?} survival_total={survival_total} absorbed_mom[0]={mom:?} |mom|={mom_mag:.2} absorbed={absorbed0}",
+            totals.escaped_crossed_body[0]
+        );
+    }
+
+    /// Density map (doc §8 work item 3): the total counts accumulated over a
+    /// window must equal the sum of the live population sampled once per
+    /// step -- an exact integer identity (every alive photon contributes
+    /// exactly one count, to exactly one cell, each step). Sigma > 0 so
+    /// `step_collide`'s post-sort `n_live` is the true survivor count each
+    /// step (the quantity the density kernel actually increments for).
+    #[test]
+    fn dsmc_density_map_conserves_live_count() {
+        let ctx = require_gpu!();
+        let body = BodyConfig { center: DVec3::ZERO, class: GpuClass::Neutron, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        let config = DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity: 60_000,
+            seed: 0xDE45_0001,
+            n_ambient: 1.5,
+            sigma: 0.02,
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        engine.inject_batch(&ctx, 20_000, &[]);
+
+        // Let the burst settle into the domain before measuring (not required
+        // for the identity itself, just keeps the window away from the
+        // injection transient's sharpest edge).
+        let mut warm_totals = Totals::default();
+        for _ in 0..20 {
+            engine.step_collide(&ctx, &mut warm_totals);
+        }
+
+        engine.begin_density_accum(&ctx);
+        let mut expected_sum: u64 = 0;
+        const WINDOW: u32 = 30;
+        for _ in 0..WINDOW {
+            let mut t = Totals::default();
+            engine.step_collide(&ctx, &mut t);
+            // n_live is the post-sort survivor count for THIS step -- exactly
+            // the population the move kernel's density accumulation reached
+            // (dead photons return before that code).
+            expected_sum += engine.n_live as u64;
+        }
+        let raw = engine.read_density_raw(&ctx);
+        engine.end_density_accum();
+
+        let measured_sum: u64 = raw.iter().map(|&c| c as u64).sum();
+        println!("dsmc_density_map_conserves_live_count: expected={expected_sum} measured={measured_sum} cells={}", raw.len() / 4);
+        assert_eq!(expected_sum, measured_sum, "density map total counts must equal the sum of per-step live population over the window");
+
+        let map = DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), raw, WINDOW);
+        map.assert_no_overflow();
+    }
+
+    // ---- B2b work item 4: sigma calibration ----
+
+    /// Doc §11c: run single-body steady state at a guess sigma, measure
+    /// TAU_in from the emitted-density map, rescale, repeat <= 3 passes.
+    /// Negative control (by argument, per the brief): the rescale step is
+    /// `sigma /= ratio` where `ratio = tau_in_measured / tau_in_target`. A
+    /// broken implementation that inverted this (`sigma *= ratio`) would push
+    /// sigma the WRONG way whenever tau_in_measured missed the target --
+    /// moving further from convergence each pass instead of closer, so the
+    /// `converged` flag (and the final 25%-band assertion below) would
+    /// reliably fail instead of quietly reporting a wrong sigma.
+    #[test]
+    fn dsmc_sigma_calibration_converges() {
+        let ctx = require_gpu!();
+        let body = BodyConfig { center: DVec3::ZERO, class: GpuClass::Proton, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        let base_config = DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.5,
+            dt: 0.05,
+            capacity: 60_000,
+            seed: 0x51641_0001,
+            n_ambient: 1.5,
+            sigma: 0.02, // overwritten by calibration
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Constant,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        };
+
+        const TARGET: f64 = 1.0;
+        let calib = calibrate_sigma_for_tau_in(&ctx, &base_config, TARGET, 300, 600);
+        println!(
+            "dsmc_sigma_calibration_converges: sigma={:.5} tau_in={:.4} (target={TARGET}) tau_out={:.4} lambda_far={:.3} passes={} converged={}",
+            calib.sigma, calib.tau_in_measured, calib.tau_out_measured, calib.lambda_far, calib.passes, calib.converged
+        );
+        assert!(calib.sigma > 0.0 && calib.sigma.is_finite(), "sigma must be a finite positive number");
+        assert!(calib.lambda_far > 0.0 && calib.lambda_far.is_finite(), "lambda_far must be a finite positive number");
+        assert!(
+            (calib.tau_in_measured / TARGET - 1.0).abs() < 0.25,
+            "calibration should land near the target within a generous 25% band at this sample size (measured tau_in={})",
+            calib.tau_in_measured
+        );
+    }
+
+    // ---- B2b work item 5: the steady/single-body report ----
+
+    /// Physics defaults (user-approved 2026-09-27): Catch, RotateRelative, cap
+    /// off, D5 off, pump emission. `n_a` = simulated ambient density (sets the
+    /// photon count: live N ~ n_a * 7200 at R_D = 12); sigma = 1/(lambda * n_a).
+    fn physics_default_config(class: GpuClass, mesh_mode: MeshMode, lambda: f64, n_a: f64, capacity: u32, seed: u64) -> DsmcConfig {
+        let body = BodyConfig { center: DVec3::ZERO, class, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies: vec![body],
+            h: 0.25,
+            dt: 0.05,
+            capacity,
+            seed,
+            n_ambient: n_a,
+            sigma: if lambda.is_finite() { 1.0 / (lambda * n_a) } else { 0.0 },
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: 0.5,
+            cancel_redirect: 0.5,
+            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Pump,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+        }
+    }
+
+    /// Single-body steady state at physics defaults, swept over the far-field
+    /// ambient mean free path lambda (the physical knob, doc §3.2), for proton
+    /// and neutron in BOTH D2 mesh modes. TAU_in / TAU_out are printed as
+    /// OUTCOMES: a pump-mode body's exhaust is thinner than the ambient field,
+    /// so Phase-1's symmetric "TAU_in = TAU_out = 3" is not reachable here
+    /// (B2b found forcing TAU_in = 3 drives TAU_out past 100).
+    ///
+    /// Band shares are of the photons that ESCAPED in the averaging window
+    /// (they sum to 1); escape fraction = escaped / emitted over the same
+    /// window, which is only meaningful because the window is long compared
+    /// with a photon's residence time (checked via steady_ok).
+    #[test]
+    #[ignore]
+    fn report_dsmc_steady_single_body() {
+        use std::time::Instant;
+        let ctx = require_gpu!();
+
+        const N_A: f64 = 400.0; // ~2.9M ambient photons live
+        const CAPACITY: u32 = 6_000_000; // steady live ~2.9M at n_a 400
+        const WARMUP: u32 = 1200;
+        const AVG: u32 = 2000;
+        const BLOCK: u32 = 250;
+        let lambdas = [f64::INFINITY, 30.0, 10.0, 3.0, 1.0];
+
+        println!("=== DSMC steady single body: lambda sweep x class x D2 (physics defaults) ===");
+        println!(
+            "Catch, RotateRelative, cap off, D5 off, pump; cancel_redirect 0.5, intake bias 0.5, spin_transfer {DEFAULT_SPIN_TRANSFER}, photon_fraction {:.4}; n_a {N_A}, h 0.25, R_D 12, warmup {WARMUP}, avg {AVG}",
+            PHOTON_FRACTION
+        );
+        println!(
+            "{:<9} {:<13} {:>6} {:>7} {:>8} {:>7} {:>7} {:>7} {:>7} {:>8} {:>9} {:>8} {:>6} {:>7}",
+            "class", "D2", "lambda", "TAU_in", "TAU_out", "escFr", "polar", "mid", "equat", "spin/esc", "n_esc", "coll/ph", "steady", "ms/st"
+        );
+        for class in [GpuClass::Proton, GpuClass::Neutron] {
+            for mesh_mode in [MeshMode::ChiralityOnly, MeshMode::DirRel] {
+                for (li, &lambda) in lambdas.iter().enumerate() {
+                    // sigma = 0 is identical in both D2 modes: run it once.
+                    if !lambda.is_finite() && mesh_mode == MeshMode::DirRel {
+                        continue;
+                    }
+                    let seed = 0xB2B5_1000u64 ^ ((class as u64) << 8) ^ ((mesh_mode as u64) << 4) ^ li as u64;
+                    let config = physics_default_config(class, mesh_mode, lambda, N_A, CAPACITY, seed);
+                    let started = Instant::now();
+                    let mut engine = DsmcEngine::new(&ctx, config.clone());
+                    let report = engine.run_steady(&ctx, WARMUP, AVG, BLOCK);
+                    let ms = started.elapsed().as_secs_f64() * 1000.0 / (WARMUP + AVG) as f64;
+
+                    let map = DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), report.density_raw.clone(), report.avg_steps);
+                    map.assert_no_overflow();
+                    let (tau_in, tau_out) = measure_taus(&map, &config, config.sigma, 16);
+
+                    let t = &report.totals;
+                    let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
+                    let n_esc: i64 = esc.iter().sum();
+                    let spin: f64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[0][sp][b]).sum();
+                    let share = |b: usize| esc[b] as f64 / n_esc.max(1) as f64;
+                    let esc_frac = n_esc as f64 / t.emitted[0].max(1) as f64;
+                    let throughput = (t.injected + t.emitted[0]).max(1) as f64;
+                    println!(
+                        "{:<9} {:<13} {:>6} {:>7.3} {:>8.3} {:>7.4} {:>7.4} {:>7.4} {:>7.4} {:>8.4} {:>9} {:>8.3} {:>6} {:>7.2}",
+                        format!("{class:?}"),
+                        if lambda.is_finite() { format!("{mesh_mode:?}") } else { "(sigma=0)".to_string() },
+                        if lambda.is_finite() { format!("{lambda}") } else { "inf".to_string() },
+                        tau_in,
+                        tau_out,
+                        esc_frac,
+                        share(0),
+                        share(1),
+                        share(2),
+                        spin / n_esc.max(1) as f64,
+                        n_esc,
+                        2.0 * t.collisions as f64 / throughput,
+                        report.steady_ok,
+                        ms
+                    );
+                    if !report.steady_ok {
+                        println!("    steady check: {}", report.steady_detail);
+                    }
+                }
+            }
+        }
     }
 }

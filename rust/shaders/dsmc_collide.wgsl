@@ -43,6 +43,7 @@ struct Params {
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
+    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -102,6 +103,18 @@ fn main(
     }
     let off = offsets[cell];
     let capn = min(count, MAX_CELL);
+    // Sort only the next power of two >= capn, not all MAX_CELL slots: cells
+    // typically hold a handful of photons, and sorting 2048 padded entries in
+    // every one of ~900k cells made collide ~100x slower than move. `len` is
+    // workgroup-uniform (depends only on `cell`), so the barrier loops below
+    // stay uniform. Bitonic order over a padded prefix is identical, so
+    // results are bit-for-bit unchanged.
+    var len = 2u;
+    loop {
+        if (len >= capn) { break; }
+        len = len << 1u;
+    }
+    let strides = (len + SORT_LOCAL - 1u) / SORT_LOCAL;
     if (count > MAX_CELL && lid.x == 0u) {
         atomicAdd(&tallies[TALLY_CELL_OVERFLOW_IDX], 1);
     }
@@ -109,8 +122,9 @@ fn main(
     // --- Load (id, slot) pairs into shared memory, pad the tail with the
     // max sentinel so the bitonic network (which needs a power-of-two
     // length) sorts real entries to the front. ---
-    for (var m = 0u; m < SORT_STRIDE; m = m + 1u) {
+    for (var m = 0u; m < strides; m = m + 1u) {
         let i = lid.x + m * SORT_LOCAL;
+        if (i >= len) { continue; }
         if (i < capn) {
             sh_ids[i] = bitcast<u32>(photons[off + i].a.w);
             sh_slots[i] = off + i;
@@ -128,14 +142,14 @@ fn main(
     // thread's loop iteration reaches it. ---
     var k = 2u;
     loop {
-        if (k > MAX_CELL) { break; }
+        if (k > len) { break; }
         var j = k >> 1u;
         loop {
             if (j == 0u) { break; }
-            for (var m = 0u; m < SORT_STRIDE; m = m + 1u) {
+            for (var m = 0u; m < strides; m = m + 1u) {
                 let i = lid.x + m * SORT_LOCAL;
                 let ixj = i ^ j;
-                if (ixj > i) {
+                if (i < len && ixj > i) {
                     let ascending = (i & k) == 0u;
                     let vi = sh_ids[i];
                     let vx = sh_ids[ixj];

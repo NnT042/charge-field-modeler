@@ -52,9 +52,87 @@ pub struct Totals {
     pub exchange_drift_sum: f64,
     pub redirect_drift_sum: f64,
     pub low_rank64_collisions: i64,
+
+    // --- B2b work item 3 (doc §8 observables) ---
+    /// Sigma dir.xyz per body -- absorbed momentum (open-field absorber force).
+    pub absorbed_mom: [[f64; 3]; 4],
+    /// Escapes by source-body-SLOT (0..3 = that body, 4 = "none"/ambient) x
+    /// species x |latitude| band (0 polar, 1 mid, 2 equatorial).
+    pub escaped_band: [[[i64; 3]; 2]; 5],
+    pub escaped_band_spin: [[[f64; 3]; 2]; 5],
+    /// Of escaped photons, how many had crossed body i's lane at some point
+    /// (NOT mutually exclusive across i, see gpu_types.rs doc).
+    pub escaped_crossed_body: [[i64; 2]; 4],
+    pub escaped_crossed_body_spin: [[f64; 2]; 4],
+    /// Counter-stream survival: [crossed_body][arrived_body][collided 0/1].
+    pub survival: [[[i64; 2]; 4]; 4],
 }
 
 impl Totals {
+    /// Adds every field of `other` into `self`. Used by the steady-state
+    /// driver (B2b work item 1) to maintain two running accumulators (the
+    /// whole averaging window, and the current reporting block) from the same
+    /// per-step fold without reading the GPU tally buffer twice.
+    pub fn add(&mut self, other: &Totals) {
+        for body in 0..4 {
+            for kind in 0..2 {
+                for species in 0..2 {
+                    self.absorbed[body][kind][species] += other.absorbed[body][kind][species];
+                    self.absorbed_crossed[body][kind][species] += other.absorbed_crossed[body][kind][species];
+                    self.escaped[body][kind][species] += other.escaped[body][kind][species];
+                }
+            }
+            for species in 0..2 {
+                self.crossings[body][species] += other.crossings[body][species];
+            }
+            self.emitted[body] += other.emitted[body];
+        }
+        self.injected += other.injected;
+        self.collisions += other.collisions;
+        self.mom_drift_count += other.mom_drift_count;
+        for k in 0..3 {
+            self.dir_sum[k] += other.dir_sum[k];
+        }
+        self.dz2_sum += other.dz2_sum;
+        self.mom_drift_sum += other.mom_drift_sum;
+        self.dir_sum_samples += other.dir_sum_samples;
+        self.cell_overflow += other.cell_overflow;
+        self.exchange_drift_sum += other.exchange_drift_sum;
+        self.redirect_drift_sum += other.redirect_drift_sum;
+        self.low_rank64_collisions += other.low_rank64_collisions;
+
+        for body in 0..4 {
+            for a in 0..3 {
+                self.absorbed_mom[body][a] += other.absorbed_mom[body][a];
+            }
+        }
+        for slot in 0..5 {
+            for species in 0..2 {
+                for band in 0..3 {
+                    self.escaped_band[slot][species][band] += other.escaped_band[slot][species][band];
+                    self.escaped_band_spin[slot][species][band] += other.escaped_band_spin[slot][species][band];
+                }
+            }
+        }
+        for body in 0..4 {
+            for species in 0..2 {
+                self.escaped_crossed_body[body][species] += other.escaped_crossed_body[body][species];
+                self.escaped_crossed_body_spin[body][species] += other.escaped_crossed_body_spin[body][species];
+            }
+            for arrived in 0..4 {
+                for c in 0..2 {
+                    self.survival[body][arrived][c] += other.survival[body][arrived][c];
+                }
+            }
+        }
+    }
+
+    /// Sum of absorbed counts (both kind, both species) for one body -- the
+    /// per-step scalar the pump EMA tracks (doc §3.3).
+    pub fn absorbed_total(&self, body: usize) -> i64 {
+        self.absorbed[body][0][0] + self.absorbed[body][0][1] + self.absorbed[body][1][0] + self.absorbed[body][1][1]
+    }
+
     fn fold(&mut self, raw: &[i32], sample_count: u32) {
         const SCALE: f64 = super::gpu_types::TALLY_SCALE;
         for body in 0..4 {
@@ -92,6 +170,36 @@ impl Totals {
         self.redirect_drift_sum += raw[70] as f64 / SCALE;
         self.low_rank64_collisions += raw[71] as i64;
         self.dir_sum_samples += sample_count as i64;
+
+        use super::gpu_types::{
+            TALLY_ABSORBED_MOM, TALLY_ESCAPED_BAND, TALLY_ESCAPED_BAND_SPIN, TALLY_ESCAPED_CROSSED_BODY, TALLY_ESCAPED_CROSSED_BODY_SPIN,
+            TALLY_SURVIVAL,
+        };
+        for body in 0..4 {
+            for a in 0..3 {
+                self.absorbed_mom[body][a] += raw[TALLY_ABSORBED_MOM + body * 3 + a] as f64 / SCALE;
+            }
+        }
+        for slot in 0..5 {
+            for species in 0..2 {
+                for band in 0..3 {
+                    let eb_idx = slot * 2 * 3 + species * 3 + band;
+                    self.escaped_band[slot][species][band] += raw[TALLY_ESCAPED_BAND + eb_idx] as i64;
+                    self.escaped_band_spin[slot][species][band] += raw[TALLY_ESCAPED_BAND_SPIN + eb_idx] as f64 / SCALE;
+                }
+            }
+        }
+        for body in 0..4 {
+            for species in 0..2 {
+                self.escaped_crossed_body[body][species] += raw[TALLY_ESCAPED_CROSSED_BODY + body * 2 + species] as i64;
+                self.escaped_crossed_body_spin[body][species] += raw[TALLY_ESCAPED_CROSSED_BODY_SPIN + body * 2 + species] as f64 / SCALE;
+            }
+            for arrived in 0..4 {
+                for c in 0..2 {
+                    self.survival[body][arrived][c] += raw[TALLY_SURVIVAL + (body * 4 + arrived) * 2 + c] as i64;
+                }
+            }
+        }
     }
 }
 
@@ -109,6 +217,16 @@ pub struct DsmcEngine {
     cell_remainder_buf: wgpu::Buffer,
     tallies_buf: wgpu::Buffer,
     hist_buf: wgpu::Buffer,
+    /// Density map (doc §8): per-cell [kind x species] u32 counters, NOT
+    /// reset every step like `tallies_buf` -- cleared once by
+    /// `begin_density_accum` and read back once at the end of the averaging
+    /// window (see `density.rs`).
+    density_buf: wgpu::Buffer,
+    /// CPU copy of the precompute free-volume map, kept for `read_density`'s
+    /// count -> number-density conversion (the GPU-resident copy is
+    /// write-once and only used by `dsmc_collide.wgsl`'s NTC rate).
+    free_volume_cpu: Vec<f32>,
+    density_accum_enabled: bool,
     inject_params_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
     gather_params_buf: wgpu::Buffer,
@@ -173,6 +291,8 @@ impl DsmcEngine {
 
         let tallies_buf = ctx.zeroed_storage_buffer::<i32>(TALLY_LEN, wgpu::BufferUsages::empty());
         let hist_buf = ctx.zeroed_storage_buffer::<u32>(HIST_LEN, wgpu::BufferUsages::empty());
+        let density_buf = ctx.zeroed_storage_buffer::<u32>(grid.num_cells as usize * 4, wgpu::BufferUsages::empty());
+        let free_volume_cpu = pc.free_volume.clone();
 
         let inject_params_buf = ctx.storage_buffer_from_slice(
             &[GpuInjectParams { n_ambient_inject: 0, n_emit_total: 0, id_base: 0, slot_base: 0 }],
@@ -205,6 +325,9 @@ impl DsmcEngine {
             cell_remainder_buf,
             tallies_buf,
             hist_buf,
+            density_buf,
+            free_volume_cpu,
+            density_accum_enabled: false,
             inject_params_buf,
             params_buf,
             gather_params_buf,
@@ -275,6 +398,10 @@ impl DsmcEngine {
             domain_center_y: center.y as f32,
             domain_center_z: center.z as f32,
             exchange_rule: if c.exchange_rule == ExchangeRule::RotateRelative { 1 } else { 0 },
+            density_accumulate: self.density_accum_enabled as u32,
+            _pad9a: 0,
+            _pad9b: 0,
+            _pad9c: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }
@@ -331,7 +458,7 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf],
             Some(&self.params_buf),
             grid,
         );
@@ -353,12 +480,16 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf],
             Some(&self.params_buf),
             grid_n,
         );
 
-        if self.config.sigma > 0.0 {
+        // Sort + gather ALWAYS run: besides binning for collisions they are
+        // what compacts dead photons out of the slot range. Skipping them at
+        // sigma = 0 leaked every dead slot (a flux-driven sigma = 0 run filled
+        // any capacity in ~1000 steps). Only the collide pass is optional.
+        {
             self.sorter.record_from_cell_of(ctx, &mut encoder, &self.raw_cell_of, n);
             ctx.write_buffer(&self.gather_params_buf, &[NParamsLocal { n, _p: [0; 3] }]);
             self.gather_kernel.record(
@@ -368,6 +499,8 @@ impl DsmcEngine {
                 Some(&self.gather_params_buf),
                 grid_n,
             );
+        }
+        if self.config.sigma > 0.0 {
             // One workgroup PER CELL (not 64 cells/workgroup as before): the
             // collide kernel now sorts and pairs the whole cell in workgroup
             // shared memory, so `local_size=1` here just turns
@@ -397,7 +530,7 @@ impl DsmcEngine {
         ctx.queue.submit(Some(encoder.finish()));
         ctx.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll failed");
 
-        if self.config.sigma > 0.0 {
+        {
             self.cur = 1 - self.cur;
             // n_live_after = offsets[grid.num_cells] (the dead bucket's exclusive-scan offset).
             let offsets: Vec<u32> = ctx.read_buffer(&self.sorter.offsets, self.grid.num_cells as usize + 1);
@@ -410,8 +543,28 @@ impl DsmcEngine {
         self.step += 1;
     }
 
-    fn readback_tallies(&self, ctx: &GpuContext, totals: &mut Totals, sample_count: u32) {
+    fn readback_tallies(&mut self, ctx: &GpuContext, totals: &mut Totals, sample_count: u32) {
         let raw: Vec<i32> = ctx.read_buffer(&self.tallies_buf, TALLY_LEN);
+
+        // Pump mode (doc §3.3): each body's next emission rate is an EMA of
+        // its OWN absorption over PUMP_EMA_STEPS steps, bootstrapped from
+        // zero (pump_rate_ema starts at vec![0.0; ..] in `new`). Folded from
+        // the raw per-step tally directly (not from `totals`, which the
+        // caller may be accumulating cumulatively across many steps) so this
+        // works identically whether the caller passes a fresh `Totals` per
+        // step or one shared accumulator.
+        if self.config.emission_mode == EmissionMode::Pump {
+            let alpha = 1.0 / super::config::PUMP_EMA_STEPS;
+            for body in 0..self.config.bodies.len().min(4) {
+                let absorbed_this_step: i64 = (0..2)
+                    .flat_map(|k| (0..2).map(move |s| (k, s)))
+                    .map(|(k, s)| raw[body * 4 + k * 2 + s] as i64)
+                    .sum();
+                let ema = &mut self.pump_rate_ema[body];
+                *ema += alpha * (absorbed_this_step as f64 - *ema);
+            }
+        }
+
         totals.fold(&raw, sample_count);
         let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         encoder.clear_buffer(&self.tallies_buf, 0, None);
@@ -420,6 +573,34 @@ impl DsmcEngine {
 
     pub fn read_hist(&self, ctx: &GpuContext) -> Vec<u32> {
         ctx.read_buffer(&self.hist_buf, HIST_LEN)
+    }
+
+    /// Starts the density-map averaging window (doc §8): clears the per-cell
+    /// [kind x species] u32 accumulator and tells `dsmc_move.wgsl` to start
+    /// adding to it every step. Call once, right after warm-up, before the
+    /// averaging loop -- never during warm-up (a still-transient population
+    /// would bias the map).
+    pub fn begin_density_accum(&mut self, ctx: &GpuContext) {
+        let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.clear_buffer(&self.density_buf, 0, None);
+        ctx.queue.submit(Some(encoder.finish()));
+        self.density_accum_enabled = true;
+    }
+
+    pub fn end_density_accum(&mut self) {
+        self.density_accum_enabled = false;
+    }
+
+    /// Reads back the raw per-cell [kind x species] u32 accumulator (len
+    /// `grid.num_cells * 4`, index `cell*4 + kind*2 + species`). Wrap in
+    /// `density::DensityMap::new` for number-density queries, ray sampling
+    /// and the xz-slice CSV dump.
+    pub fn read_density_raw(&self, ctx: &GpuContext) -> Vec<u32> {
+        ctx.read_buffer(&self.density_buf, self.grid.num_cells as usize * 4)
+    }
+
+    pub fn free_volume_cpu(&self) -> &[f32] {
+        &self.free_volume_cpu
     }
 
     /// Reads back the first `n_used` photon records from the live buffer.
@@ -445,9 +626,11 @@ impl DsmcEngine {
     }
 
     /// Advances the host-side fractional injection counters by one step and
-    /// returns integer counts to inject this step (Forced emission mode;
-    /// Pump mode is a documented no-op placeholder for B2/B3 -- neither B1
-    /// gate uses it).
+    /// returns integer counts to inject this step. Forced mode uses the
+    /// fixed Phase-1-analogue rate; Pump mode uses `pump_rate_ema[i]`, which
+    /// `readback_tallies` updates from each step's own absorption tally (so
+    /// this call must follow the PREVIOUS step's `step_collide`/
+    /// `step_transport_only` for the EMA to reflect it).
     pub fn next_injection_counts(&mut self) -> (u32, Vec<u32>) {
         self.ambient_remainder += self.ambient_flux_per_step();
         let n_ambient = self.ambient_remainder.floor().max(0.0) as u32;
@@ -466,6 +649,145 @@ impl DsmcEngine {
         }
         (n_ambient, counts)
     }
+
+    /// One flux-driven step: advance the host injection counters, inject,
+    /// then run the full collide pipeline. Used by both `run_steady` and any
+    /// caller that wants the doc §3.3 continuous-flow loop without the
+    /// block/steady bookkeeping. Returns this step's OWN tallies (not
+    /// cumulative), so conservation and pump-EMA checks can be made per step.
+    pub fn step_flux(&mut self, ctx: &GpuContext) -> Totals {
+        let (n_ambient, emit_counts) = self.next_injection_counts();
+        self.inject_batch(ctx, n_ambient, &emit_counts);
+        let mut step_totals = Totals::default();
+        self.step_collide(ctx, &mut step_totals);
+        step_totals
+    }
+
+    /// One reporting block of the steady-state time series (doc B2b work
+    /// item 1): live count and per-body absorption/emission rate at the END
+    /// of the block, averaged over the block's steps, plus the collision
+    /// rate. Rates are per unit time (steps * dt), so blocks of different
+    /// length are still comparable.
+    pub fn run_steady(&mut self, ctx: &GpuContext, warmup_steps: u32, avg_steps: u32, block: u32) -> SteadyReport {
+        assert!(block > 0, "run_steady: block must be > 0");
+        let n_bodies = self.config.bodies.len();
+
+        for _ in 0..warmup_steps {
+            self.step_flux(ctx);
+        }
+
+        // Density map (doc §8) accumulates over the averaging window only --
+        // never warm-up, which is still transient by construction.
+        self.begin_density_accum(ctx);
+
+        let mut totals = Totals::default();
+        let mut blocks: Vec<SteadyBlock> = Vec::new();
+        let mut block_totals = Totals::default();
+        let mut steps_in_block: u32 = 0;
+
+        let mut steps_done = 0u32;
+        while steps_done < avg_steps {
+            let step_totals = self.step_flux(ctx);
+            totals.add(&step_totals);
+            block_totals.add(&step_totals);
+            steps_in_block += 1;
+            steps_done += 1;
+
+            if steps_in_block == block || steps_done == avg_steps {
+                let dt_block = steps_in_block as f64 * self.config.dt;
+                let absorbed_rate: Vec<f64> = (0..n_bodies).map(|b| block_totals.absorbed_total(b) as f64 / dt_block).collect();
+                let emitted_rate: Vec<f64> = (0..n_bodies).map(|b| block_totals.emitted[b] as f64 / dt_block).collect();
+                blocks.push(SteadyBlock {
+                    step: self.step,
+                    live: self.n_live,
+                    absorbed_total: (0..n_bodies).map(|b| block_totals.absorbed_total(b)).sum(),
+                    absorbed_rate,
+                    emitted_rate,
+                    collisions_rate: block_totals.collisions as f64 / dt_block,
+                });
+                block_totals = Totals::default();
+                steps_in_block = 0;
+            }
+        }
+
+        let density_raw = self.read_density_raw(ctx);
+        self.end_density_accum();
+
+        let (steady_ok, steady_detail) = steady_state_check(&blocks);
+
+        SteadyReport { totals, blocks, warmup_steps, avg_steps, block, steady_ok, steady_detail, density_raw }
+    }
+}
+
+/// One block of the steady-state time series (doc §1: "records a block time
+/// series ... so steady state can be judged").
+#[derive(Clone, Debug)]
+pub struct SteadyBlock {
+    pub step: u32,
+    pub live: u32,
+    pub absorbed_total: i64,
+    pub absorbed_rate: Vec<f64>,
+    pub emitted_rate: Vec<f64>,
+    pub collisions_rate: f64,
+}
+
+/// Result of `DsmcEngine::run_steady` (doc B2b work item 1).
+#[derive(Clone, Debug)]
+pub struct SteadyReport {
+    /// Accumulated over the averaging window only (warm-up discarded).
+    pub totals: Totals,
+    pub blocks: Vec<SteadyBlock>,
+    pub warmup_steps: u32,
+    pub avg_steps: u32,
+    pub block: u32,
+    pub steady_ok: bool,
+    pub steady_detail: String,
+    /// Raw per-cell [kind x species] density accumulator (doc §8), covering
+    /// exactly the averaging window. Wrap with `density::DensityMap::new`
+    /// (grid geometry + `DsmcEngine::free_volume_cpu()` + `avg_steps`) for
+    /// number-density queries.
+    pub density_raw: Vec<u32>,
+}
+
+/// Doc's steady-state check: "last-half vs first-half block means of live
+/// count and absorption within 3σ of block-to-block scatter" -- a two-sample
+/// z-test using the SAMPLE standard deviation of the per-block values as the
+/// scatter estimate (not a Poisson assumption: a block sums many correlated
+/// per-photon events, so the block-to-block spread is the honest error bar).
+/// Needs >= 4 blocks (2 per half) to form a scatter estimate at all; fewer is
+/// reported as "insufficient blocks" and never silently passed.
+fn steady_state_check(blocks: &[SteadyBlock]) -> (bool, String) {
+    if blocks.len() < 4 {
+        return (false, format!("insufficient blocks ({}) for a first-half/second-half steady check (need >= 4)", blocks.len()));
+    }
+    let half = blocks.len() / 2;
+    let live: Vec<f64> = blocks.iter().map(|b| b.live as f64).collect();
+    let absorbed: Vec<f64> = blocks.iter().map(|b| b.absorbed_total as f64).collect();
+
+    fn half_z(values: &[f64], half: usize) -> f64 {
+        let (a, b) = values.split_at(half);
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let var = |v: &[f64], m: f64| v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len().max(2) - 1) as f64;
+        let ma = mean(a);
+        let mb = mean(b);
+        let pooled_var = (var(a, ma) * (a.len() - 1) as f64 + var(b, mb) * (b.len() - 1) as f64) / ((a.len() + b.len() - 2).max(1) as f64);
+        let se = (pooled_var * (1.0 / a.len() as f64 + 1.0 / b.len() as f64)).sqrt();
+        if se > 1e-12 {
+            (mb - ma) / se
+        } else {
+            0.0
+        }
+    }
+
+    let z_live = half_z(&live, half);
+    let z_absorbed = half_z(&absorbed, half);
+    let ok = z_live.abs() < 3.0 && z_absorbed.abs() < 3.0;
+    let detail = format!(
+        "{} blocks (half={}): z_live={z_live:.2} z_absorbed={z_absorbed:.2} (limit 3.0, first-half vs second-half block means over block-to-block scatter)",
+        blocks.len(),
+        half
+    );
+    (ok, detail)
 }
 
 #[repr(C)]

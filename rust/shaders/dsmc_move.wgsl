@@ -24,7 +24,8 @@ struct Params {
     bounce_cap: u32, d5_far_zone_gate: u32, grid_dim_x: u32, grid_dim_y: u32,
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
-    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, _pad2: f32,
+    domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
+    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -34,17 +35,26 @@ const SOURCE_SHIFT: u32 = 3u;
 const SOURCE_MASK: u32 = 3u << SOURCE_SHIFT;
 const CROSSED_SHIFT: u32 = 5u;
 const ARRIVED_SHIFT: u32 = 9u;
+const FLAG_COLLIDED_SINCE_CROSS: u32 = 1u << 13u;
 const HIST_BINS: u32 = 36u;
 const HIST_MAX_BODIES: u32 = 4u;
 const HIST_ARRIVAL_BLOCK: u32 = HIST_MAX_BODIES * HIST_BINS;
 const TALLY_SCALE: f32 = 4096.0;
+// B2b item 3 (doc §8) tally offsets -- must stay in sync with gpu_types.rs.
+const TALLY_ABSORBED_MOM: u32 = 72u;
+const TALLY_ESCAPED_BAND: u32 = 84u;
+const TALLY_ESCAPED_BAND_SPIN: u32 = 114u;
+const TALLY_ESCAPED_CROSSED_BODY: u32 = 144u;
+const TALLY_ESCAPED_CROSSED_BODY_SPIN: u32 = 152u;
+const TALLY_SURVIVAL: u32 = 160u;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
 @group(0) @binding(2) var<storage, read_write> cell_of: array<u32>;
 @group(0) @binding(3) var<storage, read_write> tallies: array<atomic<i32>>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
-@group(0) @binding(5) var<uniform> params: Params;
+@group(0) @binding(5) var<storage, read_write> density: array<atomic<u32>>;
+@group(0) @binding(6) var<uniform> params: Params;
 
 fn hist_bin(lat_deg: f32) -> u32 {
     let raw = i32(floor((lat_deg + 90.0) / 5.0));
@@ -53,6 +63,16 @@ fn hist_bin(lat_deg: f32) -> u32 {
 
 fn species_idx(flags: u32) -> u32 {
     return select(0u, 1u, (flags & FLAG_SPECIES_PLUS) != 0u);
+}
+
+// Doc §8: 0 = polar (>60 deg), 1 = mid (30-60 deg), 2 = equatorial (<30 deg).
+fn escape_band(abs_lat_deg: f32) -> u32 {
+    if (abs_lat_deg > 60.0) {
+        return 0u;
+    } else if (abs_lat_deg >= 30.0) {
+        return 1u;
+    }
+    return 2u;
 }
 
 @compute @workgroup_size(256)
@@ -97,6 +117,20 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         let hit_pos = pos + dir * hit_t;
         let r_in = body.center.w;
 
+        // Counter-stream survival (doc §8, "measured not integrated"): BEFORE
+        // this event changes any flags, snapshot which lanes this photon has
+        // crossed and whether it has collided since its last crossing. A
+        // photon that crossed body k's lane earlier and now ARRIVES at a
+        // DIFFERENT body i (whether it is absorbed here or crosses again) is
+        // one sample of "did it survive the gap uninterrupted".
+        let crossed_mask_before = (ph.c[0] >> CROSSED_SHIFT) & 0xFu;
+        let collided_before = select(0u, 1u, (ph.c[0] & FLAG_COLLIDED_SINCE_CROSS) != 0u);
+        for (var k = 0u; k < 4u; k = k + 1u) {
+            if (((crossed_mask_before >> k) & 1u) != 0u && k != i) {
+                atomicAdd(&tallies[TALLY_SURVIVAL + (k * 4u + i) * 2u + collided_before], 1);
+            }
+        }
+
         // Arrival latitude in the hit body's own frame (ambient only, per doc
         // §9 G0). Tallied once per body (first contact only), matching the
         // CPU reference's `probe_arrived` guard in `march_stack`.
@@ -133,6 +167,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     crossed = true;
                     crossed_any = true;
                     ph.c[0] = ph.c[0] | (1u << (CROSSED_SHIFT + i));
+                    // Doc §8: crossing a lane CLEARS "collided since last
+                    // crossing" -- the counter-stream survival window resets.
+                    ph.c[0] = ph.c[0] & ~FLAG_COLLIDED_SINCE_CROSS;
                     atomicAdd(&tallies[32 + i * 2 + spec], 1); // TALLY_CROSSINGS
                 }
             }
@@ -147,6 +184,11 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             if (already_crossed) {
                 atomicAdd(&tallies[16 + i * 4u + kind_i * 2u + spec], 1); // TALLY_ABSORBED_CROSSED
             }
+            // Absorbed momentum (doc §8): Sigma dir.xyz per body -- the
+            // open-field absorber force observable.
+            atomicAdd(&tallies[TALLY_ABSORBED_MOM + i * 3u + 0u], i32(dir.x * TALLY_SCALE));
+            atomicAdd(&tallies[TALLY_ABSORBED_MOM + i * 3u + 1u], i32(dir.y * TALLY_SCALE));
+            atomicAdd(&tallies[TALLY_ABSORBED_MOM + i * 3u + 2u], i32(dir.z * TALLY_SCALE));
         } else {
             // Continue the remaining path length from the far side (dt is
             // small relative to body spacing, so a single hit test per step
@@ -171,7 +213,42 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 dead = true;
                 let kind_i = select(0u, 1u, kind_emitted);
                 let crossed_i = select(0u, 1u, crossed_any || (ph.c[0] >> CROSSED_SHIFT) != 0u);
-                atomicAdd(&tallies[40 + source_body * 4u + crossed_i * 2u + spec], 1); // TALLY_ESCAPED
+                atomicAdd(&tallies[40 + source_body * 4u + crossed_i * 2u + spec], 1); // TALLY_ESCAPED (legacy shape, kept)
+
+                // Doc §8: escape topology by source-body-slot x species x
+                // |latitude| band. Emitted -> that body's own frame; ambient
+                // (no source body) -> the stack frame (axis Z through the
+                // domain centroid, per doc "ambient source = none -> use
+                // band in stack frame").
+                var band_axis = vec3<f32>(0.0, 0.0, 1.0);
+                var band_center = center;
+                var slot = 4u; // "none"
+                if (kind_emitted) {
+                    let sb = bodies[source_body];
+                    band_axis = sb.axis.xyz;
+                    band_center = sb.center.xyz;
+                    slot = source_body;
+                }
+                let rel_e = pos - band_center;
+                let rlen = max(length(rel_e), 1e-6);
+                let colat_e = acos(clamp(dot(rel_e, band_axis) / rlen, -1.0, 1.0));
+                let lat_e = 90.0 - degrees(colat_e);
+                let band = escape_band(abs(lat_e));
+                let eb_idx = slot * 2u * 3u + spec * 3u + band;
+                atomicAdd(&tallies[TALLY_ESCAPED_BAND + eb_idx], 1);
+                atomicAdd(&tallies[TALLY_ESCAPED_BAND_SPIN + eb_idx], i32(ph.b.w * TALLY_SCALE));
+
+                // Of escaped photons, per-crossed-body-i breakdown (doc §8:
+                // "keep crossed body i for i=0..3"). NOT mutually exclusive:
+                // a photon that crossed more than one lane increments more
+                // than one counter.
+                let cmask = (ph.c[0] >> CROSSED_SHIFT) & 0xFu;
+                for (var k = 0u; k < 4u; k = k + 1u) {
+                    if (((cmask >> k) & 1u) != 0u) {
+                        atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY + k * 2u + spec], 1);
+                        atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY_SPIN + k * 2u + spec], i32(ph.b.w * TALLY_SCALE));
+                    }
+                }
             }
         }
     }
@@ -199,5 +276,16 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let cx = clamp(i32(floor(rel.x)), 0, gd.x - 1);
     let cy = clamp(i32(floor(rel.y)), 0, gd.y - 1);
     let cz = clamp(i32(floor(rel.z)), 0, gd.z - 1);
-    cell_of[idx] = u32(cx) + u32(cy) * params.grid_dim_x + u32(cz) * params.grid_dim_x * params.grid_dim_y;
+    let cell_idx = u32(cx) + u32(cy) * params.grid_dim_x + u32(cz) * params.grid_dim_x * params.grid_dim_y;
+    cell_of[idx] = cell_idx;
+
+    // Density map (doc §8): time-averaged counts by kind x species, u32
+    // per-cell accumulators added each step over the averaging window ONLY
+    // (density_accumulate is 0 during warm-up). Never reset mid-window --
+    // the host clears `density` once when the window starts and reads it
+    // back once at the end.
+    if (params.density_accumulate != 0u) {
+        let kind_i2 = select(0u, 1u, kind_emitted);
+        atomicAdd(&density[cell_idx * 4u + kind_i2 * 2u + spec], 1u);
+    }
 }
