@@ -436,6 +436,40 @@ by halving N.
   counter-stream survival), σ calibration, and the G2/G3 reports with the first B3
   table.
 
+## 11d. B2b result + experiment queue (2026-09-27, dddcc12)
+
+**Single-body λ sweep** (2.9M photons, 1 seed, physics defaults, `report_dsmc_steady_single_body`):
+- At σ = 0, proton and neutron are identical (same emission geometry), with spin ±1.
+- **Phase-1 gear rule (`ChiralityOnly`):** proton stays a disc (equatorial 0.50 → 0.64
+  at λ = 1); neutron goes polar (0.81 at λ = 1) and its escaping spin swings −1 →
+  +0.70 through zero. This reproduces the Phase-1 picture with real partners.
+- **`DirRel`:** the proton goes polar too (0.52 polar, 0.11 equatorial at λ = 1); the
+  neutron goes polar (0.49) but its escaping spin barely cancels (−0.89…−1.04).
+  Both observational signatures are lost, which points to a missing ingredient
+  rather than a finished verdict.
+- TAU_in stays 0.006–0.1 at every λ: an isolated body cannot densify its own gas.
+
+**E1 — emitted-photon stiffness (user hypothesis, 2026-09-27).** The disc is
+squashed because emitted photons deflect as easily as ambient ones. But photons
+leaving a 12-spin baryon should carry spin energy from the emission spin-up and push
+through several field hits.
+- **Sources:**
+  - pause.html: the proton "resists the spins of the photons better because it is
+    larger";
+  - bottom.pdf: a stacked spin "will double its mass equivalence in any
+    collision", so stiffness is quantised, m = 2^k;
+  - arp.pdf caveat: larger photons "suffer more collisions" but each changes them
+    less, "these two factors offset" (for energy).
+- **Model:** a per-photon stiffness m in a generalised RotateRelative (unequal-mass,
+  momentum-conserving, both photons still at speed c, so the stiff photon deflects
+  less). Emitted photons start at m = 2^k and shed it through collisions.
+  - Optional: σ ∝ size² to test the arp.pdf offset.
+- **Run:** the λ sweep under DirRel, k ∈ {0,1,2,3}, with and without σ scaling.
+- **Questions:** does the proton disc survive? Does the neutron's magnetic
+  cancellation come back? Does the offset erase the effect?
+
+**Then B2c:** the G2/G3 Phase-1 comparison tables and the p-n-p stack.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
