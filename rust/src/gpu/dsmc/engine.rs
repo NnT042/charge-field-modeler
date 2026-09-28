@@ -21,7 +21,7 @@ use crate::gpu::context::GpuContext;
 use crate::gpu::kernel::{workgroup_grid_for_threads, Kernel};
 use crate::gpu::sort::CellSorter;
 
-use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel};
+use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel, StiffnessShed};
 use super::gpu_types::{GpuBody, GpuInjectParams, GpuParams, GpuPhoton, HIST_LEN, TALLY_LEN};
 use super::precompute::{precompute, Grid};
 
@@ -66,6 +66,17 @@ pub struct Totals {
     pub escaped_crossed_body_spin: [[f64; 2]; 4],
     /// Counter-stream survival: [crossed_body][arrived_body][collided 0/1].
     pub survival: [[[i64; 2]; 4]; 4],
+
+    // --- E1: emitted-photon stiffness (doc §11d) ---
+    /// Sum/count of stiffness level k over escaped EMITTED photons (report's
+    /// "mean k of escaping emitted photons").
+    pub escaped_emitted_k_sum: i64,
+    pub escaped_emitted_k_count: i64,
+    /// Per-photon deflection angle (radians), bucketed by that photon's own
+    /// pre-collision stiffness level k (0..7): sum, sum-of-squares, count.
+    pub deflect_sum: [f64; 8],
+    pub deflect_sumsq: [f64; 8],
+    pub deflect_count: [i64; 8],
 }
 
 impl Totals {
@@ -124,6 +135,14 @@ impl Totals {
                     self.survival[body][arrived][c] += other.survival[body][arrived][c];
                 }
             }
+        }
+
+        self.escaped_emitted_k_sum += other.escaped_emitted_k_sum;
+        self.escaped_emitted_k_count += other.escaped_emitted_k_count;
+        for k in 0..8 {
+            self.deflect_sum[k] += other.deflect_sum[k];
+            self.deflect_sumsq[k] += other.deflect_sumsq[k];
+            self.deflect_count[k] += other.deflect_count[k];
         }
     }
 
@@ -199,6 +218,15 @@ impl Totals {
                     self.survival[body][arrived][c] += raw[TALLY_SURVIVAL + (body * 4 + arrived) * 2 + c] as i64;
                 }
             }
+        }
+
+        use super::gpu_types::{TALLY_DEFLECT_COUNT, TALLY_DEFLECT_SUM, TALLY_DEFLECT_SUMSQ, TALLY_ESCAPED_EMITTED_K_COUNT, TALLY_ESCAPED_EMITTED_K_SUM};
+        self.escaped_emitted_k_sum += raw[TALLY_ESCAPED_EMITTED_K_SUM] as i64;
+        self.escaped_emitted_k_count += raw[TALLY_ESCAPED_EMITTED_K_COUNT] as i64;
+        for k in 0..8 {
+            self.deflect_sum[k] += raw[TALLY_DEFLECT_SUM + k] as f64 / SCALE;
+            self.deflect_sumsq[k] += raw[TALLY_DEFLECT_SUMSQ + k] as f64 / SCALE;
+            self.deflect_count[k] += raw[TALLY_DEFLECT_COUNT + k] as i64;
         }
     }
 }
@@ -399,9 +427,13 @@ impl DsmcEngine {
             domain_center_z: center.z as f32,
             exchange_rule: if c.exchange_rule == ExchangeRule::RotateRelative { 1 } else { 0 },
             density_accumulate: self.density_accum_enabled as u32,
-            _pad9a: 0,
-            _pad9b: 0,
-            _pad9c: 0,
+            emit_stiffness_level: c.emit_stiffness_level,
+            stiffness_shed: if c.stiffness_shed == StiffnessShed::Transfer { 1 } else { 0 },
+            sigma_size_scaling: c.sigma_size_scaling as u32,
+            debug_force_equal_mass_exchange: c.debug_force_equal_mass_exchange as u32,
+            _pad10a: 0,
+            _pad10b: 0,
+            _pad10c: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }
@@ -608,6 +640,22 @@ impl DsmcEngine {
     /// check) -- not on any hot path.
     pub fn read_photons(&self, ctx: &GpuContext) -> Vec<GpuPhoton> {
         ctx.read_buffer(self.cur_buf(), self.n_used as usize)
+    }
+
+    /// Test/gate-only: overwrites every LIVE photon's stiffness level (E1,
+    /// doc §11d `c[3]`) with `f(index_among_live)`, leaving everything else
+    /// (position, direction, flags) untouched. Used to build synthetic mixed-
+    /// stiffness populations (e.g. "half k=0, half k=3") that no ordinary
+    /// emission path produces, so the E1 gates can test the exchange/shedding
+    /// math directly instead of waiting on a steady-state run to populate it.
+    pub fn set_stiffness_levels_for_test(&mut self, ctx: &GpuContext, f: impl Fn(usize) -> u32) {
+        let mut ph = self.read_photons(ctx);
+        for (i, p) in ph.iter_mut().enumerate() {
+            if p.c[0] & super::gpu_types::FLAG_ALIVE != 0 {
+                p.c[3] = f(i);
+            }
+        }
+        ctx.write_buffer(self.cur_buf(), &ph);
     }
 
     /// Doc §3.3 flux formulas, exposed so gate/report code doesn't duplicate

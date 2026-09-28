@@ -5881,7 +5881,7 @@ mod dsmc_gates {
     use crate::gpu::dsmc::gpu_types::{GpuPhoton, FLAG_ALIVE, HIST_ARRIVAL_BLOCK, HIST_BINS, HIST_EMISSION_BLOCK};
     use crate::gpu::dsmc::{
         calibrate_sigma_for_tau_in, measure_taus, BodyConfig, Boundary, DensityMap, DsmcConfig, DsmcEngine, EmissionMode, ExchangeRule, GpuClass,
-        GpuOrient, MeshMode, RateKernel, Totals,
+        GpuOrient, MeshMode, RateKernel, StiffnessShed, Totals,
     };
 
     macro_rules! require_gpu {
@@ -6010,6 +6010,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: true,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         }
     }
 
@@ -6285,6 +6289,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         let ctx = match GpuContext::new() {
@@ -6391,6 +6399,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         let ctx = require_gpu!();
@@ -6480,6 +6492,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         let ctx = require_gpu_ret!();
@@ -6629,6 +6645,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         let ctx = GpuContext::new().expect("G1 D6 needs a GPU adapter");
@@ -6672,6 +6692,277 @@ mod dsmc_gates {
         let dp = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) + (p1[2] - p0[2]).powi(2)).sqrt();
         D6Outcome { dp, max_norm_err, collisions: totals.collisions }
     }
+
+    // ---- E1: emitted-photon stiffness (doc §11d) ----
+
+    /// Shared periodic-box config builder for the E1 gates (same shape as
+    /// `run_d6_box`'s), parametrised over the new stiffness knobs.
+    #[allow(clippy::too_many_arguments)]
+    fn e1_box_config(
+        n: u32,
+        sigma: f64,
+        seed: u64,
+        shed: StiffnessShed,
+        sigma_size_scaling: bool,
+        emit_stiffness_level: u32,
+        debug_force_equal_mass_exchange: bool,
+    ) -> DsmcConfig {
+        const HALF_EXTENT: f64 = 5.0;
+        let volume = (2.0 * HALF_EXTENT).powi(3);
+        let n_density = n as f64 / volume;
+        DsmcConfig {
+            boundary: Boundary::PeriodicBox { half_extent: HALF_EXTENT },
+            bodies: vec![],
+            h: 0.5,
+            dt: 0.05,
+            capacity: n + 16,
+            seed,
+            n_ambient: n_density,
+            sigma,
+            photon_fraction: 0.5,
+            pole_intake_bias: 0.0,
+            cancel_redirect: 0.0,
+            spin_transfer: 0.0,
+            swing_boost: 0.0,
+            rate_kernel: RateKernel::Catch,
+            mesh_mode: MeshMode::ChiralityOnly,
+            exchange_rule: ExchangeRule::RotateRelative,
+            emission_mode: EmissionMode::Forced,
+            bounce_cap: 0,
+            d5_far_zone_gate: false,
+            b_max: B_MAX,
+            emit_stiffness_level,
+            stiffness_shed: shed,
+            sigma_size_scaling,
+            debug_force_equal_mass_exchange,
+        }
+    }
+
+    /// Mass-weighted analogue of `box_momentum`: Sigma m*d using each
+    /// photon's CURRENT stiffness mass (m = 2^k, doc §11d).
+    fn box_momentum_weighted(ph: &[GpuPhoton]) -> ([f64; 3], f64) {
+        let mut p = [0.0f64; 3];
+        let mut max_err = 0.0f64;
+        for q in ph.iter().filter(|q| q.c[0] & FLAG_ALIVE != 0) {
+            let m = q.stiffness_mass();
+            let d = [q.b[0] as f64, q.b[1] as f64, q.b[2] as f64];
+            for k in 0..3 {
+                p[k] += m * d[k];
+            }
+            let norm = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            max_err = max_err.max((norm - 1.0).abs());
+        }
+        (p, max_err)
+    }
+
+    /// Gate 1 (doc §11d): the generalised unequal-mass exchange must conserve
+    /// mass-weighted momentum Sigma m*d exactly (mod f32 rounding), the same
+    /// property `g1_d6_rotate_relative_conserves_momentum` checks for the
+    /// equal-mass case, now with a genuinely mixed (k=0 / k=3) population.
+    /// With Transfer shedding, m itself changes every collision, so
+    /// Sigma(m_new * d) is NOT expected to be conserved -- that drift is
+    /// measured and reported honestly (doc: "say so honestly"), never
+    /// asserted small.
+    #[test]
+    fn e1_unequal_exchange_conserves_momentum() {
+        use std::time::Instant;
+        const N: u32 = 200_000;
+        const SIGMA: f64 = 0.004;
+        const K: u32 = 200;
+        let ctx = require_gpu!();
+
+        fn run(ctx: &GpuContext, seed: u64, shed: StiffnessShed, force_wrong: bool) -> (f64, f64, i64) {
+            let mut engine = DsmcEngine::new(ctx, e1_box_config(N, SIGMA, seed, shed, false, 3, force_wrong));
+            engine.inject_batch(ctx, N, &[]);
+            engine.set_stiffness_levels_for_test(ctx, |i| if i % 2 == 0 { 0 } else { 3 });
+            let (p0, _) = box_momentum_weighted(&engine.read_photons(ctx));
+            let mut totals = Totals::default();
+            for _ in 0..K {
+                engine.step_collide(ctx, &mut totals);
+            }
+            let (p1, max_norm_err) = box_momentum_weighted(&engine.read_photons(ctx));
+            let dp = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) + (p1[2] - p0[2]).powi(2)).sqrt();
+            (dp, max_norm_err, totals.collisions)
+        }
+
+        let started = Instant::now();
+        let (dp_none, max_norm_err, coll_none) = run(&ctx, 0xE1B1_0001, StiffnessShed::None, false);
+        let ms = started.elapsed().as_secs_f64() * 1000.0 / K as f64;
+        println!(
+            "=== E1 gate 1: unequal exchange (k=0/k=3 mix), shed=None === {ms:.2} ms/step, collisions={coll_none}, |dP_mass_weighted|={dp_none:.3e}, max||d|-1|={max_norm_err:.2e}"
+        );
+        assert!(coll_none > 10_000, "sanity: too few collisions ({coll_none}) to trust the conservation measurement");
+        assert!(dp_none < 5e-2, "RotateRelative (unequal mass): mass-weighted momentum drifted by {dp_none:.3e}");
+        assert!(max_norm_err < 1e-4, "RotateRelative (unequal mass): max ||d|-1| = {max_norm_err:.3e}");
+
+        // --- shed = Transfer: report the drift honestly (not gated) ---
+        let (dp_transfer, _, coll_transfer) = run(&ctx, 0xE1B1_0002, StiffnessShed::Transfer, false);
+        println!(
+            "  [Transfer] collisions={coll_transfer}, |dP_mass_weighted| (CURRENT/post-shed masses)={dp_transfer:.3e} -- level transfer is NOT momentum-conserving by itself; this is expected drift, not a bug"
+        );
+
+        // --- Negative control: force the equal-mass (mass-blind) rule while m1 != m2 ---
+        let (dp_wrong, _, coll_wrong) = run(&ctx, 0xE1B1_0003, StiffnessShed::None, true);
+        println!("  [negative control: force equal-mass rule while m1 != m2] collisions={coll_wrong}, |dP_mass_weighted|={dp_wrong:.3e}");
+        assert!(
+            dp_wrong > 1.0,
+            "negative control: forcing the mass-blind rule should visibly violate mass-weighted momentum conservation, got {dp_wrong:.3e}"
+        );
+    }
+
+    /// Helper for `e1_heavy_deflects_less`'s negative control: injects `n`
+    /// ambient photons (all born k=0), runs `steps` collide steps, and
+    /// measures each surviving photon's TOTAL cumulative direction change
+    /// (angle between its direction before and after the run) -- a cruder,
+    /// INDEPENDENT measurement pathway from the GPU's per-collision
+    /// deflection tally (which buckets by k, useless here since every photon
+    /// shares k=0), so this exercises the actual physics rather than
+    /// re-reading the same counter. Grouped by species/chirality, a label
+    /// the exchange math never looks at, so with equal k/equal mass this is
+    /// a pure sanity check that two arbitrary halves of an isotropic gas
+    /// behave identically.
+    fn measure_species_deflection(ctx: &GpuContext, engine: &mut DsmcEngine, n: u32, steps: u32) -> (f64, f64, i64, f64, f64, i64) {
+        use std::collections::HashMap;
+        engine.inject_batch(ctx, n, &[]);
+        let before = engine.read_photons(ctx);
+        let mut before_dir: HashMap<u32, [f64; 3]> = HashMap::with_capacity(before.len());
+        for p in before.iter().filter(|p| p.is_alive()) {
+            before_dir.insert(p.id(), [p.dir()[0] as f64, p.dir()[1] as f64, p.dir()[2] as f64]);
+        }
+        let mut totals = Totals::default();
+        for _ in 0..steps {
+            engine.step_collide(ctx, &mut totals);
+        }
+        let after = engine.read_photons(ctx);
+        let mut sum = [0.0f64; 2];
+        let mut sumsq = [0.0f64; 2];
+        let mut n_grp = [0i64; 2];
+        for p in after.iter().filter(|p| p.is_alive()) {
+            if let Some(d0) = before_dir.get(&p.id()) {
+                let d1 = [p.dir()[0] as f64, p.dir()[1] as f64, p.dir()[2] as f64];
+                let dot = (d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2]).clamp(-1.0, 1.0);
+                let ang = dot.acos();
+                let s = if p.species() > 0.0 { 1 } else { 0 };
+                sum[s] += ang;
+                sumsq[s] += ang * ang;
+                n_grp[s] += 1;
+            }
+        }
+        let mean = |i: usize| sum[i] / n_grp[i].max(1) as f64;
+        let var = |i: usize| (sumsq[i] / n_grp[i].max(1) as f64 - mean(i).powi(2)).max(0.0);
+        let se = |i: usize| (var(i) / n_grp[i].max(1) as f64).sqrt();
+        (mean(0), se(0), n_grp[0], mean(1), se(1), n_grp[1])
+    }
+
+    /// Gate 2 (doc §11d): heavier (higher-k) photons must deflect less per
+    /// collision than lighter ones, measured directly from the exchange-step
+    /// deflection tally (bucketed by each photon's own pre-collision k).
+    /// Analytic cross-check: to leading order in the scattering angle,
+    /// momentum conservation gives m1*|delta d1| ~= m2*|delta d2|, so the
+    /// heavy/light deflection ratio should be of order m_light/m_heavy (the
+    /// doc's "analytic expectation ... else report the ratio" fallback).
+    #[test]
+    fn e1_heavy_deflects_less() {
+        use std::time::Instant;
+        const N: u32 = 200_000;
+        const SIGMA: f64 = 0.006;
+        const K: u32 = 300;
+        const K_LIGHT: usize = 0;
+        const K_HEAVY: usize = 3;
+        let ctx = require_gpu!();
+
+        let started = Instant::now();
+        let mut engine = DsmcEngine::new(&ctx, e1_box_config(N, SIGMA, 0xE1B2_0001, StiffnessShed::None, false, K_HEAVY as u32, false));
+        engine.inject_batch(&ctx, N, &[]);
+        engine.set_stiffness_levels_for_test(&ctx, |i| if i % 2 == 0 { K_LIGHT as u32 } else { K_HEAVY as u32 });
+        let mut totals = Totals::default();
+        for _ in 0..K {
+            engine.step_collide(&ctx, &mut totals);
+        }
+        let ms = started.elapsed().as_secs_f64() * 1000.0 / K as f64;
+
+        let mean = |b: usize| totals.deflect_sum[b] / totals.deflect_count[b].max(1) as f64;
+        let var = |b: usize| (totals.deflect_sumsq[b] / totals.deflect_count[b].max(1) as f64 - mean(b).powi(2)).max(0.0);
+        let se = |b: usize| (var(b) / totals.deflect_count[b].max(1) as f64).sqrt();
+
+        let mean_light = mean(K_LIGHT);
+        let mean_heavy = mean(K_HEAVY);
+        let se_light = se(K_LIGHT);
+        let se_heavy = se(K_HEAVY);
+        let n_light = totals.deflect_count[K_LIGHT];
+        let n_heavy = totals.deflect_count[K_HEAVY];
+        let z = (mean_light - mean_heavy) / (se_light * se_light + se_heavy * se_heavy).sqrt();
+
+        let m_light = 2f64.powi(K_LIGHT as i32);
+        let m_heavy = 2f64.powi(K_HEAVY as i32);
+        let predicted_ratio = m_light / m_heavy;
+        let measured_ratio = mean_heavy / mean_light;
+
+        println!("=== E1 gate 2: heavy deflects less === {ms:.2} ms/step, collisions={}", totals.collisions);
+        println!(
+            "  k={K_LIGHT} (light, m={m_light}): mean_deflect={mean_light:.5} rad, n={n_light}; k={K_HEAVY} (heavy, m={m_heavy}): mean_deflect={mean_heavy:.5} rad, n={n_heavy}; z={z:.2}"
+        );
+        println!("  measured heavy/light deflection ratio = {measured_ratio:.4}; leading-order analytic estimate (m_light/m_heavy) = {predicted_ratio:.4}");
+
+        assert!(n_light > 1000 && n_heavy > 1000, "sanity: too few samples (light={n_light}, heavy={n_heavy})");
+        assert!(mean_heavy < mean_light, "heavy photons must deflect less: mean_heavy={mean_heavy:.5} mean_light={mean_light:.5}");
+        assert!(z > 10.0, "heavy-vs-light deflection difference not clearly significant: z={z:.2} (need > 10)");
+
+        // --- Negative control: all k equal -> two independently-labelled
+        // halves of the SAME population must show statistically
+        // indistinguishable deflection (measured via a wholly separate
+        // pathway, see `measure_species_deflection`). ---
+        let mut engine_eq = DsmcEngine::new(&ctx, e1_box_config(N, SIGMA, 0xE1B2_0002, StiffnessShed::None, false, 0, false));
+        let (mean_a, se_a, n_a, mean_b, se_b, n_b) = measure_species_deflection(&ctx, &mut engine_eq, N, K);
+        let z_eq = (mean_a - mean_b) / (se_a * se_a + se_b * se_b).sqrt();
+        println!("  [negative control: all k=0] group A (species -): mean={mean_a:.5} rad n={n_a}; group B (species +): mean={mean_b:.5} rad n={n_b}; z={z_eq:.2}");
+        assert!(z_eq.abs() < 3.0, "negative control: equal-k groups should agree within 3 sigma, got z={z_eq:.2}");
+    }
+
+    /// Runs an E1 box, optionally overriding every photon's k right after
+    /// injection, and returns (collision rate, collision count, ms/step) --
+    /// shared by `e1_ntc_size_scaling_quadruples_rate`'s two arms.
+    fn e1_measured_rate(ctx: &GpuContext, config: DsmcConfig, n: u32, force_k: Option<u32>, steps: u32) -> (f64, i64, f64) {
+        use std::time::Instant;
+        let started = Instant::now();
+        let mut engine = DsmcEngine::new(ctx, config);
+        engine.inject_batch(ctx, n, &[]);
+        if let Some(k) = force_k {
+            engine.set_stiffness_levels_for_test(ctx, |_| k);
+        }
+        let mut totals = Totals::default();
+        for _ in 0..steps {
+            engine.step_collide(ctx, &mut totals);
+        }
+        let ms = started.elapsed().as_secs_f64() * 1000.0 / steps as f64;
+        (2.0 * totals.collisions as f64 / (n as f64 * 0.05 * steps as f64), totals.collisions, ms)
+    }
+
+    /// Gate 3 (doc §11d): arp.pdf size-driven cross-section. A box of
+    /// uniform k=1 photons (m=2 for everyone) with `sigma_size_scaling` on
+    /// must collide at 4x the k=0 rate: size_pair/size_max = 1 when every
+    /// photon shares k (=emit_stiffness_level, the NTC ceiling), so
+    /// sigma_eff = sigma * size_max^2 = sigma * 2^2 = 4*sigma exactly.
+    #[test]
+    fn e1_ntc_size_scaling_quadruples_rate() {
+        const N: u32 = 200_000;
+        const SIGMA: f64 = 0.002;
+        const K: u32 = 200;
+        let ctx = require_gpu!();
+
+        let (rate0, coll0, ms0) =
+            e1_measured_rate(&ctx, e1_box_config(N, SIGMA, 0xE1B3_0001, StiffnessShed::None, false, 0, false), N, None, K);
+        let (rate1, coll1, ms1) =
+            e1_measured_rate(&ctx, e1_box_config(N, SIGMA, 0xE1B3_0002, StiffnessShed::None, true, 1, false), N, Some(1), K);
+
+        let ratio = rate1 / rate0;
+        println!(
+            "=== E1 gate 3: NTC size scaling === k=0: {ms0:.2} ms/step, collisions={coll0}, rate={rate0:.5}; k=1 (scaling on): {ms1:.2} ms/step, collisions={coll1}, rate={rate1:.5}; ratio={ratio:.4} (expect 4.0)"
+        );
+        assert!(coll0 > 10_000 && coll1 > 10_000, "sanity: too few collisions (k0={coll0}, k1={coll1})");
+        assert!((ratio - 4.0).abs() / 4.0 < 0.02, "size-scaling rate ratio {ratio:.4} off by more than 2% from the expected 4x");
+    }
+
 
     // ---- B2b work item 1/2: steady-state driver + pump mode ----
 
@@ -6741,6 +7032,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
         let mut engine = DsmcEngine::new(&ctx, config);
         // 2000 steps = 4 domain diameters: a leak would add ~9k x 2000 = 18M.
@@ -6790,6 +7085,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         let mut engine = DsmcEngine::new(&ctx, config);
@@ -6874,6 +7173,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         }
     }
 
@@ -6944,6 +7247,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: true,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         }
     }
 
@@ -7045,6 +7352,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
         let mut engine = DsmcEngine::new(&ctx, config);
         engine.inject_batch(&ctx, 20_000, &[]);
@@ -7115,6 +7426,10 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
         };
 
         const TARGET: f64 = 1.0;
@@ -7138,6 +7453,25 @@ mod dsmc_gates {
     /// off, D5 off, pump emission. `n_a` = simulated ambient density (sets the
     /// photon count: live N ~ n_a * 7200 at R_D = 12); sigma = 1/(lambda * n_a).
     fn physics_default_config(class: GpuClass, mesh_mode: MeshMode, lambda: f64, n_a: f64, capacity: u32, seed: u64) -> DsmcConfig {
+        physics_default_config_e1(class, mesh_mode, lambda, n_a, capacity, seed, 0, StiffnessShed::None, false)
+    }
+
+    /// Same as `physics_default_config`, plus the E1 stiffness knobs (doc
+    /// §11d): `k0` = `emit_stiffness_level`, `shed`, `sigma_scaling`. Calling
+    /// with `(0, StiffnessShed::None, false)` reproduces
+    /// `physics_default_config` exactly (which delegates to this).
+    #[allow(clippy::too_many_arguments)]
+    fn physics_default_config_e1(
+        class: GpuClass,
+        mesh_mode: MeshMode,
+        lambda: f64,
+        n_a: f64,
+        capacity: u32,
+        seed: u64,
+        k0: u32,
+        shed: StiffnessShed,
+        sigma_scaling: bool,
+    ) -> DsmcConfig {
         let body = BodyConfig { center: DVec3::ZERO, class, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
         DsmcConfig {
             boundary: Boundary::SphereEscape { r_d: 12.0 },
@@ -7160,8 +7494,35 @@ mod dsmc_gates {
             bounce_cap: 0,
             d5_far_zone_gate: false,
             b_max: B_MAX,
+            emit_stiffness_level: k0,
+            stiffness_shed: shed,
+            sigma_size_scaling: sigma_scaling,
+            debug_force_equal_mass_exchange: false,
         }
     }
+
+    /// E1 bit-identity check (doc's RULES): with stiffness disabled (k=0
+    /// everywhere -- the only state reachable via `physics_default_config`,
+    /// which HEAD (7f0d3d4) predates entirely), the engine must reproduce
+    /// HEAD's output exactly. Deliberately tiny (fast) parameters -- this is
+    /// diffed textually against the SAME function run in a HEAD worktree; see
+    /// the E1 report for the exact diff command. Only fields that existed on
+    /// HEAD's `Totals` are printed, so a textual diff is a fair comparison
+    /// even though current `Totals` has grown extra E1 fields.
+    #[test]
+    #[ignore]
+    fn bit_identity_probe_k0() {
+        let ctx = require_gpu!();
+        let config = physics_default_config(GpuClass::Proton, MeshMode::ChiralityOnly, 1.0, 5.0, 60000, 0xE1B1_0000);
+        let mut engine = DsmcEngine::new(&ctx, config);
+        let report = engine.run_steady(&ctx, 100, 200, 50);
+        let t = &report.totals;
+        println!(
+            "BIT_IDENTITY_PROBE injected={} collisions={} emitted={:?} escaped_band={:?} escaped_band_spin={:?} dir_sum={:?} dz2_sum={:?} absorbed_mom={:?} survival={:?} crossings={:?} steady_ok={}",
+            t.injected, t.collisions, t.emitted, t.escaped_band, t.escaped_band_spin, t.dir_sum, t.dz2_sum, t.absorbed_mom, t.survival, t.crossings, report.steady_ok
+        );
+    }
+
 
     /// Single-body steady state at physics defaults, swept over the far-field
     /// ambient mean free path lambda (the physical knob, doc §3.2), for proton
@@ -7245,4 +7606,127 @@ mod dsmc_gates {
             }
         }
     }
+    // ---- E1 experiment report ----
+
+    /// E1 (doc §11d): does emitted-photon stiffness restore the proton disc /
+    /// neutron magnetic cancellation that `DirRel`'s mass-blind exchange lost
+    /// (B2b finding, `report_dsmc_steady_single_body`)? Same physics
+    /// defaults as that report (see `physics_default_config`), plus the
+    /// stiffness grid. ~65s/run x ~36 runs ~= 40 min: run in the background.
+    #[test]
+    #[ignore]
+    fn report_e1_stiffness() {
+        use std::time::Instant;
+        let ctx = require_gpu!();
+
+        const N_A: f64 = 400.0; // ~2.9M ambient photons live
+        const CAPACITY: u32 = 6_000_000;
+        const WARMUP: u32 = 1200;
+        const AVG: u32 = 2000;
+        const BLOCK: u32 = 250;
+
+        println!("=== E1: emitted-photon stiffness (doc §11d), physics defaults as report_dsmc_steady_single_body ===");
+        println!(
+            "Catch, RotateRelative, cap off, D5 off, pump; cancel_redirect 0.5, intake bias 0.5, spin_transfer {DEFAULT_SPIN_TRANSFER}, photon_fraction {:.4}; n_a {N_A}, h 0.25, R_D 12, warmup {WARMUP}, avg {AVG}",
+            PHOTON_FRACTION
+        );
+        println!(
+            "{:<9} {:<13} {:>6} {:>3} {:>8} {:>5} {:>7} {:>8} {:>7} {:>7} {:>7} {:>7} {:>8} {:>9} {:>8} {:>6} {:>7} {:>7}",
+            "class", "D2", "lambda", "k0", "shed", "sscl", "TAU_in", "TAU_out", "escFr", "polar", "mid", "equat", "spin/esc", "n_esc", "coll/ph", "steady", "ms/st", "meanK"
+        );
+
+        let started_all = Instant::now();
+        let mut run_seq = 0u64;
+        let mut run_row = |class: GpuClass, mesh_mode: MeshMode, lambda: f64, k0: u32, shed: StiffnessShed, sigma_scaling: bool| {
+            run_seq += 1;
+            let seed =
+                0xE1B0_0000u64 ^ ((class as u64) << 16) ^ ((mesh_mode as u64) << 12) ^ ((k0 as u64) << 8) ^ ((shed as u64) << 4) ^ (sigma_scaling as u64) ^ run_seq;
+            let config = physics_default_config_e1(class, mesh_mode, lambda, N_A, CAPACITY, seed, k0, shed, sigma_scaling);
+            let started = Instant::now();
+            let mut engine = DsmcEngine::new(&ctx, config.clone());
+            let report = engine.run_steady(&ctx, WARMUP, AVG, BLOCK);
+            let ms = started.elapsed().as_secs_f64() * 1000.0 / (WARMUP + AVG) as f64;
+
+            let map = DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), report.density_raw.clone(), report.avg_steps);
+            map.assert_no_overflow();
+            let (tau_in, tau_out) = measure_taus(&map, &config, config.sigma, 16);
+
+            let t = &report.totals;
+            let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
+            let n_esc: i64 = esc.iter().sum();
+            let spin: f64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[0][sp][b]).sum();
+            let share = |b: usize| esc[b] as f64 / n_esc.max(1) as f64;
+            let esc_frac = n_esc as f64 / t.emitted[0].max(1) as f64;
+            let throughput = (t.injected + t.emitted[0]).max(1) as f64;
+            let mean_k_esc = t.escaped_emitted_k_sum as f64 / t.escaped_emitted_k_count.max(1) as f64;
+
+            println!(
+                "{:<9} {:<13} {:>6} {:>3} {:>8} {:>5} {:>7.3} {:>8.3} {:>7.4} {:>7.4} {:>7.4} {:>7.4} {:>8.4} {:>9} {:>8.3} {:>6} {:>7.2} {:>7.3}",
+                format!("{class:?}"),
+                format!("{mesh_mode:?}"),
+                lambda,
+                k0,
+                format!("{shed:?}"),
+                if sigma_scaling { "on" } else { "off" },
+                tau_in,
+                tau_out,
+                esc_frac,
+                share(0),
+                share(1),
+                share(2),
+                spin / n_esc.max(1) as f64,
+                n_esc,
+                2.0 * t.collisions as f64 / throughput,
+                report.steady_ok,
+                ms,
+                mean_k_esc
+            );
+            if !report.steady_ok {
+                println!("    steady check: {}", report.steady_detail);
+            }
+        };
+
+        // k0=0 baselines (DirRel; must match HEAD exactly -- confirmed
+        // separately by bit_identity_probe_k0's textual diff against a HEAD
+        // worktree, see the E1 report writeup for the exact numbers/command;
+        // re-running the FULL original lambda x class x D2 sweep here too
+        // would double this report's ~40 min budget for no new information).
+        println!("-- k0=0 baselines (DirRel) --");
+        for class in [GpuClass::Proton, GpuClass::Neutron] {
+            for &lambda in &[3.0, 1.0] {
+                run_row(class, MeshMode::DirRel, lambda, 0, StiffnessShed::None, false);
+            }
+        }
+
+        // Main grid: DirRel, Transfer shedding: lambda x k0 x sigma_scaling x class (24 runs)
+        println!("-- DirRel, shed=Transfer: lambda x k0 x sigma_scaling x class --");
+        for &lambda in &[3.0, 1.0] {
+            for k0 in [1u32, 2, 3] {
+                for sigma_scaling in [false, true] {
+                    for class in [GpuClass::Proton, GpuClass::Neutron] {
+                        run_row(class, MeshMode::DirRel, lambda, k0, StiffnessShed::Transfer, sigma_scaling);
+                    }
+                }
+            }
+        }
+
+        // DirRel, shed=None, k0=2, scaling off: lambda x class (4 runs)
+        println!("-- DirRel, shed=None, k0=2, scaling off --");
+        for &lambda in &[3.0, 1.0] {
+            for class in [GpuClass::Proton, GpuClass::Neutron] {
+                run_row(class, MeshMode::DirRel, lambda, 2, StiffnessShed::None, false);
+            }
+        }
+
+        // ChiralityOnly, k0=2, Transfer, scaling off: lambda x class (4 runs)
+        println!("-- ChiralityOnly, shed=Transfer, k0=2, scaling off --");
+        for &lambda in &[3.0, 1.0] {
+            for class in [GpuClass::Proton, GpuClass::Neutron] {
+                run_row(class, MeshMode::ChiralityOnly, lambda, 2, StiffnessShed::Transfer, false);
+            }
+        }
+
+        println!("=== E1 report done in {:.1} min ===", started_all.elapsed().as_secs_f64() / 60.0);
+    }
+
 }

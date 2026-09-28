@@ -25,7 +25,8 @@ struct Params {
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
-    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
+    density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
+    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -47,6 +48,9 @@ const TALLY_ESCAPED_BAND_SPIN: u32 = 114u;
 const TALLY_ESCAPED_CROSSED_BODY: u32 = 144u;
 const TALLY_ESCAPED_CROSSED_BODY_SPIN: u32 = 152u;
 const TALLY_SURVIVAL: u32 = 160u;
+// E1 (doc §11d) -- must stay in sync with gpu_types.rs.
+const TALLY_ESCAPED_EMITTED_K_SUM: u32 = 192u;
+const TALLY_ESCAPED_EMITTED_K_COUNT: u32 = 193u;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -248,6 +252,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY + k * 2u + spec], 1);
                         atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY_SPIN + k * 2u + spec], i32(ph.b.w * TALLY_SCALE));
                     }
+                }
+
+                // E1 (doc §11d): mean stiffness level of escaping EMITTED
+                // photons (plain integer sum -- k in 0..7, no scale needed).
+                if (kind_emitted) {
+                    atomicAdd(&tallies[TALLY_ESCAPED_EMITTED_K_SUM], i32(ph.c[3]));
+                    atomicAdd(&tallies[TALLY_ESCAPED_EMITTED_K_COUNT], 1);
                 }
             }
         }

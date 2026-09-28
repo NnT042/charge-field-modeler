@@ -35,7 +35,8 @@ struct Params {
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
-    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
+    density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
+    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -149,6 +150,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if (chi > 0.0) {
             flags = flags | FLAG_SPECIES_PLUS;
         }
+        // E1 (doc §11d): ambient photons are always born at stiffness k=0.
         out.c = vec4<u32>(flags, 0u, params.step, 0u);
         atomicAdd(&tallies[60], 1); // TALLY_INJECTED
     } else {
@@ -197,7 +199,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if (chirality > 0.0) {
             flags = flags | FLAG_SPECIES_PLUS;
         }
-        out.c = vec4<u32>(flags, 0u, params.step, 0u);
+        // E1 (doc §11d): emitted photons are born at stiffness level k0
+        // (params.emit_stiffness_level, default 0 -- HEAD behaviour).
+        out.c = vec4<u32>(flags, 0u, params.step, params.emit_stiffness_level);
 
         atomicAdd(&tallies[56u + body_idx], 1); // TALLY_EMITTED
         let bin = hist_bin(lat0);

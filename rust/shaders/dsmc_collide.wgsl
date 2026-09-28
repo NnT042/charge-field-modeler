@@ -43,7 +43,8 @@ struct Params {
     grid_dim_z: u32, cell_h: f32, grid_min_x: f32, grid_min_y: f32,
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
-    density_accumulate: u32, _pad9a: u32, _pad9b: u32, _pad9c: u32,
+    density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
+    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -58,6 +59,10 @@ const TALLY_CELL_OVERFLOW_IDX: u32 = 68u;
 const TALLY_EXCHANGE_DRIFT_SUM_IDX: u32 = 69u;
 const TALLY_REDIRECT_DRIFT_SUM_IDX: u32 = 70u;
 const TALLY_LOW_RANK64_IDX: u32 = 71u;
+// E1 (doc §11d) -- must stay in sync with gpu_types.rs.
+const TALLY_DEFLECT_SUM_IDX: u32 = 194u;
+const TALLY_DEFLECT_SUMSQ_IDX: u32 = 202u;
+const TALLY_DEFLECT_COUNT_IDX: u32 = 210u;
 // The pre-rewrite kernel's fixed candidate cap -- used only to measure how
 // concentrated collisions are among the lowest-id photons per cell (see
 // TALLY_LOW_RANK64_IDX doc in gpu_types.rs), not as a limit here.
@@ -185,8 +190,20 @@ fn main(
     let vcell = max(free_volume[cell], 1e-6);
     let g_max: f32 = select(1.0, 2.0, params.rate_kernel == 1u);
 
+    // E1 size-driven cross-section (doc §11d, arp.pdf): sigma_pair =
+    // sigma*((m1+m2)/2)^2, photon radius proportional to stiffness mass m.
+    // NTC must draw candidates using the WORST-CASE (largest) pair
+    // cross-section so the accept/reject ratio below stays <= 1; k can only
+    // ever be as large as emit_stiffness_level (Transfer shedding moves a
+    // level DOWN from its current holder, never invents a higher one), so
+    // that config value is a safe, cheap ceiling -- see DsmcConfig doc.
+    // Off -> size_max = 1 -> sigma_eff = sigma (bit-identical to HEAD).
+    let k_max_ntc = min(params.emit_stiffness_level, 7u);
+    let size_max: f32 = select(1.0, exp2(f32(k_max_ntc)), params.sigma_size_scaling != 0u);
+    let sigma_eff = params.sigma * size_max * size_max;
+
     let nf = f32(count);
-    var m_f = 0.5 * nf * (nf - 1.0) * params.sigma * g_max * params.dt / vcell + cell_remainder[cell];
+    var m_f = 0.5 * nf * (nf - 1.0) * sigma_eff * g_max * params.dt / vcell + cell_remainder[cell];
     var m_i = i32(floor(m_f));
     m_f = m_f - f32(m_i);
     cell_remainder[cell] = m_f;
@@ -218,8 +235,23 @@ fn main(
         var pb = photons[slot_b];
         let da = pa.b.xyz;
         let db = pb.b.xyz;
+        // E1 (doc §11d): pre-collision stiffness level/mass (m = 2^k). Read
+        // here, before either the exchange or shedding below can change them,
+        // since both the exchange math and NTC's size-scaling need the
+        // PRE-collision values.
+        let k_a = pa.c[3];
+        let k_b = pb.c[3];
+        let m_a = exp2(f32(k_a));
+        let m_b = exp2(f32(k_b));
+
         let g = length(da - db);
-        let accept_p: f32 = select(1.0, g / g_max, params.rate_kernel == 1u);
+        var accept_p: f32 = select(1.0, g / g_max, params.rate_kernel == 1u);
+        if (params.sigma_size_scaling != 0u) {
+            // sigma_pair / sigma_max = ((m1+m2)/2)^2 / size_max^2; sigma
+            // itself cancels (doc §11d).
+            let size_pair = (m_a + m_b) * 0.5;
+            accept_p = accept_p * (size_pair * size_pair) / (size_max * size_max);
+        }
         if (rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 2u) >= accept_p) {
             continue;
         }
@@ -242,17 +274,12 @@ fn main(
         var new_db: vec3<f32>;
         var renorm_drift = 0.0;
         if (params.exchange_rule == 1u) {
-            // RotateRelative. V = mean, g = relative; |V|>0 case rotates g
-            // about V-hat (always perpendicular for equal-speed vectors);
-            // the exact head-on case (|V|~=0) rotates g about a random axis
-            // perpendicular to g instead.
-            let v_vec = (da + db) * 0.5;
-            let g_vec = da - db;
-            let v_len = length(v_vec);
+            // RotateRelative, generalised for E1 stiffness (doc §4 D6, §11d).
             // Glancing-biased scattering angle: same u-skew as
             // sample_contact_normal (arp.pdf), mapped through the
             // hard-sphere impact-parameter relation b=sin(chi/2)... doc's
-            // exact mapping: b = sqrt(u), chi = pi - 2*asin(b).
+            // exact mapping: b = sqrt(u), chi = pi - 2*asin(b). Shared by
+            // both the equal-mass and generalised branches below.
             let u0 = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
             let one_minus_u0 = 1.0 - u0;
             let u = 1.0 - one_minus_u0 * one_minus_u0 * one_minus_u0;
@@ -260,25 +287,65 @@ fn main(
             let chi_ang = PI - 2.0 * asin(clamp(b_impact, 0.0, 1.0));
             let s = select(-1.0, 1.0, rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) < 0.5);
 
-            var g_rot: vec3<f32>;
-            if (v_len > 1e-6) {
-                let vhat = v_vec / v_len;
-                let theta = s * chi_ang;
-                g_rot = g_vec * cos(theta) + cross(vhat, g_vec) * sin(theta);
+            // Gate-only negative control (doc §11d gate 1): force the
+            // equal-mass branch even when k_a != k_b, to show the momentum
+            // check below is sensitive to using the wrong (mass-blind) rule.
+            let force_equal = params.debug_force_equal_mass_exchange != 0u;
+            if (k_a == k_b || force_equal) {
+                // Equal mass (includes the k=0 HEAD default: this branch is
+                // BIT-IDENTICAL to the pre-E1 code). V = mean, g = relative;
+                // |V|>0 case rotates g about V-hat (always perpendicular for
+                // equal-speed vectors); the exact head-on case (|V|~=0)
+                // rotates g about a random axis perpendicular to g instead.
+                let v_vec = (da + db) * 0.5;
+                let g_vec = da - db;
+                let v_len = length(v_vec);
+
+                var g_rot: vec3<f32>;
+                if (v_len > 1e-6) {
+                    let vhat = v_vec / v_len;
+                    let theta = s * chi_ang;
+                    g_rot = g_vec * cos(theta) + cross(vhat, g_vec) * sin(theta);
+                } else {
+                    let ghat = g_vec / max(length(g_vec), 1e-6);
+                    let helper = perp_helper(ghat);
+                    let t = normalize(cross(ghat, helper));
+                    let bperp = cross(ghat, t);
+                    let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 5u) * TAU;
+                    let raxis = t * cos(psi) + bperp * sin(psi);
+                    g_rot = g_vec * cos(chi_ang) + cross(raxis, g_vec) * sin(chi_ang);
+                }
+                let raw_da = v_vec + g_rot * 0.5;
+                let raw_db = v_vec - g_rot * 0.5;
+                new_da = normalize(raw_da); // defensive re-normalise: f32 error only
+                new_db = normalize(raw_db);
+                renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
             } else {
-                let ghat = g_vec / max(length(g_vec), 1e-6);
-                let helper = perp_helper(ghat);
-                let t = normalize(cross(ghat, helper));
-                let bperp = cross(ghat, t);
-                let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 5u) * TAU;
-                let raxis = t * cos(psi) + bperp * sin(psi);
-                g_rot = g_vec * cos(chi_ang) + cross(raxis, g_vec) * sin(chi_ang);
+                // Unequal mass (E1, doc §11d): P = m1*d1 + m2*d2 is
+                // conserved. d1 lies on the cone d1.Phat = const, so rotating
+                // it about Phat by the SAME glancing-biased angle keeps
+                // |d1'|=1 and leaves |P - m1*d1'| invariant (= m2 exactly,
+                // mod f32), so d2' = (P - m1*d1')/m2 already has |d2'| ~= 1
+                // before the defensive renormalise below (doc's "assert
+                // pre-renorm |d2'| within 1e-4 of 1" -- checked via the
+                // existing renorm_drift/TALLY_MOM_DRIFT_SUM tally, which is
+                // exactly |raw_db|-1 here since raw_da is already unit-length
+                // to f32 rounding). |P|~=0 is only possible when m1=m2
+                // (excluded by this branch), so no separate near-zero case.
+                let p_vec = m_a * da + m_b * db;
+                let p_len = max(length(p_vec), 1e-6);
+                let phat = p_vec / p_len;
+                let theta = s * chi_ang;
+                let cos_t = cos(theta);
+                let sin_t = sin(theta);
+                // Full Rodrigues rotation (da is NOT generally perpendicular
+                // to phat, unlike the equal-mass g_vec/vhat pair above).
+                let raw_da = da * cos_t + cross(phat, da) * sin_t + phat * dot(phat, da) * (1.0 - cos_t);
+                new_da = normalize(raw_da);
+                let raw_db = (p_vec - m_a * new_da) / m_b;
+                new_db = normalize(raw_db);
+                renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
             }
-            let raw_da = v_vec + g_rot * 0.5;
-            let raw_db = v_vec - g_rot * 0.5;
-            new_da = normalize(raw_da); // defensive re-normalise: f32 error only
-            new_db = normalize(raw_db);
-            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
         } else {
             // SwapRenorm (legacy exchange rule, Phase-1-like): sample a
             // grazing-biased contact normal, swap its component between the
@@ -304,6 +371,23 @@ fn main(
         if (max(i, j) < RANK64) {
             atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
         }
+
+        // E1 (doc §11d): per-photon deflection angle from the exchange step
+        // alone (before the gear redirect below can rotate it further),
+        // bucketed by that photon's OWN pre-collision stiffness level --
+        // e1_heavy_deflects_less compares these buckets directly. Tallied
+        // for both exchange rules (SwapRenorm collisions land in bucket 0
+        // since unshed/ambient photons stay at k=0).
+        let defl_a = acos(clamp(dot(da, new_da), -1.0, 1.0));
+        let defl_b = acos(clamp(dot(db, new_db), -1.0, 1.0));
+        let bucket_a = min(k_a, 7u);
+        let bucket_b = min(k_b, 7u);
+        atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_a], i32(defl_a * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_a], i32(defl_a * defl_a * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_a], 1);
+        atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_b], i32(defl_b * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_b], i32(defl_b * defl_b * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_b], 1);
 
         let chi_a = chi_of(pa.c[0]);
         let chi_b = chi_of(pb.c[0]);
@@ -367,6 +451,23 @@ fn main(
             pb.c[1] = bounces_b + 1u;
             pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS;
         }
+
+        // E1 shedding (doc §11d, Transfer mode): move one stacked level from
+        // the higher-k photon to the lower-k one, AFTER the exchange (which
+        // used the pre-collision k_a/k_b/m_a/m_b above) -- conserves the
+        // total stacked-level count across the box. Equal k: no change.
+        // Independent of the bounce cap (k is a stiffness bookkeeping field,
+        // not a ricochet-limited direction update).
+        if (params.stiffness_shed == 1u) {
+            if (k_a > k_b) {
+                pa.c[3] = k_a - 1u;
+                pb.c[3] = k_b + 1u;
+            } else if (k_b > k_a) {
+                pb.c[3] = k_b - 1u;
+                pa.c[3] = k_a + 1u;
+            }
+        }
+
         photons[slot_a] = pa;
         photons[slot_b] = pb;
     }

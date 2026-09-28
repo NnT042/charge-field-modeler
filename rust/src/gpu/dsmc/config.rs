@@ -48,6 +48,18 @@ pub enum ExchangeRule {
     RotateRelative,
 }
 
+/// E1 -- per-photon stiffness shedding rule (doc §11d). `None`: a photon's
+/// stiffness level k is permanent once emitted. `Transfer` (default for
+/// physics runs): each accepted collision moves one level from the higher-k
+/// photon to the lower-k one (k unchanged if equal) -- conserves the total
+/// stacked-level count across the box, applied AFTER the exchange (which
+/// uses pre-collision k/mass).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StiffnessShed {
+    None,
+    Transfer,
+}
+
 /// Nucleon seating in a stack (recycling.rs `StackOrient`, duplicated here so
 /// the GPU module has no dependency on the CPU Phase-1 module).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -155,6 +167,30 @@ pub struct DsmcConfig {
     /// D5: far-zone (r > B_MAX) ambient-ambient collisions off when true.
     pub d5_far_zone_gate: bool,
     pub b_max: f64,
+
+    // --- E1: emitted-photon stiffness (doc §11d) ---
+    /// k0: the stiffness level (0..7) emitted photons are born with; m = 2^k0
+    /// (bottom.pdf). Ambient photons are always born at k=0. 0 disables the
+    /// feature entirely -- every photon stays at m=1, so the generalised
+    /// exchange always takes the equal-mass (bit-identical-to-HEAD) branch.
+    /// Also used as the NTC size-scaling upper bound (see
+    /// `sigma_size_scaling`): since a Transfer collision only ever moves a
+    /// level DOWN from its current holder, no photon's k can exceed the
+    /// highest k present at emission, so k0 is a safe, config-known ceiling.
+    pub emit_stiffness_level: u32,
+    pub stiffness_shed: StiffnessShed,
+    /// arp.pdf size-driven cross-section: when true, sigma_pair =
+    /// sigma * ((m1+m2)/2)^2 (photon "radius" proportional to m), with the
+    /// NTC candidate count using sigma_max = sigma * (2^emit_stiffness_level)^2
+    /// so acceptance stays a proper accept/reject ratio. When false,
+    /// sigma_pair = sigma unconditionally (bit-identical to HEAD).
+    pub sigma_size_scaling: bool,
+    /// Test-only negative control for `e1_unequal_exchange_conserves_momentum`
+    /// (doc §11d gate 1): forces the exchange to take the EQUAL-mass branch
+    /// (rotate about V=(d1+d2)/2, ignoring m1/m2) even when k1 != k2 -- the
+    /// "deliberately wrong variant" the gate needs to show its momentum check
+    /// is sensitive. Always false outside that one gate.
+    pub debug_force_equal_mass_exchange: bool,
 }
 
 impl DsmcConfig {

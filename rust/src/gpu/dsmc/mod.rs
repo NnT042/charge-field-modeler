@@ -9,7 +9,7 @@ pub mod gpu_types;
 pub mod precompute;
 pub mod sigma_calib;
 
-pub use config::{BodyConfig, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel};
+pub use config::{BodyConfig, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel, StiffnessShed};
 pub use density::DensityMap;
 pub use engine::{DsmcEngine, SteadyBlock, SteadyReport, Totals};
 pub use sigma_calib::{calibrate_sigma_for_tau_in, measure_taus, SigmaCalibration};

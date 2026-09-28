@@ -80,6 +80,18 @@ impl GpuPhoton {
     pub fn arrived_mask(&self) -> u32 {
         (self.c[0] >> ARRIVED_SHIFT) & 0b1111
     }
+
+    /// E1 (doc §11d): per-photon stiffness level, stored whole in the spare
+    /// word `c[3]` (never touched by any flag bit -- see the `flags` doc
+    /// above, which only covers `c[0]`).
+    pub fn stiffness_level(&self) -> u32 {
+        self.c[3]
+    }
+
+    /// m = 2^k (bottom.pdf: a stacked spin doubles collision mass).
+    pub fn stiffness_mass(&self) -> f64 {
+        (2.0f64).powi(self.c[3] as i32)
+    }
 }
 
 /// One static body, GPU-resident (4 x vec4 = 64 bytes).
@@ -148,9 +160,20 @@ pub struct GpuParams {
     /// accumulate this step's live population into `density_buf` (the
     /// steady-state averaging window only -- never during warm-up).
     pub density_accumulate: u32,
-    pub _pad9a: u32,
-    pub _pad9b: u32,
-    pub _pad9c: u32,
+    /// E1 (doc §11d): k0, the stiffness level emitted photons are born with,
+    /// and (doubling as) the NTC size-scaling ceiling (see `DsmcConfig`).
+    pub emit_stiffness_level: u32,
+    /// E1: 0 = StiffnessShed::None, 1 = Transfer.
+    pub stiffness_shed: u32,
+    /// E1: 0/1 -- arp.pdf size-driven cross-section on/off.
+    pub sigma_size_scaling: u32,
+
+    /// E1 gate-only negative control: 0/1 -- force the equal-mass exchange
+    /// branch regardless of k1/k2 (see `DsmcConfig::debug_force_equal_mass_exchange`).
+    pub debug_force_equal_mass_exchange: u32,
+    pub _pad10a: u32,
+    pub _pad10b: u32,
+    pub _pad10c: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -239,7 +262,25 @@ pub const TALLY_ESCAPED_CROSSED_BODY_SPIN: usize = 152;
 /// len 4*4*2 = 32. Diagonal i==j entries are never written (a photon cannot
 /// "arrive at" the body whose lane it just crossed without leaving first).
 pub const TALLY_SURVIVAL: usize = 160;
-pub const TALLY_LEN: usize = 192;
+
+// --- E1: emitted-photon stiffness (doc §11d) ---
+
+/// Of escaped photons that were EMITTED (not ambient), sum of their
+/// stiffness level k (plain integer sum, k in 0..7 -- no fixed-point scale
+/// needed) -- the report's "mean k of escaping emitted photons".
+pub const TALLY_ESCAPED_EMITTED_K_SUM: usize = 192;
+pub const TALLY_ESCAPED_EMITTED_K_COUNT: usize = 193;
+/// Per-photon deflection angle (radians, fixed-point TALLY_SCALE) from the
+/// exchange step alone, bucketed by that photon's OWN pre-collision
+/// stiffness level k (0..7) -- e1_heavy_deflects_less compares bucket 0 vs
+/// bucket 3 (or any k1 vs k2). Every collision contributes two samples (one
+/// per photon), tallied regardless of exchange rule (SwapRenorm collisions
+/// land in bucket 0 since ambient/unshed photons stay at k=0).
+pub const TALLY_DEFLECT_SUM: usize = 194; // len 8
+pub const TALLY_DEFLECT_SUMSQ: usize = 202; // len 8
+pub const TALLY_DEFLECT_COUNT: usize = 210; // len 8 (plain count)
+
+pub const TALLY_LEN: usize = 218;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;
