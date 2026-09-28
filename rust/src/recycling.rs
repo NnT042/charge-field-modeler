@@ -7800,4 +7800,461 @@ mod dsmc_gates {
             }
         }
     }
+
+    // ================================================================
+    // B2c: G2 single-body + G3 p-n-p stack reports (doc §9, §11).
+    // ================================================================
+
+    use crate::gpu::dsmc::density::{KIND_AMBIENT, KIND_EMITTED};
+
+    /// One of the RULES-mandated named settings S1-S4. lambda is fixed at 3
+    /// for all of them (per the task's RULES block) and applied by the
+    /// caller, not stored here. photon_fraction and spin_transfer are the
+    /// project defaults (PHOTON_FRACTION, DEFAULT_SPIN_TRANSFER) for every
+    /// setting, also per RULES, so they are not fields either.
+    #[derive(Clone, Copy)]
+    struct DsmcSetting {
+        name: &'static str,
+        rate_kernel: RateKernel,
+        mesh_mode: MeshMode,
+        exchange_rule: ExchangeRule,
+        bounce_cap: u32,
+        d5: bool,
+        cancel_redirect: f64,
+        pole_intake_bias: f64,
+    }
+
+    fn g23_settings() -> [DsmcSetting; 4] {
+        [
+            DsmcSetting {
+                name: "S1-compat",
+                rate_kernel: RateKernel::Constant,
+                mesh_mode: MeshMode::ChiralityOnly,
+                exchange_rule: ExchangeRule::SwapRenorm,
+                bounce_cap: 30,
+                d5: true,
+                cancel_redirect: 0.5,
+                pole_intake_bias: 0.5,
+            },
+            DsmcSetting {
+                name: "S2-P1gear",
+                rate_kernel: RateKernel::Catch,
+                mesh_mode: MeshMode::ChiralityOnly,
+                exchange_rule: ExchangeRule::RotateRelative,
+                bounce_cap: 0,
+                d5: false,
+                cancel_redirect: 0.5,
+                pole_intake_bias: 0.5,
+            },
+            DsmcSetting {
+                name: "S3-DirRel",
+                rate_kernel: RateKernel::Catch,
+                mesh_mode: MeshMode::DirRel,
+                exchange_rule: ExchangeRule::RotateRelative,
+                bounce_cap: 0,
+                d5: false,
+                cancel_redirect: 0.5,
+                pole_intake_bias: 0.5,
+            },
+            DsmcSetting {
+                name: "S4-DirRel-nored",
+                rate_kernel: RateKernel::Catch,
+                mesh_mode: MeshMode::DirRel,
+                exchange_rule: ExchangeRule::RotateRelative,
+                bounce_cap: 0,
+                d5: false,
+                cancel_redirect: 0.0,
+                pole_intake_bias: 0.5,
+            },
+        ]
+    }
+
+    const G23_LAMBDA: f64 = 3.0;
+
+    fn g23_config(bodies: Vec<BodyConfig>, s: &DsmcSetting, n_a: f64, capacity: u32, seed: u64) -> DsmcConfig {
+        DsmcConfig {
+            boundary: Boundary::SphereEscape { r_d: 12.0 },
+            bodies,
+            h: 0.25,
+            dt: 0.05,
+            capacity,
+            seed,
+            n_ambient: n_a,
+            sigma: 1.0 / (G23_LAMBDA * n_a),
+            photon_fraction: PHOTON_FRACTION,
+            pole_intake_bias: s.pole_intake_bias,
+            cancel_redirect: s.cancel_redirect,
+            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            swing_boost: DEFAULT_SWING_BOOST,
+            rate_kernel: s.rate_kernel,
+            mesh_mode: s.mesh_mode,
+            exchange_rule: s.exchange_rule,
+            emission_mode: EmissionMode::Pump,
+            bounce_cap: s.bounce_cap,
+            d5_far_zone_gate: s.d5,
+            b_max: B_MAX,
+            emit_stiffness_level: 0,
+            stiffness_shed: StiffnessShed::None,
+            sigma_size_scaling: false,
+            debug_force_equal_mass_exchange: false,
+        }
+    }
+
+    /// Fibonacci-sphere direction #`i` of `n` (deterministic, roughly
+    /// uniform on the unit sphere).
+    fn fib_sphere_dir(i: usize, n: usize) -> DVec3 {
+        let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+        let y = 1.0 - 2.0 * (i as f64 + 0.5) / n as f64;
+        let r = (1.0 - y * y).max(0.0).sqrt();
+        let theta = golden * i as f64;
+        DVec3::new(r * theta.cos(), r * theta.sin(), y)
+    }
+
+    /// Time-averaged density of `kind` (both species), averaged over a
+    /// shell `r0..r1` around `center` (doc §8's densification profile,
+    /// evaluated as a single number rather than the CSV slice).
+    fn shell_density_both(map: &DensityMap, center: DVec3, r0: f64, r1: f64, kind: usize) -> f64 {
+        const N_R: usize = 6;
+        const N_DIR: usize = 64;
+        let mut sum = 0.0;
+        for ri in 0..N_R {
+            let r = r0 + (r1 - r0) * (ri as f64 + 0.5) / N_R as f64;
+            for di in 0..N_DIR {
+                let p = center + fib_sphere_dir(di, N_DIR) * r;
+                sum += map.density_at_both_species(p, kind);
+            }
+        }
+        sum / (N_R * N_DIR) as f64
+    }
+
+    /// G2 (doc §9): single proton, then single neutron, pump mode, under
+    /// S1-S4 (RULES block). Report-only: exit-band topology, escape
+    /// fraction, spin/escaped, TAU_in/TAU_out per doc §9's G2 row, plus (for
+    /// S1 only) the matching Phase-1 CPU numbers run LIVE at the same
+    /// gear settings (redirect 0.5, bias 0.5, spin_transfer default,
+    /// TAU = TAU_SELF = 3, Nric = 30, pump mode) -- mirroring
+    /// `report_neutron_recycling`'s "pump flagship". Doc §3.2: Phase-1's TAU
+    /// is a different quantity from DSMC's TAU_in/TAU_out (reciprocity), so
+    /// they are printed side by side, never equated.
+    #[test]
+    #[ignore]
+    fn report_g2_single_body() {
+        use std::time::Instant;
+        let ctx = require_gpu!();
+
+        const N_A: f64 = 400.0;
+        const CAPACITY: u32 = 6_000_000;
+        const WARMUP: u32 = 1200;
+        const AVG: u32 = 2000;
+        const BLOCK: u32 = 250;
+        let started_all = Instant::now();
+
+        println!("=== G2 single-body report (doc sec9): S1-S4 x {{proton, neutron}} ===");
+        println!(
+            "lambda={G23_LAMBDA} (sigma=1/(lambda*n_a)), n_a={N_A}, h=0.25, R_D=12, warmup={WARMUP}, avg={AVG}, pump emission, photon_fraction={PHOTON_FRACTION:.4}, spin_transfer={DEFAULT_SPIN_TRANSFER}"
+        );
+        println!(
+            "{:<9} {:<16} {:>7} {:>8} {:>7} {:>7} {:>7} {:>7} {:>8} {:>9} {:>8} {:>6} {:>7}",
+            "class", "setting", "TAU_in", "TAU_out", "escFr", "polar", "mid", "equat", "spin/esc", "n_esc", "coll/ph", "steady", "ms/st"
+        );
+
+        for class in [GpuClass::Proton, GpuClass::Neutron] {
+            let body = BodyConfig { center: DVec3::ZERO, class, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+            for (si, s) in g23_settings().iter().enumerate() {
+                let seed = 0xC2C2_0000u64 ^ ((class as u64) << 8) ^ (si as u64);
+                let config = g23_config(vec![body], s, N_A, CAPACITY, seed);
+                let started = Instant::now();
+                let mut engine = DsmcEngine::new(&ctx, config.clone());
+                let report = engine.run_steady(&ctx, WARMUP, AVG, BLOCK);
+                let ms = started.elapsed().as_secs_f64() * 1000.0 / (WARMUP + AVG) as f64;
+
+                let map = DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), report.density_raw.clone(), report.avg_steps);
+                map.assert_no_overflow();
+                let (tau_in, tau_out) = measure_taus(&map, &config, config.sigma, 16);
+
+                let t = &report.totals;
+                let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
+                let n_esc: i64 = esc.iter().sum();
+                let spin: f64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[0][sp][b]).sum();
+                let share = |b: usize| esc[b] as f64 / n_esc.max(1) as f64;
+                let esc_frac = n_esc as f64 / t.emitted[0].max(1) as f64;
+                let throughput = (t.injected + t.emitted[0]).max(1) as f64;
+                println!(
+                    "{:<9} {:<16} {:>7.3} {:>8.3} {:>7.4} {:>7.4} {:>7.4} {:>7.4} {:>8.4} {:>9} {:>8.3} {:>6} {:>7.2}",
+                    format!("{class:?}"),
+                    s.name,
+                    tau_in,
+                    tau_out,
+                    esc_frac,
+                    share(0),
+                    share(1),
+                    share(2),
+                    spin / n_esc.max(1) as f64,
+                    n_esc,
+                    2.0 * t.collisions as f64 / throughput,
+                    report.steady_ok,
+                    ms
+                );
+                if !report.steady_ok {
+                    println!("    steady check: {}", report.steady_detail);
+                }
+
+                if si == 0 {
+                    // Phase-1 CPU reference at S1's gear settings, run live.
+                    let pclass = match class {
+                        GpuClass::Proton => ParticleClass::Proton,
+                        GpuClass::Neutron => ParticleClass::Neutron,
+                        GpuClass::Electron => ParticleClass::Electron,
+                    };
+                    let gears = GearConfig {
+                        enabled: true,
+                        photon_fraction: PHOTON_FRACTION,
+                        cancel_redirect: 0.5,
+                        pole_intake_bias: 0.5,
+                        class: pclass,
+                        spin_transfer: DEFAULT_SPIN_TRANSFER,
+                        through_lane_rho: THROUGH_LANE_RHO,
+                    };
+                    let n_cpu = 200_000usize;
+                    let mut cpu_seed = 0xC2C2_CAFEu64 ^ ((class as u64) << 8);
+                    let (e0, a0) = run_iteration0(n_cpu, DEFAULT_SWING_BOOST, &gears, &mut cpu_seed);
+                    cpu_seed = cpu_seed.wrapping_add(1);
+                    let cell = run_self_consistent(n_cpu, DEFAULT_SWING_BOOST, 3.0, 3.0, 30, ITERS_PUMP, true, &gears, &e0, &a0, cpu_seed);
+                    let e = &cell.emitted_tally;
+                    let esc_cpu = e.escaped.max(1.0);
+                    println!(
+                        "    Phase-1 CPU (pump, TAU=TAU_SELF=3, Nric=30, N={n_cpu}, iters={ITERS_PUMP}; NOTE doc sec3.2 -- Phase-1's TAU is NOT DSMC's TAU_in/out, reciprocity forbids equating them): escFr={:.4} polar={:.4} mid={:.4} equat={:.4} spin/esc={:.4}",
+                        e.escaped / e.total.max(1.0),
+                        e.escaped_band[0] / esc_cpu,
+                        e.escaped_band[1] / esc_cpu,
+                        e.escaped_band[2] / esc_cpu,
+                        e.spin_escaped_sum / esc_cpu
+                    );
+                }
+            }
+        }
+        println!("=== G2 report done in {:.1} min ===", started_all.elapsed().as_secs_f64() / 60.0);
+    }
+
+    /// The 5 CM-4b configs (report_pnp_stack), rebuilt as GPU multi-body
+    /// stacks: (label, bodies, middle index, feeder indices).
+    fn g3_configs() -> Vec<(&'static str, Vec<BodyConfig>, usize, Vec<usize>)> {
+        let p = |z: f64| BodyConfig { center: DVec3::new(0.0, 0.0, z), class: GpuClass::Proton, orient: GpuOrient::EdgeOn, through_lane_rho: THROUGH_LANE_RHO };
+        let n = |z: f64| BodyConfig { center: DVec3::new(0.0, 0.0, z), class: GpuClass::Neutron, orient: GpuOrient::PoleOn, through_lane_rho: THROUGH_LANE_RHO };
+        vec![
+            ("n alone", vec![n(0.0)], 0, vec![]),
+            ("p-n (1 feeder)", vec![p(-STACK_PITCH), n(0.0)], 1, vec![0]),
+            ("p-n-p (2 feeders)", vec![p(-STACK_PITCH), n(0.0), p(STACK_PITCH)], 1, vec![0, 2]),
+            ("n-n-n SAME-SPECIES", vec![n(-STACK_PITCH), n(0.0), n(STACK_PITCH)], 1, vec![0, 2]),
+            (
+                "p-n-p LANE SHUT",
+                vec![
+                    BodyConfig { through_lane_rho: 0.0, ..p(-STACK_PITCH) },
+                    BodyConfig { through_lane_rho: 0.0, ..n(0.0) },
+                    BodyConfig { through_lane_rho: 0.0, ..p(STACK_PITCH) },
+                ],
+                1,
+                vec![0, 2],
+            ),
+        ]
+    }
+
+    /// One config's computed CM-4b observables (doc §8/§11) for one setting.
+    struct G3Row {
+        label: &'static str,
+        own_esc: i64,
+        own_m: f64,
+        crossings_mid: i64,
+        thru_esc: i64,
+        thru_m: f64,
+        thru_chi_plus: i64,
+        thru_chi_minus: i64,
+        hand_off_frac: f64,
+        mom_mid_per_absorbed: f64,
+        mom_feeder_per_absorbed: Vec<f64>,
+        survival_south: Option<f64>,
+        survival_north: Option<f64>,
+        density_ratio: f64,
+        ambient_shell: f64,
+        steady_ok: bool,
+    }
+
+    /// G3 (doc §9): the 5 CM-4b stack configs, under S1-S4. Report-only,
+    /// same layout as CM-4b's `report_pnp_stack` (Phase 1), but every
+    /// observable comes straight off the DSMC tallies (doc §8) -- own M/esc,
+    /// through M/esc, hand-off, momentum, MEASURED counter-stream survival
+    /// (not integrated), and densification (Phase 2's whole point: does the
+    /// stack's own emitted gas pile up around the middle body?).
+    #[test]
+    #[ignore]
+    fn report_g3_pnp_stack() {
+        use std::time::Instant;
+        let ctx = require_gpu!();
+
+        const N_A: f64 = 400.0;
+        const CAPACITY: u32 = 6_000_000;
+        const WARMUP: u32 = 1200;
+        const AVG: u32 = 2000;
+        const BLOCK: u32 = 250;
+        let started_all = Instant::now();
+
+        println!("=== G3 p-n-p stack report (doc sec9): 5 CM-4b configs x S1-S4 ===");
+        println!(
+            "lambda={G23_LAMBDA}, n_a={N_A}, h=0.25, R_D=12, warmup={WARMUP}, avg={AVG}, pump emission (every body owns gas), photon_fraction={PHOTON_FRACTION:.4}, spin_transfer={DEFAULT_SPIN_TRANSFER}, STACK_PITCH={STACK_PITCH}"
+        );
+        println!(
+            "CAVEAT: hand-off is measured as (arrivals at a feeder by a photon that had crossed the middle body's lane, TALLY_SURVIVAL's own numerator+denominator summed over collided 0/1) / (crossings of the middle lane) -- an 'arrival' at a body in dsmc_move.wgsl is a lane-gate test that, for a feeder, almost always fails (feeders are EdgeOn, so an axial photon essentially never re-passes a feeder's own polar lane) and so is absorption; this slightly OVER-counts vs strict absorption by that rare miss, but is exactly scoped to the middle body's lane specifically, unlike an EARLIER version of this report which used TALLY_ABSORBED_CROSSED (any-lane-ever, contaminated by feeders' own-lane self-crossings accumulated over a photon's whole ricochet history with the cap off) and produced nonsensical >100% hand-off numbers -- caught by eyeballing the printed table, not a silent pass. North/south survival is the SAME tally, just split by feeder instead of summed."
+        );
+        println!(
+            "  Verification: crossings/thru-esc/hand-off are all exactly 0 on the 'p-n-p LANE SHUT' row in every setting below (negative control: lane closed -> nothing to hand off)."
+        );
+
+        let mut headline: Vec<(&'static str, G3Row)> = Vec::new(); // (setting name, p-n-p row) for the final table
+
+        for (setidx, s) in g23_settings().iter().enumerate() {
+            println!(
+                "\n--- setting {} (lambda={G23_LAMBDA}, redirect={}, bias={}, cap={}, D5={}) ---",
+                s.name, s.cancel_redirect, s.pole_intake_bias, s.bounce_cap, s.d5
+            );
+            println!(
+                "{:<20} {:>8} {:>10} {:>7} {:>8} {:>10} {:>13} {:>13} {:>8} {:>10} {:>9} {:>9} {:>10} {:>6}",
+                "config", "own esc", "own M/esc", "cross", "thru esc", "thru M/esc", "TOTAL M/esc", "|shift|", "hand-off", "mom/abs(mid)", "surv(S)", "surv(N)", "dens.ratio", "steady"
+            );
+
+            let mut base_total = f64::NAN;
+            let mut base_density = f64::NAN;
+            let mut rows_this_setting: Vec<G3Row> = Vec::new();
+
+            for (ci, (label, bodies, middle, feeders)) in g3_configs().into_iter().enumerate() {
+                let seed = 0xC3C3_0000u64 ^ ((setidx as u64) << 8) ^ (ci as u64);
+                let capacity = CAPACITY + 2_000_000 * (bodies.len() as u32 - 1); // a little extra headroom per added emitter
+                let config = g23_config(bodies.clone(), s, N_A, capacity, seed);
+                let mut engine = DsmcEngine::new(&ctx, config.clone());
+                let report = engine.run_steady(&ctx, WARMUP, AVG, BLOCK);
+
+                let map = DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), report.density_raw.clone(), report.avg_steps);
+                map.assert_no_overflow();
+
+                let t = &report.totals;
+                let own_esc: i64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band[middle][sp][b]).sum();
+                let own_m: f64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[middle][sp][b]).sum();
+                let crossings_mid: i64 = t.crossings[middle][0] + t.crossings[middle][1];
+                let thru_esc: i64 = t.escaped_crossed_body[middle][0] + t.escaped_crossed_body[middle][1];
+                let thru_m: f64 = t.escaped_crossed_body_spin[middle][0] + t.escaped_crossed_body_spin[middle][1];
+                let thru_chi_minus = t.escaped_crossed_body[middle][0];
+                let thru_chi_plus = t.escaped_crossed_body[middle][1];
+
+                // Exactly scoped to the MIDDLE body's lane (unlike
+                // TALLY_ABSORBED_CROSSED, which is any-lane-ever and gets
+                // contaminated by a feeder's own-lane self-crossings
+                // accumulated over a photon's whole ricochet history once
+                // the bounce cap is off -- see the CAVEAT printed above,
+                // found by this exact number coming back >100%).
+                let hand_off_num: i64 = feeders.iter().map(|&f| t.survival[middle][f][0] + t.survival[middle][f][1]).sum();
+                let hand_off_frac = if crossings_mid > 0 { hand_off_num as f64 / crossings_mid as f64 } else { f64::NAN };
+
+                let mom_mid_per_absorbed = t.absorbed_mom[middle][2] / t.absorbed_total(middle).max(1) as f64;
+                let mom_feeder_per_absorbed: Vec<f64> = feeders.iter().map(|&f| t.absorbed_mom[f][2] / t.absorbed_total(f).max(1) as f64).collect();
+
+                // South = the feeder at negative z (index 0 of `feeders` in
+                // every config here, by g3_configs's construction); north =
+                // positive z (index 1, when present).
+                let survival_south = feeders.first().map(|&f| {
+                    let s0 = t.survival[middle][f][0] as f64;
+                    let s1 = t.survival[middle][f][1] as f64;
+                    s0 / (s0 + s1).max(1.0)
+                });
+                let survival_north = if feeders.len() > 1 {
+                    let f = feeders[1];
+                    let s0 = t.survival[middle][f][0] as f64;
+                    let s1 = t.survival[middle][f][1] as f64;
+                    Some(s0 / (s0 + s1).max(1.0))
+                } else {
+                    None
+                };
+
+                let mid_center = config.bodies[middle].center;
+                let emitted_shell = shell_density_both(&map, mid_center, 1.0, 1.5, KIND_EMITTED);
+                let ambient_shell = shell_density_both(&map, mid_center, 1.0, 1.5, KIND_AMBIENT);
+                if label == "n alone" {
+                    base_density = emitted_shell;
+                }
+                let density_ratio = emitted_shell / base_density.max(1e-12);
+
+                let total = (own_m + thru_m) / (own_esc + thru_esc).max(1) as f64;
+                if label == "n alone" {
+                    base_total = total;
+                }
+                let shift = total - base_total;
+
+                println!(
+                    "{:<20} {:>8} {:>10.4} {:>7} {:>8} {:>10.4} {:>13.4} {:>13.4} {:>8} {:>10.4} {:>9} {:>9} {:>10.3} {:>6}",
+                    label,
+                    own_esc,
+                    own_m / own_esc.max(1) as f64,
+                    crossings_mid,
+                    thru_esc,
+                    thru_m / thru_esc.max(1) as f64,
+                    total,
+                    shift.abs(),
+                    if hand_off_frac.is_nan() { "n/a".to_string() } else { format!("{:.1}%", 100.0 * hand_off_frac) },
+                    mom_mid_per_absorbed,
+                    survival_south.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".to_string()),
+                    survival_north.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".to_string()),
+                    density_ratio,
+                    report.steady_ok
+                );
+                if !report.steady_ok {
+                    println!("    steady check: {}", report.steady_detail);
+                }
+                println!(
+                    "    thru species mix: chi+ {} chi- {} (Phase-1's CM-4 lane-only mix was 0.031); feeder mom/absorbed: {:?}; ambient shell density (r 1.0-1.5): {:.4}",
+                    thru_chi_plus, thru_chi_minus, mom_feeder_per_absorbed, ambient_shell
+                );
+
+                rows_this_setting.push(G3Row {
+                    label,
+                    own_esc,
+                    own_m,
+                    crossings_mid,
+                    thru_esc,
+                    thru_m,
+                    thru_chi_plus,
+                    thru_chi_minus,
+                    hand_off_frac,
+                    mom_mid_per_absorbed,
+                    mom_feeder_per_absorbed,
+                    survival_south,
+                    survival_north,
+                    density_ratio,
+                    ambient_shell,
+                    steady_ok: report.steady_ok,
+                });
+            }
+
+            let pnp_row = rows_this_setting.into_iter().find(|r| r.label.starts_with("p-n-p (2")).unwrap();
+            headline.push((s.name, pnp_row));
+        }
+
+        println!("\n=== G3 final headline comparison (p-n-p row per setting) ===");
+        println!("Phase-1 re-baseline ranges (e0dcae7, S1-equivalent gear settings): thru M/esc 1.46-1.51, hand-off 77-78.5%, f* 169-180x, p-n push +0.883..+0.889, north-gap tau 0.75-0.78 -> survival ~=0.46-0.47.");
+        println!(
+            "{:<16} {:>10} {:>9} {:>12} {:>9} {:>9} {:>10}",
+            "setting", "thru M/esc", "hand-off", "mom/abs(mid)", "surv(S)", "surv(N)", "dens.ratio"
+        );
+        for (name, row) in &headline {
+            println!(
+                "{:<16} {:>10.4} {:>9} {:>12.4} {:>9} {:>9} {:>10.3}",
+                name,
+                row.thru_m / row.thru_esc.max(1) as f64,
+                if row.hand_off_frac.is_nan() { "n/a".to_string() } else { format!("{:.1}%", 100.0 * row.hand_off_frac) },
+                row.mom_mid_per_absorbed,
+                row.survival_south.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".to_string()),
+                row.survival_north.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".to_string()),
+                row.density_ratio
+            );
+        }
+        println!("(p-n row's momentum/absorbed(mid) -- the Phase-1 '+0.883..+0.889' comparator -- is printed in each setting's own table above, config 'p-n (1 feeder)'.)");
+        println!("=== G3 report done in {:.1} min ===", started_all.elapsed().as_secs_f64() / 60.0);
+    }
 }

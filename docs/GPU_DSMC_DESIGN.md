@@ -501,6 +501,36 @@ This holds for proton and neutron, both D2 modes, intake tilt on or off, and
 settings (known reference) and with the redirect off (no imposed funnel), in both
 D2 modes.
 
+**B2c result (G2/G3, λ = 3, 1 seed; every body emits and owns its gas).**
+
+| p-n-p headline | S1 compat | S2 P1-gear | S3 DirRel | S4 DirRel, no redirect | Phase-1 (e0dcae7) |
+|---|---|---|---|---|---|
+| through M/esc | 1.34 | 1.48 | 0.91 | 0.69 | 1.46–1.51 |
+| hand-off to far feeder | 77.2% | 71.5% | 74.1% | 72.3% | 77–78.5% |
+| north-gap survival | 0.875 | 0.881 | 0.907 | 0.729 | ≈0.47 (integrated) |
+| densification (emitted gas, 1 < r < 1.5, vs n alone) | 1.56× | 2.22× | 1.63× | 1.37× | needs ~170–180× (f\*) |
+| total-sum shift, p-n-p vs n alone | 0.032 | 0.079 | 0.010 | 0.001 | — |
+
+- **Hand-off is robust.** ~72–77% in every setting, and S1 lands on Phase 1. The far
+  feeder capturing through-exhaust is geometric, not a gear effect.
+- **Through-exhaust spin needs the old gear rule.** It stays high only under the
+  Phase-1 gear rule; DirRel and the no-redirect setting cut it roughly in half.
+- **Counter-stream survival** is ~0.88 here vs Phase-1's integrated 0.47. The
+  difference is the reciprocity regime (§3.2): a pump-mode exhaust is optically thin,
+  so Phase-1's TAU = 3 emitted gas does not exist here.
+- **Densification is real but small.** The stack piles emitted gas up only 1.4–2.5×
+  around the middle neutron, nowhere near the ~175× neutrality needs. The whole-particle
+  spin sum barely moves (|shift| ≤ 0.08). In this model, stacking three nucleons does
+  not deliver neutrality in any setting.
+- **Caveats:**
+  - `mom/abs(mid)` (0.08–0.19) averages over *all* photons the middle body absorbs
+    (ambient, own and feeder). Phase-1's +0.88 was feeder photons only, so the two are
+    NOT comparable until absorbed momentum is split by source.
+  - p-n `surv(S)` = 0.000 under S2 is almost certainly 0/0 (no south-bound crossers).
+  - The S1 lane-shut row failed its steady check (z_absorbed −4.1).
+  - Single seed.
+
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
