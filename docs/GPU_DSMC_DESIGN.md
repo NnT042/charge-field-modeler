@@ -531,6 +531,76 @@ D2 modes.
   - Single seed.
 
 
+## 13. Next: photons with full mechanics (proposal, 2026-09-28)
+
+User directive: photons get whatever state the mechanics need (spin axis, stacked
+spins, precise energies); optimise later. E2 showed why: with photons reduced to
+direction + scalar spin, the only thing shaping exit topology was the imposed redirect.
+
+### 13.1 Photon state
+- Position, velocity (see D7 for the speed), and **mass/size level k** (m = 2^k,
+  radius ∝ 2^k; bottom.pdf).
+- **Spin vector ω**: its axis is the spin axis, its sense is the chirality, and its
+  edge speed is |ω|·r ≤ c.
+- **Stacked levels:** when an edge speed would exceed c, the spin stacks a new level at
+  2× radius instead (quant.html/half.pdf quantisation, PHYSICS_REFERENCE §2). The
+  photon tier is levels 1–4 (axial, x, y, z).
+- **Energy bookkeeping per level** (the §3b quantum-spin-energy formula), so
+  spin ↔ linear transfer is accounted in real units.
+- Roughly 96–128 B per photon. That is fine at a few million photons.
+
+### 13.2 Contact mechanics: perfectly rough spheres
+The textbook model for colliding *spinning* balls (Bryan 1894; Pidduck 1922; Chapman &
+Cowling ch. 11).
+- At contact, the relative surface velocity is v_rel = (v₁ − v₂) + ω₁×(r₁n̂) + ω₂×(r₂n̂).
+  The impulse has a normal part (the bounce) and a tangential part (the surfaces
+  grip).
+- A tangential restitution β sets the grip: −1 = frictionless, +1 = perfectly rough,
+  "gears that don't slip".
+- Linear momentum, angular momentum and energy are conserved together, and spin ↔
+  linear energy exchange happens on the tangent. This is halbach.pdf's "it happens on
+  the tangent… energy has transferred from spin energy to linear".
+
+**Why this is promising:**
+- **D2 becomes derived instead of a rule.** Whether two surfaces *mesh* (tangential
+  surface speeds match, little exchange) or *catch* (they oppose, hard grip) depends
+  jointly on both spin senses and on relative direction. That is Mathis's "opposite
+  twice = same", falling out of the geometry.
+- **The sideways deflection comes for free.** "Same-spin deflects ALONG the spin
+  direction; opposite-spin deflects AGAINST it" (PHYSICS_REFERENCE §5) is the
+  tangential impulse; nothing needs to be imposed.
+- **The redirect device can be retired**, and E2's question gets a real answer: does
+  topology emerge from the mechanics?
+
+### 13.3 **[DECISION] D7 — the speed of light in collisions**
+Rough-sphere spin ↔ linear transfer changes a photon's *speed*. The sources pull
+both ways:
+- neutron.pdf ("collisions affect only the spins, not c") and arp.pdf ("spin changes,
+  not velocity changes");
+- photon.html ("c is the average speed, not the maximum… newly emitted photons may be
+  going slightly over c") and halbach.pdf (repulsion is an *increase in linear
+  energy*).
+
+The options:
+- **(a) Free speed:** full rough-sphere; speeds scatter about c.
+- **(b) Speed pinned at c:** the linear part of the exchange is projected back to
+  |v| = c, and the energy difference goes into spin (energy conserved, momentum
+  approximately conserved).
+- **(c) Implement both** and measure the speed spread (a) produces. If it stays
+  within a few % of c, arp.pdf's picture holds either way.
+
+*Recommend (c).*
+
+### 13.4 Gates before physics
+- **RS1:** a rough-sphere box conserves energy, linear and angular momentum.
+- **RS2:** the textbook result that a perfectly rough gas equipartitions translational
+  and rotational energy is reproduced (a sharp, well-known check).
+- **RS3:** a two-photon collision table (same/opposite spin × co-moving/head-on)
+  reproduces the sign pattern in grav4.pdf/halbach.pdf. That verifies D2 emerges and
+  isn't assumed.
+- **Then:** rerun E2 (single body, no redirect) and the G3 stack with the
+  mechanics doing the work.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
