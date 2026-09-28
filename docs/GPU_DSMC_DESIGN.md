@@ -468,7 +468,38 @@ through several field hits.
 - **Questions:** does the proton disc survive? Does the neutron's magnetic
   cancellation come back? Does the offset erase the effect?
 
-**Then B2c:** the G2/G3 Phase-1 comparison tables and the p-n-p stack.
+**E1 result (824fb46): stiffness is not the missing ingredient.** Under DirRel it
+only partly resists the polar squash (proton λ = 1 polar 0.52 → 0.41 at k0 = 3).
+Even permanent, unshed stiffness leaves the equatorial share at 0.20 (vs 0.50
+collision-free). arp.pdf size scaling sheds stiffness almost at once and makes it
+worse. Neutron spin is unchanged.
+
+**E2 — redirect ablation (the decisive one).** With `cancel_redirect = 0`, the exit
+topology is **identical** in every case: ~0.14 polar / 0.37 mid / 0.49 equatorial.
+This holds for proton and neutron, both D2 modes, intake tilt on or off, and
+λ = 3 or 1. It is exactly the collision-free emission geometry.
+- Real (glancing, momentum-conserving) collisions do not reshape where charge
+  leaves.
+- **Every topology effect so far comes from the gear-redirect device:** the proton disc
+  sharpening, the neutron polar funnel, and the DirRel polar squash.
+- That device borrows neutron.pdf's *internal* funnel and applies it to every
+  photon-photon hit in the gas, keyed to the nearest body's axis. So Phase 1's
+  "neutron butterfly emergent from chirality" is emergent from chirality *through an
+  imposed redirect*.
+- The magnetic channel does respond to collisions without the redirect:
+  - ChiralityOnly neutron spin/esc −0.38 (λ = 3) → +0.97 (λ = 1);
+  - DirRel neutron stays −1.0…−1.13, since head-on meets with incoming photons spin
+    it *up* (grav4.pdf);
+  - DirRel proton drops to 0.03 at λ = 1.
+- **Open question for the user:** the redirect is the whole topology engine and needs
+  a sourced replacement. The candidate is PHYSICS_REFERENCE §5's edge-hit rule:
+  "same-spin deflects ALONG the spin direction; opposite-spin deflects AGAINST it",
+  i.e. a sideways deflection set by each photon's spin *axis*, which the model does
+  not yet carry.
+
+**Then B2c:** the G2/G3 tables and the p-n-p stack, run under the Phase-1-equivalent
+settings (known reference) and with the redirect off (no imposed funnel), in both
+D2 modes.
 
 ## 12. Out of scope for this step
 

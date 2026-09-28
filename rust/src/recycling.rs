@@ -7729,4 +7729,75 @@ mod dsmc_gates {
         println!("=== E1 report done in {:.1} min ===", started_all.elapsed().as_secs_f64() / 60.0);
     }
 
+
+    /// E2: is the polar squash under DirRel caused by the GEAR REDIRECT
+    /// (cancel -> nudge toward the nearer pole, augment -> toward the disc)?
+    /// That redirect is a modelling device borrowed from the neutron's
+    /// internal funnel (neutron.pdf) and applied to every photon-photon hit
+    /// in the gas. Under DirRel a proton's exhaust meeting incoming photons
+    /// head-on is a cancel (grav4/halbach: "spin one another down"), so the
+    /// redirect would steer the proton's own disc poleward. Ablate it
+    /// (cancel_redirect = 0), and separately the species intake tilt, in
+    /// both D2 modes. k0 = 0 (E1 showed stiffness is not the lever).
+    #[test]
+    #[ignore]
+    fn report_e2_redirect_ablation() {
+        use std::time::Instant;
+        let ctx = require_gpu!();
+        const N_A: f64 = 400.0;
+        const CAPACITY: u32 = 6_000_000;
+        const WARMUP: u32 = 1200;
+        const AVG: u32 = 2000;
+        const BLOCK: u32 = 250;
+        println!("=== E2: gear-redirect / intake-tilt ablation (single body, physics defaults otherwise) ===");
+        println!(
+            "{:<8} {:<13} {:>4} {:>6} {:>6} {:>7} {:>7} {:>7} {:>7} {:>8} {:>8} {:>7} {:>6}",
+            "class", "D2", "lam", "redir", "bias", "escFr", "polar", "mid", "equat", "spin/esc", "n_esc", "coll/ph", "steady"
+        );
+        let mut cases: Vec<(MeshMode, f64, f64)> = Vec::new();
+        for mesh in [MeshMode::ChiralityOnly, MeshMode::DirRel] {
+            for redir in [0.5, 0.0] {
+                cases.push((mesh, redir, 0.5));
+            }
+        }
+        cases.push((MeshMode::DirRel, 0.0, 0.0));
+        cases.push((MeshMode::ChiralityOnly, 0.0, 0.0));
+        for class in [GpuClass::Proton, GpuClass::Neutron] {
+            for &(mesh, redir, bias) in &cases {
+                for lambda in [3.0f64, 1.0] {
+                    let seed = 0xE2E2_0000u64 ^ ((class as u64) << 8) ^ ((mesh as u64) << 4) ^ (lambda as u64);
+                    let mut config =
+                        physics_default_config_e1(class, mesh, lambda, N_A, CAPACITY, seed, 0, StiffnessShed::None, false);
+                    config.cancel_redirect = redir;
+                    config.pole_intake_bias = bias;
+                    let started = Instant::now();
+                    let mut engine = DsmcEngine::new(&ctx, config);
+                    let report = engine.run_steady(&ctx, WARMUP, AVG, BLOCK);
+                    let _ms = started.elapsed().as_secs_f64() * 1000.0 / (WARMUP + AVG) as f64;
+                    let t = &report.totals;
+                    let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
+                    let n_esc: i64 = esc.iter().sum();
+                    let spin: f64 = (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[0][sp][b]).sum();
+                    let share = |b: usize| esc[b] as f64 / n_esc.max(1) as f64;
+                    let throughput = (t.injected + t.emitted[0]).max(1) as f64;
+                    println!(
+                        "{:<8} {:<13} {:>4} {:>6.2} {:>6.2} {:>7.4} {:>7.4} {:>7.4} {:>7.4} {:>8.4} {:>8} {:>7.3} {:>6}",
+                        format!("{class:?}"),
+                        format!("{mesh:?}"),
+                        lambda,
+                        redir,
+                        bias,
+                        n_esc as f64 / t.emitted[0].max(1) as f64,
+                        share(0),
+                        share(1),
+                        share(2),
+                        spin / n_esc.max(1) as f64,
+                        n_esc,
+                        2.0 * t.collisions as f64 / throughput,
+                        report.steady_ok
+                    );
+                }
+            }
+        }
+    }
 }
