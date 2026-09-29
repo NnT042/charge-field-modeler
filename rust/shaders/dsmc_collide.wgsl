@@ -25,6 +25,7 @@ struct GpuPhoton {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<u32>,
+    d: vec4<f32>,
 };
 
 struct GpuBody {
@@ -44,7 +45,8 @@ struct Params {
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
-    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
+    debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
+    rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -63,6 +65,12 @@ const TALLY_LOW_RANK64_IDX: u32 = 71u;
 const TALLY_DEFLECT_SUM_IDX: u32 = 194u;
 const TALLY_DEFLECT_SUMSQ_IDX: u32 = 202u;
 const TALLY_DEFLECT_COUNT_IDX: u32 = 210u;
+// Doc §13 -- must stay in sync with gpu_types.rs.
+const TALLY_ACCEPT_OVERFLOW_IDX: u32 = 218u;
+const TALLY_PIN_DEFICIT_COUNT_IDX: u32 = 219u;
+const TALLY_PIN_DEFICIT_SUM_IDX: u32 = 220u;
+const TALLY_EDGE_OVER_C_IDX: u32 = 221u;
+const TALLY_TWIST_TO_NORMAL_IDX: u32 = 228u;
 // The pre-rewrite kernel's fixed candidate cap -- used only to measure how
 // concentrated collisions are among the lowest-id photons per cell (see
 // TALLY_LOW_RANK64_IDX doc in gpu_types.rs), not as a limit here.
@@ -88,6 +96,114 @@ var<workgroup> sh_slots: array<u32, MAX_CELL>;
 
 fn chi_of(flags: u32) -> f32 {
     return select(-1.0, 1.0, (flags & FLAG_SPECIES_PLUS) != 0u);
+}
+
+
+// Doc §13: one rough-sphere contact. Mirrors crate::rough_sphere::collide_full
+// (plus contact_normal) line for line; rs_gpu_matches_cpu_reference compares
+// the two, so keep them in sync. m = R = 2^k, I = kappa*m*R^2.
+fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key_base: u32, draw0: u32) {
+    let ma = exp2(f32((*pa).c[3]));
+    let mb = exp2(f32((*pb).c[3]));
+    let ra = ma;
+    let rb = mb;
+    let kappa = params.rough_kappa;
+    let ia = kappa * ma * ra * ra;
+    let ib = kappa * mb * rb * rb;
+    var va = (*pa).b.xyz * (*pa).d.w;
+    var vb = (*pb).b.xyz * (*pb).d.w;
+    var wa = (*pa).d.xyz;
+    var wb = (*pb).d.xyz;
+    let e_rot_in = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
+    let u = va - vb;
+    let ulen = length(u);
+    if (ulen < 1e-6) {
+        return;
+    }
+    // Contact normal: geometric hard-sphere impact parameter, b/d = sqrt(rho)
+    // uniform over the collision disk, azimuth psi around u.
+    let uh = u / ulen;
+    let helper = perp_helper(uh);
+    let t = normalize(cross(uh, helper));
+    let bp = cross(uh, t);
+    let rho = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+    let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) * TAU;
+    let e_perp = t * cos(psi) + bp * sin(psi);
+    let n = normalize(uh * sqrt(max(1.0 - rho, 0.0)) + e_perp * sqrt(rho));
+
+    let g = u + ra * cross(wa, n) + rb * cross(wb, n);
+    let gn = dot(g, n);
+    if (gn <= 0.0) {
+        return;
+    }
+    let g_t = g - gn * n;
+    let mu = ma * mb / (ma + mb);
+    let j_n = -mu * 2.0 * gn * n; // e = 1
+    let k_t = (1.0 / ma) * (1.0 + 1.0 / kappa) + (1.0 / mb) * (1.0 + 1.0 / kappa);
+    let j_t = -(1.0 + params.rough_beta) * g_t / k_t;
+    let j = j_n + j_t;
+    va = va + j / ma;
+    vb = vb - j / mb;
+    let nj = cross(n, j);
+    wa = wa + ra * nj / ia;
+    wb = wb + rb * nj / ib;
+
+    // Torsional (drilling) grip about n.
+    let omega_n = dot(wa - wb, n);
+    let tq = -(1.0 + params.rough_beta_twist) * omega_n / (1.0 / ia + 1.0 / ib);
+    let e_rot_before = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
+    wa = wa + tq * n / ia;
+    wb = wb - tq * n / ib;
+    let lost = e_rot_before - (0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb));
+    if (params.twist_loss_to_normal != 0u && lost > 0.0) {
+        let w_n = dot(va - vb, n);
+        let jx = mu * (-w_n - sqrt(w_n * w_n + 2.0 * lost / mu));
+        va = va + jx * n / ma;
+        vb = vb - jx * n / mb;
+        atomicAdd(&tallies[TALLY_TWIST_TO_NORMAL_IDX], i32(lost * TALLY_SCALE));
+    }
+
+    // D7 speed handling (PinnedC): both speeds back to c, both spins scaled
+    // by one factor so the pair's spin energy is what it came in with.
+    // Mirrors rough_sphere::pin_pair.
+    if (params.speed_mode == 1u) {
+        va = normalize(va);
+        vb = normalize(vb);
+        let e_rot = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
+        if (e_rot > 1e-12) {
+            let sc = sqrt(e_rot_in / e_rot);
+            wa = wa * sc;
+            wb = wb * sc;
+        } else {
+            let fl = length(nj);
+            if (fl < 1e-9) {
+                if (e_rot_in > 1e-12) {
+                    atomicAdd(&tallies[TALLY_PIN_DEFICIT_COUNT_IDX], 1);
+                    atomicAdd(&tallies[TALLY_PIN_DEFICIT_SUM_IDX], i32(e_rot_in * TALLY_SCALE));
+                }
+            } else {
+                let ax = nj / fl;
+                wa = ax * sqrt(e_rot_in / ia);
+                wb = ax * sqrt(e_rot_in / ib);
+            }
+        }
+    }
+    let sa = length(va);
+    let sb = length(vb);
+    let da = va / max(sa, 1e-12);
+    let db = vb / max(sb, 1e-12);
+    if (length(wa) * ra > 1.0 + 1e-4) {
+        atomicAdd(&tallies[TALLY_EDGE_OVER_C_IDX], 1);
+    }
+    if (length(wb) * rb > 1.0 + 1e-4) {
+        atomicAdd(&tallies[TALLY_EDGE_OVER_C_IDX], 1);
+    }
+    // Scalar spin slot = helicity, +-1 at birth.
+    let e0 = max(params.spin_edge0, 1e-6);
+    (*pa).b = vec4<f32>(da, dot(wa, da) * ra / e0);
+    (*pb).b = vec4<f32>(db, dot(wb, db) * rb / e0);
+    (*pa).d = vec4<f32>(wa, sa);
+    (*pb).d = vec4<f32>(wb, sb);
 }
 
 @compute @workgroup_size(SORT_LOCAL)
@@ -188,7 +304,7 @@ fn main(
     }
     let within = within_bmax[cell] != 0u;
     let vcell = max(free_volume[cell], 1e-6);
-    let g_max: f32 = select(1.0, 2.0, params.rate_kernel == 1u);
+    let g_max: f32 = select(1.0, params.g_max_catch, params.rate_kernel == 1u);
 
     // E1 size-driven cross-section (doc §11d, arp.pdf): sigma_pair =
     // sigma*((m1+m2)/2)^2, photon radius proportional to stiffness mass m.
@@ -244,8 +360,13 @@ fn main(
         let m_a = exp2(f32(k_a));
         let m_b = exp2(f32(k_b));
 
-        let g = length(da - db);
+        // Relative VELOCITY (speed 1 unless RoughSphere+Free, where it
+        // bit-matches the old length(da - db)).
+        let g = length(da * pa.d.w - db * pb.d.w);
         var accept_p: f32 = select(1.0, g / g_max, params.rate_kernel == 1u);
+        if (accept_p > 1.0) {
+            atomicAdd(&tallies[TALLY_ACCEPT_OVERFLOW_IDX], 1);
+        }
         if (params.sigma_size_scaling != 0u) {
             // sigma_pair / sigma_max = ((m1+m2)/2)^2 / size_max^2; sigma
             // itself cancels (doc §11d).
@@ -259,6 +380,25 @@ fn main(
         let a_emitted = (pa.c[0] & FLAG_KIND_EMITTED) != 0u;
         let b_emitted = (pb.c[0] & FLAG_KIND_EMITTED) != 0u;
         if (params.d5_far_zone_gate != 0u && !a_emitted && !b_emitted && !within) {
+            continue;
+        }
+
+        if (params.exchange_rule == 2u) {
+            // Doc §13 RoughSphere: contact mechanics replace the exchange,
+            // the gear redirect, spin_transfer and shedding.
+            rough_collide(&pa, &pb, key_base, draw0);
+            atomicAdd(&tallies[TALLY_COLLISIONS_IDX], 1);
+            if (max(i, j) < RANK64) {
+                atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
+            }
+            let bounces_a = pa.c[1];
+            let bounces_b = pb.c[1];
+            pa.c[1] = bounces_a + 1u;
+            pb.c[1] = bounces_b + 1u;
+            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS;
+            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS;
+            photons[slot_a] = pa;
+            photons[slot_b] = pb;
             continue;
         }
 

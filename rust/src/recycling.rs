@@ -6014,6 +6014,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 
@@ -6293,6 +6294,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         let ctx = match GpuContext::new() {
@@ -6403,6 +6405,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         let ctx = require_gpu!();
@@ -6496,6 +6499,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         let ctx = require_gpu_ret!();
@@ -6649,6 +6653,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         let ctx = GpuContext::new().expect("G1 D6 needs a GPU adapter");
@@ -6735,6 +6740,7 @@ mod dsmc_gates {
             stiffness_shed: shed,
             sigma_size_scaling,
             debug_force_equal_mass_exchange,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 
@@ -7036,6 +7042,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
         let mut engine = DsmcEngine::new(&ctx, config);
         // 2000 steps = 4 domain diameters: a leak would add ~9k x 2000 = 18M.
@@ -7089,6 +7096,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         let mut engine = DsmcEngine::new(&ctx, config);
@@ -7177,6 +7185,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 
@@ -7251,6 +7260,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 
@@ -7356,6 +7366,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
         let mut engine = DsmcEngine::new(&ctx, config);
         engine.inject_batch(&ctx, 20_000, &[]);
@@ -7430,6 +7441,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         };
 
         const TARGET: f64 = 1.0;
@@ -7498,6 +7510,7 @@ mod dsmc_gates {
             stiffness_shed: shed,
             sigma_size_scaling: sigma_scaling,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 
@@ -7897,6 +7910,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
+            rough: crate::gpu::dsmc::RoughParams::default(),
         }
     }
 

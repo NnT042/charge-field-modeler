@@ -42,10 +42,57 @@ pub const PUMP_EMA_STEPS: f64 = 50.0;
 /// `RotateRelative`: rotate the relative vector g = d1-d2 about the mean
 /// V = (d1+d2)/2 (or, when |V| ~ 0, about a random axis perp to g) by a
 /// glancing-biased scattering angle; conserves |d|=1 and momentum exactly.
+/// `RoughSphere` (doc §13) replaces the direction-only exchange with real
+/// contact mechanics. Every photon carries a spin vector and a speed, and the
+/// pair exchanges linear and angular momentum through the contact law in
+/// [`RoughParams`]. It mirrors `crate::rough_sphere::collide_full` line for
+/// line. The gear redirect, `spin_transfer` and stiffness shedding do not
+/// apply in this mode (`DsmcEngine::new` asserts they are off).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ExchangeRule {
     SwapRenorm,
     RotateRelative,
+    RoughSphere,
+}
+
+/// D7 (doc §13.3): what a rough-sphere collision may do to a photon's speed.
+/// `Free`: full rough-sphere mechanics, so speeds scatter about c.
+/// `PinnedC`: each photon's post-collision velocity is projected back to
+/// |v| = c, and the linear energy that removes (or adds) is booked into that
+/// photon's own spin. Energy stays exact per photon; momentum does not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpeedMode {
+    Free,
+    PinnedC,
+}
+
+/// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;
+/// `crate::rough_sphere::ContactLaw`).
+#[derive(Clone, Copy, Debug)]
+pub struct RoughParams {
+    /// Sliding (edge) grip: -1 = smooth, +1 = perfectly rough.
+    pub beta: f64,
+    /// Torsional (drilling) grip about the contact normal, same convention.
+    pub beta_twist: f64,
+    /// Pays the energy the twist grip removes into normal separation
+    /// (halbach.pdf).
+    pub twist_loss_to_normal: bool,
+    /// I = kappa*m*R^2 (0.4 = uniform solid sphere).
+    pub kappa: f64,
+    pub speed_mode: SpeedMode,
+    /// Upper bound on |v1 - v2| for NTC candidate selection. It is 2 when
+    /// speeds are pinned at c; Free mode needs headroom, and any pair above
+    /// the bound is tallied loudly (TALLY_ACCEPT_OVERFLOW).
+    pub g_max: f64,
+    /// Birth edge speed |w|*R in units of c. It is 1.0 per photon2.html:
+    /// "let the tangential velocity of the spin of the photon equal c".
+    pub spin_edge0: f64,
+}
+
+impl Default for RoughParams {
+    fn default() -> Self {
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0 }
+    }
 }
 
 /// E1 -- per-photon stiffness shedding rule (doc §11d). `None`: a photon's
@@ -191,6 +238,9 @@ pub struct DsmcConfig {
     /// "deliberately wrong variant" the gate needs to show its momentum check
     /// is sensitive. Always false outside that one gate.
     pub debug_force_equal_mass_exchange: bool,
+    /// Doc §13: contact law and D7 speed mode, used only when
+    /// `exchange_rule == RoughSphere`.
+    pub rough: RoughParams,
 }
 
 impl DsmcConfig {

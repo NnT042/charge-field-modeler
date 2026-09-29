@@ -21,7 +21,7 @@ use crate::gpu::context::GpuContext;
 use crate::gpu::kernel::{workgroup_grid_for_threads, Kernel};
 use crate::gpu::sort::CellSorter;
 
-use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel, StiffnessShed};
+use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel, SpeedMode, StiffnessShed};
 use super::gpu_types::{GpuBody, GpuInjectParams, GpuParams, GpuPhoton, HIST_LEN, TALLY_LEN};
 use super::precompute::{precompute, Grid};
 
@@ -77,6 +77,19 @@ pub struct Totals {
     pub deflect_sum: [f64; 8],
     pub deflect_sumsq: [f64; 8],
     pub deflect_count: [i64; 8],
+
+    // --- Doc §13: rough-sphere photons ---
+    pub accept_overflow: i64,
+    pub pin_deficit_count: i64,
+    pub pin_deficit_sum: f64,
+    pub edge_over_c: i64,
+    pub esc_all: i64,
+    pub esc_speed_sum: f64,
+    pub esc_speed_sumsq: f64,
+    pub esc_edge_sum: f64,
+    pub esc_edge_sumsq: f64,
+    pub esc_edge_over_c: i64,
+    pub twist_to_normal: f64,
 }
 
 impl Totals {
@@ -144,6 +157,27 @@ impl Totals {
             self.deflect_sumsq[k] += other.deflect_sumsq[k];
             self.deflect_count[k] += other.deflect_count[k];
         }
+        self.accept_overflow += other.accept_overflow;
+        self.pin_deficit_count += other.pin_deficit_count;
+        self.pin_deficit_sum += other.pin_deficit_sum;
+        self.edge_over_c += other.edge_over_c;
+        self.esc_all += other.esc_all;
+        self.esc_speed_sum += other.esc_speed_sum;
+        self.esc_speed_sumsq += other.esc_speed_sumsq;
+        self.esc_edge_sum += other.esc_edge_sum;
+        self.esc_edge_sumsq += other.esc_edge_sumsq;
+        self.esc_edge_over_c += other.esc_edge_over_c;
+        self.twist_to_normal += other.twist_to_normal;
+    }
+
+    /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
+    pub fn esc_speed_stats(&self) -> (f64, f64) {
+        mean_std(self.esc_speed_sum, self.esc_speed_sumsq, self.esc_all)
+    }
+
+    /// (mean, std) of escaping photons' spin edge speed |w|R, in c.
+    pub fn esc_edge_stats(&self) -> (f64, f64) {
+        mean_std(self.esc_edge_sum, self.esc_edge_sumsq, self.esc_all)
     }
 
     /// Sum of absorbed counts (both kind, both species) for one body -- the
@@ -228,7 +262,37 @@ impl Totals {
             self.deflect_sumsq[k] += raw[TALLY_DEFLECT_SUMSQ + k] as f64 / SCALE;
             self.deflect_count[k] += raw[TALLY_DEFLECT_COUNT + k] as i64;
         }
+
+        use super::gpu_types::{
+            TALLY_ACCEPT_OVERFLOW, TALLY_EDGE_OVER_C, TALLY_ESC_ALL, TALLY_ESC_EDGE_OVER_C, TALLY_ESC_EDGE_SUM, TALLY_ESC_EDGE_SUMSQ,
+            TALLY_ESC_SPEED_SUM, TALLY_ESC_SPEED_SUMSQ, TALLY_PIN_DEFICIT_COUNT, TALLY_PIN_DEFICIT_SUM, TALLY_TWIST_TO_NORMAL,
+        };
+        self.accept_overflow += raw[TALLY_ACCEPT_OVERFLOW] as i64;
+        if raw[TALLY_ACCEPT_OVERFLOW] > 0 {
+            eprintln!(
+                "DSMC WARNING: {} collision candidate(s) had |v1-v2| > g_max this step -- rate biased; raise RoughParams::g_max",
+                raw[TALLY_ACCEPT_OVERFLOW]
+            );
+        }
+        self.pin_deficit_count += raw[TALLY_PIN_DEFICIT_COUNT] as i64;
+        self.pin_deficit_sum += raw[TALLY_PIN_DEFICIT_SUM] as f64 / SCALE;
+        self.edge_over_c += raw[TALLY_EDGE_OVER_C] as i64;
+        self.esc_all += raw[TALLY_ESC_ALL] as i64;
+        self.esc_speed_sum += raw[TALLY_ESC_SPEED_SUM] as f64 / SCALE;
+        self.esc_speed_sumsq += raw[TALLY_ESC_SPEED_SUMSQ] as f64 / SCALE;
+        self.esc_edge_sum += raw[TALLY_ESC_EDGE_SUM] as f64 / SCALE;
+        self.esc_edge_sumsq += raw[TALLY_ESC_EDGE_SUMSQ] as f64 / SCALE;
+        self.esc_edge_over_c += raw[TALLY_ESC_EDGE_OVER_C] as i64;
+        self.twist_to_normal += raw[TALLY_TWIST_TO_NORMAL] as f64 / SCALE;
     }
+}
+
+fn mean_std(sum: f64, sumsq: f64, n: i64) -> (f64, f64) {
+    if n <= 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let m = sum / n as f64;
+    (m, (sumsq / n as f64 - m * m).max(0.0).sqrt())
 }
 
 pub struct DsmcEngine {
@@ -279,6 +343,16 @@ pub struct DsmcEngine {
 
 impl DsmcEngine {
     pub fn new(ctx: &GpuContext, config: DsmcConfig) -> Self {
+        if config.exchange_rule == ExchangeRule::RoughSphere {
+            // Doc §13: contact mechanics replace these devices outright; a
+            // leftover nonzero value would otherwise be silently ignored.
+            assert!(config.cancel_redirect == 0.0, "RoughSphere: cancel_redirect must be 0 (the redirect is retired)");
+            assert!(config.spin_transfer == 0.0, "RoughSphere: spin_transfer must be 0 (spin is the vector w)");
+            assert!(config.stiffness_shed == StiffnessShed::None, "RoughSphere: stiffness shedding has no energy accounting");
+            assert!(config.bounce_cap == 0, "RoughSphere: bounce cap not supported");
+            assert!(config.rate_kernel == RateKernel::Catch, "RoughSphere: collision rate must be the kinetic |v1-v2| kernel");
+            assert!(config.rough.speed_mode == SpeedMode::Free || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
+        }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
         let pc = precompute(&grid, &config.bodies, config.b_max, config.seed ^ 0xB0D7);
@@ -425,15 +499,23 @@ impl DsmcEngine {
             domain_center_x: center.x as f32,
             domain_center_y: center.y as f32,
             domain_center_z: center.z as f32,
-            exchange_rule: if c.exchange_rule == ExchangeRule::RotateRelative { 1 } else { 0 },
+            exchange_rule: match c.exchange_rule {
+                ExchangeRule::SwapRenorm => 0,
+                ExchangeRule::RotateRelative => 1,
+                ExchangeRule::RoughSphere => 2,
+            },
             density_accumulate: self.density_accum_enabled as u32,
             emit_stiffness_level: c.emit_stiffness_level,
             stiffness_shed: if c.stiffness_shed == StiffnessShed::Transfer { 1 } else { 0 },
             sigma_size_scaling: c.sigma_size_scaling as u32,
             debug_force_equal_mass_exchange: c.debug_force_equal_mass_exchange as u32,
-            _pad10a: 0,
-            _pad10b: 0,
-            _pad10c: 0,
+            g_max_catch: if c.exchange_rule == ExchangeRule::RoughSphere { c.rough.g_max as f32 } else { 2.0 },
+            rough_beta: c.rough.beta as f32,
+            rough_beta_twist: c.rough.beta_twist as f32,
+            rough_kappa: c.rough.kappa as f32,
+            twist_loss_to_normal: c.rough.twist_loss_to_normal as u32,
+            speed_mode: if c.rough.speed_mode == SpeedMode::PinnedC { 1 } else { 0 },
+            spin_edge0: c.rough.spin_edge0 as f32,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }
@@ -656,6 +738,17 @@ impl DsmcEngine {
             }
         }
         ctx.write_buffer(self.cur_buf(), &ph);
+    }
+
+    /// Test/gate-only: replaces the whole photon population with `ph` (ids,
+    /// flags and all), as if it had been injected. Used by the doc §13 gates
+    /// to set up exact two-photon collisions and synthetic boxes.
+    pub fn write_photons_for_test(&mut self, ctx: &GpuContext, ph: &[GpuPhoton]) {
+        assert!(ph.len() as u32 <= self.config.capacity);
+        ctx.write_buffer(self.cur_buf(), ph);
+        self.n_used = ph.len() as u32;
+        self.n_live = self.n_used;
+        self.id_next = ph.iter().map(|p| p.id() + 1).max().unwrap_or(0).max(self.id_next);
     }
 
     /// Doc §3.3 flux formulas, exposed so gate/report code doesn't duplicate

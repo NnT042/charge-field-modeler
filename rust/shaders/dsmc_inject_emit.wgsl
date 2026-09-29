@@ -10,6 +10,7 @@ struct GpuPhoton {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<u32>,
+    d: vec4<f32>,
 };
 
 struct GpuBody {
@@ -36,7 +37,8 @@ struct Params {
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
-    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
+    debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
+    rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -152,6 +154,10 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
         // E1 (doc §11d): ambient photons are always born at stiffness k=0.
         out.c = vec4<u32>(flags, 0u, params.step, 0u);
+        // Doc §13: helical spin along travel at edge speed spin_edge0
+        // (photon2.html), sense = chirality (clockwise from behind = +dir,
+        // quark.html right-hand rule). R = 1 at k = 0. Speed c.
+        out.d = vec4<f32>(dir * (chi * params.spin_edge0), 1.0);
         atomicAdd(&tallies[60], 1); // TALLY_INJECTED
     } else {
         // --- emitted: find owning body by walking per-body counts ---
@@ -202,6 +208,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         // E1 (doc §11d): emitted photons are born at stiffness level k0
         // (params.emit_stiffness_level, default 0 -- HEAD behaviour).
         out.c = vec4<u32>(flags, 0u, params.step, params.emit_stiffness_level);
+        // Doc §13: same helical birth spin, radius R = 2^k0.
+        let r_emit = exp2(f32(params.emit_stiffness_level));
+        out.d = vec4<f32>(dir * (chirality * params.spin_edge0 / r_emit), 1.0);
 
         atomicAdd(&tallies[56u + body_idx], 1); // TALLY_EMITTED
         let bin = hist_bin(lat0);

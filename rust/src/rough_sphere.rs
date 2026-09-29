@@ -114,13 +114,21 @@ impl ContactLaw {
     }
 }
 
-/// [`collide`] followed by the torsional step. Returns the energy the twist
-/// step moved into the normal separation (0 unless `twist_loss_to_normal`).
-pub fn collide_full(a: &mut Ball, b: &mut Ball, n: DVec3, law: &ContactLaw) -> f64 {
+/// Result of [`collide_full`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ContactOutcome {
+    /// Normal + sliding impulse on `a` (before the twist step).
+    pub j: DVec3,
+    /// Energy the twist step moved into normal separation.
+    pub twist_to_normal: f64,
+}
+
+/// [`collide`] followed by the torsional step.
+pub fn collide_full(a: &mut Ball, b: &mut Ball, n: DVec3, law: &ContactLaw) -> ContactOutcome {
     if contact_slip(a, b, n).dot(n) <= 0.0 {
-        return 0.0;
+        return ContactOutcome::default();
     }
-    collide(a, b, n, law.e, law.beta, law.kappa);
+    let j = collide(a, b, n, law.e, law.beta, law.kappa);
     let ia = a.inertia(law.kappa);
     let ib = b.inertia(law.kappa);
     let omega_n = (a.w - b.w).dot(n);
@@ -135,9 +143,38 @@ pub fn collide_full(a: &mut Ball, b: &mut Ball, n: DVec3, law: &ContactLaw) -> f
         let jx = mu * (-w_n - (w_n * w_n + 2.0 * lost / mu).sqrt());
         a.v += jx * n / a.m;
         b.v -= jx * n / b.m;
-        return lost;
+        return ContactOutcome { j, twist_to_normal: lost };
     }
-    0.0
+    ContactOutcome { j, twist_to_normal: 0.0 }
+}
+
+/// D7 option (b), PinnedC (doc §13.3; neutron.pdf "collisions affect only
+/// the spins, not c"). Call after [`collide_full`] on a pair that entered at
+/// |v| = 1: both velocities are projected back to |v| = 1 and both spins are
+/// scaled by one common factor so the pair's rotational energy equals
+/// `e_rot_before`. Energy is then exact (both linear energies are unchanged),
+/// momentum is not, and the mechanics still decide the directions and how
+/// spin is shared. If both spins came out exactly zero, they take
+/// `fallback_axis` with half the energy each. Returns true if that fallback
+/// was impossible (a zero axis).
+pub fn pin_pair(a: &mut Ball, b: &mut Ball, kappa: f64, e_rot_before: f64, fallback_axis: DVec3) -> bool {
+    a.v = a.v.normalize();
+    b.v = b.v.normalize();
+    let e_rot = a.e_rot(kappa) + b.e_rot(kappa);
+    if e_rot > 1e-12 {
+        let s = (e_rot_before / e_rot).sqrt();
+        a.w *= s;
+        b.w *= s;
+        return false;
+    }
+    let fl = fallback_axis.length();
+    if fl < 1e-9 {
+        return e_rot_before > 1e-12;
+    }
+    let ax = fallback_axis / fl;
+    a.w = ax * (e_rot_before / a.inertia(kappa)).sqrt();
+    b.w = ax * (e_rot_before / b.inertia(kappa)).sqrt();
+    false
 }
 
 /// Contact normal for a pair approaching with relative velocity `u`, with

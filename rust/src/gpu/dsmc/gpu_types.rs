@@ -2,11 +2,14 @@
 
 use bytemuck::{Pod, Zeroable};
 
-/// 48-byte photon record, 3 x vec4 (doc §6).
+/// 64-byte photon record, 4 x vec4 (doc §6, grown for §13).
 ///
 /// `a` = pos.xyz, bitcast(id) as f32 in `.w`.
-/// `b` = dir.xyz, spin in `.w`.
-/// `c` = [flags, bounces, birth_step, spare] (u32 x4).
+/// `b` = dir.xyz (unit), scalar spin in `.w`. Under `RoughSphere` the scalar
+///       is the helicity (w.dir)*R/spin_edge0, which is +-1 at birth.
+/// `c` = [flags, bounces, birth_step, stiffness level k] (u32 x4).
+/// `d` = spin vector w.xyz (edge speed |w|*R_k in c, with R_k = 2^k), and
+///       speed |v| in c in `.w` (1.0 except under `RoughSphere`+`Free`).
 ///
 /// flags bits: 0 alive, 1 kind (0 ambient/1 emitted), 2 species (0 -> -1, 1 -> +1),
 /// 3-4 source body index, 5-8 crossed-lane mask, 9-12 arrived mask,
@@ -17,6 +20,7 @@ pub struct GpuPhoton {
     pub a: [f32; 4],
     pub b: [f32; 4],
     pub c: [u32; 4],
+    pub d: [f32; 4],
 }
 
 pub const FLAG_ALIVE: u32 = 1 << 0;
@@ -34,6 +38,7 @@ impl GpuPhoton {
             a: [0.0; 4],
             b: [0.0; 4],
             c: [0; 4],
+            d: [0.0; 4],
         }
     }
 
@@ -91,6 +96,35 @@ impl GpuPhoton {
     /// m = 2^k (bottom.pdf: a stacked spin doubles collision mass).
     pub fn stiffness_mass(&self) -> f64 {
         (2.0f64).powi(self.c[3] as i32)
+    }
+
+    /// Doc §13: spin vector w (radius R_k = 2^k = m).
+    pub fn omega(&self) -> [f64; 3] {
+        [self.d[0] as f64, self.d[1] as f64, self.d[2] as f64]
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.d[3] as f64
+    }
+
+    /// Velocity dir*|v| in c.
+    pub fn velocity(&self) -> [f64; 3] {
+        let s = self.speed();
+        [self.b[0] as f64 * s, self.b[1] as f64 * s, self.b[2] as f64 * s]
+    }
+
+    /// Edge speed |w|*R_k in c.
+    pub fn edge_speed(&self) -> f64 {
+        let w = self.omega();
+        (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt() * self.stiffness_mass()
+    }
+
+    /// (linear, rotational) kinetic energy with m = R = 2^k, I = kappa*m*R^2.
+    pub fn energies(&self, kappa: f64) -> (f64, f64) {
+        let m = self.stiffness_mass();
+        let w = self.omega();
+        let w2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+        (0.5 * m * self.speed() * self.speed(), 0.5 * kappa * m * m * m * w2)
     }
 }
 
@@ -171,9 +205,17 @@ pub struct GpuParams {
     /// E1 gate-only negative control: 0/1 -- force the equal-mass exchange
     /// branch regardless of k1/k2 (see `DsmcConfig::debug_force_equal_mass_exchange`).
     pub debug_force_equal_mass_exchange: u32,
-    pub _pad10a: u32,
-    pub _pad10b: u32,
-    pub _pad10c: u32,
+    /// NTC bound on |v1-v2| for the Catch kernel (2.0 unless RoughSphere+Free).
+    pub g_max_catch: f32,
+    /// Doc §13 contact law (`RoughParams`).
+    pub rough_beta: f32,
+    pub rough_beta_twist: f32,
+
+    pub rough_kappa: f32,
+    pub twist_loss_to_normal: u32,
+    /// D7: 0 = Free, 1 = PinnedC.
+    pub speed_mode: u32,
+    pub spin_edge0: f32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -280,7 +322,31 @@ pub const TALLY_DEFLECT_SUM: usize = 194; // len 8
 pub const TALLY_DEFLECT_SUMSQ: usize = 202; // len 8
 pub const TALLY_DEFLECT_COUNT: usize = 210; // len 8 (plain count)
 
-pub const TALLY_LEN: usize = 218;
+// --- Doc §13: rough-sphere photons ---
+
+/// Accepted-candidate draws whose |v1-v2| exceeded `g_max_catch` (accept
+/// probability clamped at 1, which biases the rate). This must stay at zero,
+/// and the host prints a loud warning when it doesn't.
+pub const TALLY_ACCEPT_OVERFLOW: usize = 218;
+/// PinnedC: photons whose post-collision linear energy change could not be
+/// booked into their spin (rotational energy would go negative). Count, and
+/// the unbooked energy (fixed-point).
+pub const TALLY_PIN_DEFICIT_COUNT: usize = 219;
+pub const TALLY_PIN_DEFICIT_SUM: usize = 220;
+/// Post-collision photon updates with edge speed |w|R > c.
+pub const TALLY_EDGE_OVER_C: usize = 221;
+/// Every escape (all kinds/species): count, speed sum and sum of squares,
+/// edge-speed sum and sum of squares (fixed-point), and edge > c count.
+pub const TALLY_ESC_ALL: usize = 222;
+pub const TALLY_ESC_SPEED_SUM: usize = 223;
+pub const TALLY_ESC_SPEED_SUMSQ: usize = 224;
+pub const TALLY_ESC_EDGE_SUM: usize = 225;
+pub const TALLY_ESC_EDGE_SUMSQ: usize = 226;
+pub const TALLY_ESC_EDGE_OVER_C: usize = 227;
+/// Energy moved from twist grip into normal separation (fixed-point).
+pub const TALLY_TWIST_TO_NORMAL: usize = 228;
+
+pub const TALLY_LEN: usize = 232;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

@@ -7,6 +7,7 @@ struct GpuPhoton {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<u32>,
+    d: vec4<f32>,
 };
 
 struct GpuBody {
@@ -26,7 +27,8 @@ struct Params {
     grid_min_z: f32, seed_hi: u32, seed_lo: u32, num_cells: u32,
     domain_center_x: f32, domain_center_y: f32, domain_center_z: f32, exchange_rule: u32,
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
-    debug_force_equal_mass_exchange: u32, _pad10a: u32, _pad10b: u32, _pad10c: u32,
+    debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
+    rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -51,6 +53,13 @@ const TALLY_SURVIVAL: u32 = 160u;
 // E1 (doc §11d) -- must stay in sync with gpu_types.rs.
 const TALLY_ESCAPED_EMITTED_K_SUM: u32 = 192u;
 const TALLY_ESCAPED_EMITTED_K_COUNT: u32 = 193u;
+// Doc §13 -- must stay in sync with gpu_types.rs.
+const TALLY_ESC_ALL: u32 = 222u;
+const TALLY_ESC_SPEED_SUM: u32 = 223u;
+const TALLY_ESC_SPEED_SUMSQ: u32 = 224u;
+const TALLY_ESC_EDGE_SUM: u32 = 225u;
+const TALLY_ESC_EDGE_SUMSQ: u32 = 226u;
+const TALLY_ESC_EDGE_OVER_C: u32 = 227u;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -100,7 +109,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let spec = species_idx(ph.c[0]);
     let source_body = (ph.c[0] & SOURCE_MASK) >> SOURCE_SHIFT;
 
-    var remaining = params.dt;
+    // Path length this step: |v|*dt (|v| = 1 except RoughSphere+Free).
+    let speed = ph.d.w;
+    var remaining = params.dt * speed;
     var hit_body: i32 = -1;
     var hit_t = remaining;
     for (var i = 0u; i < params.n_bodies; i = i + 1u) {
@@ -252,6 +263,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY + k * 2u + spec], 1);
                         atomicAdd(&tallies[TALLY_ESCAPED_CROSSED_BODY_SPIN + k * 2u + spec], i32(ph.b.w * TALLY_SCALE));
                     }
+                }
+
+                // Doc §13 (D7): speed and spin-edge-speed spread of
+                // everything that escapes.
+                let edge = length(ph.d.xyz) * exp2(f32(ph.c[3]));
+                atomicAdd(&tallies[TALLY_ESC_ALL], 1);
+                atomicAdd(&tallies[TALLY_ESC_SPEED_SUM], i32(speed * TALLY_SCALE));
+                atomicAdd(&tallies[TALLY_ESC_SPEED_SUMSQ], i32(speed * speed * TALLY_SCALE));
+                atomicAdd(&tallies[TALLY_ESC_EDGE_SUM], i32(edge * TALLY_SCALE));
+                atomicAdd(&tallies[TALLY_ESC_EDGE_SUMSQ], i32(edge * edge * TALLY_SCALE));
+                if (edge > 1.0 + 1e-4) {
+                    atomicAdd(&tallies[TALLY_ESC_EDGE_OVER_C], 1);
                 }
 
                 // E1 (doc §11d): mean stiffness level of escaping EMITTED

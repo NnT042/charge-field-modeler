@@ -6,6 +6,7 @@ struct GpuPhoton {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<u32>,
+    d: vec4<f32>,
 };
 
 struct GatherParams {
