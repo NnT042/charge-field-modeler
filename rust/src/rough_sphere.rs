@@ -190,6 +190,70 @@ pub fn contact_normal(u: DVec3, rho: f64, psi: f64) -> DVec3 {
     (uh * (1.0 - rho).max(0.0).sqrt() + e_perp * rho.sqrt()).normalize()
 }
 
+/// Result of [`wall_contact`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WallOutcome {
+    /// Whether the contact happened (the pair was approaching along n).
+    pub touched: bool,
+    /// Linear momentum given to the body (= minus the photon's change).
+    pub dp_body: DVec3,
+    /// The photon's spin change (the stacking kick).
+    pub kick: DVec3,
+}
+
+/// Doc §14: a photon meets an infinitely massive, non-spinning grain of body
+/// matter moving at `grain_v`. This is the same contact law as
+/// [`collide_full`] in the M -> infinity limit: mu = m, the grain adds no
+/// slip term, and the twist grip acts against a non-rotating face. With
+/// `pinned`, the photon's speed returns to 1 and its own spin energy is
+/// restored (D7 PinnedC; the grain has no spin to share). `n` points from the
+/// photon's centre toward the grain.
+pub fn wall_contact(b: &mut Ball, grain_v: DVec3, n: DVec3, law: &ContactLaw, pinned: bool) -> WallOutcome {
+    let g = (b.v - grain_v) + b.r * b.w.cross(n);
+    let gn = g.dot(n);
+    if gn <= 0.0 {
+        return WallOutcome::default();
+    }
+    let m = b.m;
+    let inertia = b.inertia(law.kappa);
+    let e_rot_in = b.e_rot(law.kappa);
+    let w_in = b.w;
+    let v_in = b.v;
+    let g_t = g - gn * n;
+    let j_n = -m * (1.0 + law.e) * gn * n;
+    let k_t = (1.0 / m) * (1.0 + 1.0 / law.kappa);
+    let j_t = -(1.0 + law.beta) * g_t / k_t;
+    let j = j_n + j_t;
+    b.v += j / m;
+    let nj = n.cross(j);
+    b.w += b.r * nj / inertia;
+    // Twist grip against a non-rotating face: w.n -> -beta_twist * w.n.
+    let omega_n = b.w.dot(n);
+    let e_before = b.e_rot(law.kappa);
+    b.w -= (1.0 + law.beta_twist) * omega_n * n;
+    let lost = e_before - b.e_rot(law.kappa);
+    if law.twist_loss_to_normal && lost > 0.0 {
+        let w_n = (b.v - grain_v).dot(n); // < 0: separating
+        let jx = m * (-w_n - (w_n * w_n + 2.0 * lost / m).sqrt());
+        b.v += jx * n / m;
+    }
+    let mut kick = b.w - w_in;
+    if pinned {
+        b.v = b.v.normalize();
+        let e_rot = b.e_rot(law.kappa);
+        if e_rot > 1e-12 {
+            let sc = (e_rot_in / e_rot).sqrt();
+            // w' - w_in = (sc - 1) w_in + sc * (w - w_in), without cancellation.
+            kick = (sc - 1.0) * w_in + sc * kick;
+            b.w *= sc;
+        } else if nj.length() > 1e-9 && e_rot_in > 1e-12 {
+            b.w = nj.normalize() * (2.0 * e_rot_in / inertia).sqrt();
+            kick = b.w - w_in;
+        }
+    }
+    WallOutcome { touched: true, dp_body: -(b.v - v_in) * m, kick }
+}
+
 // ---------------------------------------------------------------------
 // Spin stacking (doc §13.7, user rule 2026-09-29)
 // ---------------------------------------------------------------------
@@ -454,6 +518,43 @@ mod tests {
         assert_eq!((ev.unstacked, p.k), (1, 0));
         assert!(p.w[0].normalize().dot(DVec3::X) > 0.999999);
         assert!(p.w[0].length() >= 1.0);
+    }
+
+    /// Wall contact: a non-moving grain with a perfectly elastic law conserves
+    /// photon energy (beta = +-1, Free); a moving grain does work on it; the
+    /// pinned version keeps |v| = 1 and the photon's spin energy.
+    #[test]
+    fn wall_contact_energy() {
+        let mut s = 0x3A11u64;
+        let law = ContactLaw::rough(1.0);
+        let twist = ContactLaw { beta_twist: 0.0, twist_loss_to_normal: true, ..ContactLaw::rough(-1.0) };
+        let mut max_de: f64 = 0.0;
+        let mut max_moving: f64 = 0.0;
+        for _ in 0..5000 {
+            for l in [&law, &twist] {
+                let mut b = Ball::level(0, rand_unit(&mut s), rand_unit(&mut s) * rng(&mut s));
+                let e0 = b.e_lin() + b.e_rot(KAPPA_SOLID);
+                let n = contact_normal(b.v, rng(&mut s), 6.28 * rng(&mut s));
+                wall_contact(&mut b, DVec3::ZERO, n, l, false);
+                max_de = max_de.max((b.e_lin() + b.e_rot(KAPPA_SOLID) - e0).abs() / e0);
+                let mut c = Ball::level(0, rand_unit(&mut s), rand_unit(&mut s) * rng(&mut s));
+                let e0 = c.e_lin() + c.e_rot(KAPPA_SOLID);
+                let gv = rand_unit(&mut s) * 0.8;
+                let n = contact_normal(c.v - gv, rng(&mut s), 6.28 * rng(&mut s));
+                wall_contact(&mut c, gv, n, l, false);
+                max_moving = max_moving.max((c.e_lin() + c.e_rot(KAPPA_SOLID) - e0).abs() / e0);
+                let mut d = Ball::level(0, rand_unit(&mut s), rand_unit(&mut s) * rng(&mut s));
+                let er0 = d.e_rot(KAPPA_SOLID);
+                let n = contact_normal(d.v - gv, rng(&mut s), 6.28 * rng(&mut s));
+                if wall_contact(&mut d, gv, n, l, true).touched {
+                    assert!((d.v.length() - 1.0).abs() < 1e-12);
+                    assert!((d.e_rot(KAPPA_SOLID) - er0).abs() < 1e-9 * (1.0 + er0));
+                }
+            }
+        }
+        println!("wall contact: static grain max|dE/E| {max_de:.1e}; moving grain (control) {max_moving:.2}");
+        assert!(max_de < 1e-12);
+        assert!(max_moving > 0.05, "a moving grain must do work on the photon");
     }
 
     /// Smooth spheres (beta = -1) must leave both spins untouched: the

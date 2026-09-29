@@ -14,6 +14,7 @@ pub mod hitbox;
 mod path_trace;
 pub mod recycling;
 pub mod rough_sphere;
+pub mod baryon_shells;
 mod spin_stack;
 mod types;
 mod units;

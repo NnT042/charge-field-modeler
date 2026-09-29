@@ -914,6 +914,61 @@ proton ≠ neutron. We report how wide that window is, never a best fit.
   a neutron pass pole-to-pole? What exit latitudes appear (compare 7°/58° and the
   30°-cone claim), and does the stack densify?
 
+### 14.6 Decided (user, 2026-09-29) and the build plan
+- **B1 = (b) layered shells** to start. The user added a planned detour: rebuild
+  Spin-mode tracing (option c) on the new mechanics and rerun its histograms, for
+  comparison.
+- **B2 =** the same rough-sphere law. **B3 =** sweep τ_body. **B4 =** driven body
+  first.
+
+**Kinematics, reused exactly from `spin_stack.rs`:**
+- Levels 9–12 have amplitudes 64 / 128 / 256 / 512 (`types::level_amplitude`),
+  normalised so level 12 = the body radius 1. That gives ⅛, ¼, ½, 1.
+- Level 9 is a *precession* (rotates in place about local Z, orbit radius = its
+  amplitude). Levels 10–12 are orbital (X, Y, Z spins, orbit radius = amplitude/2).
+  At c, the angular rates are 8, 8, 4 and 2 per unit time.
+- **Shell regions are the Spin-mode ghost spheres.** Level k's sphere (radius
+  amplitude_k) is centred where the levels outside k put its frame origin, so shells
+  nest off-centre, each touching the next from inside. A photon belongs to the
+  innermost shell containing it.
+- **Matter velocity in shell k:** V(x) = Σ_{j≥k} ω_j × (x − o_j). Here ω_j is level
+  j's world angular velocity (its local axis carried by the levels outside it), and
+  o_j is its rotation centre (its frame origin). This is exact for nested rigid
+  rotations, and a CPU gate checks it against finite differences of the composed
+  motion.
+- **Chirality:** each level's sign ±1 sets its rotation sense. The four proton and
+  four neutron patterns (PHYSICS_REFERENCE §3) all get run.
+
+**Body contact:**
+- A photon inside the body meets body "grains" at rate τ_body·|v − V(x)|.
+- The contact normal is sampled like photon-photon contacts.
+- The grain is infinitely massive, moves at V(x), and has no spin of its own. Its
+  spin at photon scale is negligible, because Ω·R_photon ≪ c.
+- The contact law is the same `ContactLaw` (§13), with D7 PinnedC or Free.
+- Consequence: level chirality enters **only through the direction of the matter
+  flow V**. The photon's own spin couples to it through the grip.
+
+**Engine changes:**
+- `BodyModel::{Absorber (legacy), Shells{tau_body}}`.
+- In Shells mode bodies are transparent regions with no absorption and no emission.
+  All charge is scattered ambient.
+- New per-body tallies:
+  - entries;
+  - exits after ≥1 contact;
+  - entry and exit latitude histograms;
+  - contacts per passage;
+  - pole-to-pole passages;
+  - helicity by exit band;
+  - momentum and angular momentum delivered to the body (driven-body torque check).
+
+**Gates:**
+- the kinematics finite-difference gate;
+- GPU contact vs CPU mirror;
+- BG0 transparent;
+- BG1 non-rotating body conserves photon energy, and delivered momentum balances;
+- BG2 uniform fan gives angular momentum in the rotation sense;
+- BG3 mirror symmetry.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
