@@ -752,6 +752,66 @@ linear energy ½mc². Options:
 Unstacking (limat.pdf, collisions "strip" high photons down) is the reverse event and
 needs a threshold. *Recommend (i) with unstacking at outer spin → 0.*
 
+**Decided 2026-09-29 (user): none of (i)–(iii). There is no doubling cost; energy is
+conserved and levels are fractional.** Built as `RoughParams::stacking`
+(`rough_sphere::Stacked::restack` is the CPU reference):
+- **Levels:** 0–3 (axial, x, y, z), radius 2^k, each with its own spin vector. Inner
+  levels live in the photon's e/f/g words, and the record is now 112 B.
+- **Collision:** only the outer level collides (neut2.pdf). Linear mass is 1 at every
+  level, the contact radius is 2^k, and I = κ·(2^k)².
+- **Stack:** when a collision pushes the outer edge above c, that level locks at edge c
+  (keeping its axis). The excess energy starts level k+1, with its axis along the
+  collision's spin kick (super.html) and its edge speed at whatever fraction of c the
+  excess buys. This can repeat, up to the z-level (3); beyond that the edge stays
+  above c and is tallied as `capped`.
+- **Unstack:** a stacked outer level spun below 0.01c is removed. Its energy returns
+  to the level below, which becomes the outer level again (limat.pdf).
+- **Property:** at edge c every level holds the same energy (½κ), because mass is 1
+  and I ∝ R². So a stack takes new-edge² = old-edge² − 1. Mathis's per-level energy
+  table (9, 65, 1025, 16385) is *not* built in; whether anything like it emerges is a
+  measurement.
+- **Consequence:** a stacked photon's outer axis is generally sideways to travel, so
+  its collisions carry no handedness (panel A in the grip discussion). Handedness
+  survives in the locked axial level, which `b.w` now reports.
+- **Grip default:** twist grip for the axial level (user, 2026-09-29, after
+  distinguishing lab-frame from travel-relative "same spin").
+- **Gates:**
+  - CPU: energy exact through stacking, multi-level stacks, the top cap and unstacking
+    (1e-15); round trip back to the axial level.
+  - GPU vs CPU with stacking: ≤ 1.4e-6 on every level. The stack axis is built from
+    the impulse terms, not from the f32 difference of spins before and after, which
+    had tilted it by 1e-3.
+  - Stacking box: dE/E ≤ 5e-7, inner levels stay at edge c.
+  - Early sign: Free + edge grip drives the box to the top level (57% at L3, 207k
+    capped events) as spin fills toward equipartition. PinnedC edge sits mostly at
+    L0–L1.
+
+**E3 with stacking** (glancing, λ = 3, 1 seed, `CFM_E3_STACKING=1`):
+
+| law, D7 | polar/mid/equat (p) | same for n | hel p / n | escape levels L0/L1/L2/L3 | stacks/photon |
+|---|---|---|---|---|---|
+| smooth (null) | 0.138/0.366/0.497 | same | +0.31 / −0.31 | 1/0/0/0 | 0 |
+| twist, PinnedC | 0.137/0.364/0.499 | 0.138/0.365/0.497 | +0.32 / −0.25 | .48/.47/.05/.01 | 0.59 |
+| twist, Free | 0.138/0.365/0.498 | 0.138/0.364/0.498 | +0.24 / −0.15 | .75/.25/0/0 | 0.25 |
+| edge, PinnedC | 0.279/0.400/0.321 | 0.278/0.401/0.321 | +0.04 / −0.04 | .54/.38/.07/.01 | 0.56 |
+| edge+twist, PinnedC | 0.215/0.403/0.382 | 0.217/0.400/0.383 | +0.03 / −0.03 | .57/.33/.08/.03 | 0.57 |
+| edge or edge+twist, Free | **runaway** | | | | |
+
+- **Stacking is common:** about half of escaping photons carry a second level under
+  PinnedC. Almost none reach L3 on a single body at λ = 3, and unstacking is rare
+  (1e-4 per photon).
+- **Topology is still chirality-blind** (p = n within 0.003) under every law, with or
+  without stacking. Stacking strengthens the edge-grip polar squash (0.19 → 0.28,
+  equatorial 0.41 → 0.32), but for both species alike. That confirms §13.6: the
+  disc/funnel split must come from the emitter.
+- **Twist grip keeps its magnetic asymmetry** (+0.32 / −0.25 pinned). It is weaker than
+  without stacking (+0.40 / −0.16), because stacked photons collide on sideways outer
+  axes that carry no handedness.
+- **Free speed + edge grip is a runaway.** The stacked spin reservoir drains linear
+  energy, photons slow, and the population outgrows 6M within 30–40 s. Together with
+  the no-stacking Free result (0.79c), **D7 favours PinnedC** whenever edge grip is
+  on. Twist-only Free stays near c (1.03 ± 0.34).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

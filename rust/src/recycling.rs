@@ -7834,6 +7834,11 @@ mod dsmc_gates {
             .ok()
             .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
             .unwrap_or(vec![3.0]);
+        // CFM_E3_STACKING=1: doc §13.7 spin stacking on (unit linear mass).
+        let stacking = std::env::var("CFM_E3_STACKING").as_deref() == Ok("1");
+        // CFM_E3_LAWS: comma list of law names to run (default all).
+        let law_filter: Option<Vec<String>> =
+            std::env::var("CFM_E3_LAWS").ok().map(|v| v.split(',').map(|x| x.trim().to_string()).collect());
         // CFM_E3_GLANCING: "0" geometric, "1" glancing (arp.pdf), default both.
         let glancings: Vec<bool> = match std::env::var("CFM_E3_GLANCING").as_deref() {
             Ok("0") => vec![false],
@@ -7847,15 +7852,23 @@ mod dsmc_gates {
             ("twist", RoughParams { beta: -1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..base }),
             ("edge+twist", RoughParams { beta: 1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..base }),
         ];
-        println!("=== E3: single body, rough-sphere photons, no redirect (warmup {warmup}, avg {avg}; speed std is tally-resolution-limited ~0.01) ===");
+        println!("=== E3: single body, rough-sphere photons, no redirect, stacking={stacking} (warmup {warmup}, avg {avg}; speed std is tally-resolution-limited ~0.01; hel = axial-level helicity) ===");
         println!(
             "{:<8} {:<5} {:<11} {:<6} {:>4} {:>6} {:>6} {:>6} {:>6} {:>8} {:>13} {:>13} {:>6} {:>7} {:>6} {:>6}",
             "class", "imp", "law", "D7", "lam", "escFr", "polar", "mid", "equat", "hel/esc", "speed m+-s", "edge m+-s", "edge>c", "coll/ph", "ovfl", "steady"
         );
+        if stacking {
+            println!("  (stacking rows add: escape level shares L0/L1/L2/L3, stack and unstack events per photon, top-cap events per photon)");
+        }
         for &glancing in &glancings {
         for class in [GpuClass::Proton, GpuClass::Neutron] {
             for &lambda in &lambdas {
                 for (name, law) in laws {
+                    if let Some(f) = &law_filter {
+                        if !f.iter().any(|x| x == name) {
+                            continue;
+                        }
+                    }
                     for mode in [SpeedMode::PinnedC, SpeedMode::Free] {
                         let seed = 0xE3E3_0000u64 ^ ((class as u64) << 8) ^ (lambda as u64);
                         let mut config =
@@ -7863,12 +7876,36 @@ mod dsmc_gates {
                         config.exchange_rule = ExchangeRule::RoughSphere;
                         config.cancel_redirect = 0.0;
                         config.spin_transfer = 0.0;
-                        config.rough =
-                            RoughParams { speed_mode: mode, g_max: if mode == SpeedMode::Free { 6.0 } else { 2.0 }, glancing_bias: glancing, ..law };
+                        config.rough = RoughParams {
+                            speed_mode: mode,
+                            g_max: if mode == SpeedMode::Free { 6.0 } else { 2.0 },
+                            glancing_bias: glancing,
+                            stacking,
+                            ..law
+                        };
                         let started = Instant::now();
-                        let mut engine = DsmcEngine::new(&ctx, config);
-                        let report = engine.run_steady(&ctx, warmup, avg, 250);
+                        // A run whose photons slow down (spin soaking up linear
+                        // energy) can outgrow the buffer; record it as a runaway
+                        // instead of aborting the whole table.
+                        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut engine = DsmcEngine::new(&ctx, config);
+                            engine.run_steady(&ctx, warmup, avg, 250)
+                        }));
                         let secs = started.elapsed().as_secs_f64();
+                        let report = match run {
+                            Ok(r) => r,
+                            Err(_) => {
+                                println!(
+                                    "{:<8} {:<5} {:<11} {:<6} {:>4}  RUNAWAY: live photons exceeded capacity {CAPACITY} ({secs:.0}s)",
+                                    format!("{class:?}"),
+                                    if glancing { "glanc" } else { "geom" },
+                                    name,
+                                    if mode == SpeedMode::Free { "free" } else { "pinned" },
+                                    lambda
+                                );
+                                continue;
+                            }
+                        };
                         let t = &report.totals;
                         let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
                         let n_esc: i64 = esc.iter().sum();
@@ -7899,6 +7936,19 @@ mod dsmc_gates {
                             t.accept_overflow,
                             report.steady_ok
                         );
+                        if stacking {
+                            let n = t.esc_all.max(1) as f64;
+                            println!(
+                                "      levels L0 {:.3} L1 {:.3} L2 {:.3} L3 {:.3} | stack/ph {:.3} unstack/ph {:.4} capped/ph {:.3}",
+                                t.esc_level[0] as f64 / n,
+                                t.esc_level[1] as f64 / n,
+                                t.esc_level[2] as f64 / n,
+                                t.esc_level[3] as f64 / n,
+                                t.stack_events as f64 / throughput,
+                                t.unstack_events as f64 / throughput,
+                                t.stack_capped as f64 / throughput
+                            );
+                        }
                     }
                 }
             }
