@@ -90,6 +90,10 @@ pub struct Totals {
     pub esc_edge_sumsq: f64,
     pub esc_edge_over_c: i64,
     pub twist_to_normal: f64,
+    pub stack_events: i64,
+    pub unstack_events: i64,
+    pub stack_capped: i64,
+    pub esc_level: [i64; 4],
 }
 
 impl Totals {
@@ -168,6 +172,12 @@ impl Totals {
         self.esc_edge_sumsq += other.esc_edge_sumsq;
         self.esc_edge_over_c += other.esc_edge_over_c;
         self.twist_to_normal += other.twist_to_normal;
+        self.stack_events += other.stack_events;
+        self.unstack_events += other.unstack_events;
+        self.stack_capped += other.stack_capped;
+        for k in 0..4 {
+            self.esc_level[k] += other.esc_level[k];
+        }
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -284,6 +294,13 @@ impl Totals {
         self.esc_edge_sumsq += raw[TALLY_ESC_EDGE_SUMSQ] as f64 / SCALE;
         self.esc_edge_over_c += raw[TALLY_ESC_EDGE_OVER_C] as i64;
         self.twist_to_normal += raw[TALLY_TWIST_TO_NORMAL] as f64 / SCALE;
+        use super::gpu_types::{TALLY_ESC_LEVEL, TALLY_STACK_CAPPED, TALLY_STACK_EVENTS, TALLY_UNSTACK_EVENTS};
+        self.stack_events += raw[TALLY_STACK_EVENTS] as i64;
+        self.unstack_events += raw[TALLY_UNSTACK_EVENTS] as i64;
+        self.stack_capped += raw[TALLY_STACK_CAPPED] as i64;
+        for k in 0..4 {
+            self.esc_level[k] += raw[TALLY_ESC_LEVEL + k] as i64;
+        }
     }
 }
 
@@ -352,6 +369,8 @@ impl DsmcEngine {
             assert!(config.bounce_cap == 0, "RoughSphere: bounce cap not supported");
             assert!(config.rate_kernel == RateKernel::Catch, "RoughSphere: collision rate must be the kinetic |v1-v2| kernel");
             assert!(config.rough.speed_mode == SpeedMode::Free || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
+            assert!(config.rough.stack_max_level <= 3, "stacking storage holds levels 0..=3");
+            assert!(!config.rough.stacking || config.emit_stiffness_level == 0, "stacking: photons are born at level 0");
         }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
@@ -517,9 +536,9 @@ impl DsmcEngine {
             speed_mode: if c.rough.speed_mode == SpeedMode::PinnedC { 1 } else { 0 },
             spin_edge0: c.rough.spin_edge0 as f32,
             glancing_bias: c.rough.glancing_bias as u32,
-            _pad12a: 0,
-            _pad12b: 0,
-            _pad12c: 0,
+            stacking: c.rough.stacking as u32,
+            stack_max_level: c.rough.stack_max_level,
+            unstack_edge: c.rough.unstack_edge as f32,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }

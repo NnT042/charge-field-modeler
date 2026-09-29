@@ -8,6 +8,9 @@ struct GpuPhoton {
     b: vec4<f32>,
     c: vec4<u32>,
     d: vec4<f32>,
+    e: vec4<f32>,
+    f: vec4<f32>,
+    g: vec4<f32>,
 };
 
 struct GpuBody {
@@ -29,7 +32,7 @@ struct Params {
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
-    glancing_bias: u32, _pad12a: u32, _pad12b: u32, _pad12c: u32,
+    glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -61,6 +64,7 @@ const TALLY_ESC_SPEED_SUMSQ: u32 = 224u;
 const TALLY_ESC_EDGE_SUM: u32 = 225u;
 const TALLY_ESC_EDGE_SUMSQ: u32 = 226u;
 const TALLY_ESC_EDGE_OVER_C: u32 = 227u;
+const TALLY_ESC_LEVEL: u32 = 235u; // [k], len 4
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -277,6 +281,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 if (edge > 1.0 + 1e-4) {
                     atomicAdd(&tallies[TALLY_ESC_EDGE_OVER_C], 1);
                 }
+                atomicAdd(&tallies[TALLY_ESC_LEVEL + min(ph.c[3], 3u)], 1);
 
                 // E1 (doc §11d): mean stiffness level of escaping EMITTED
                 // photons (plain integer sum -- k in 0..7, no scale needed).

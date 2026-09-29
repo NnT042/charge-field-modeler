@@ -26,6 +26,9 @@ struct GpuPhoton {
     b: vec4<f32>,
     c: vec4<u32>,
     d: vec4<f32>,
+    e: vec4<f32>,
+    f: vec4<f32>,
+    g: vec4<f32>,
 };
 
 struct GpuBody {
@@ -47,7 +50,7 @@ struct Params {
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
-    glancing_bias: u32, _pad12a: u32, _pad12b: u32, _pad12c: u32,
+    glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -72,6 +75,9 @@ const TALLY_PIN_DEFICIT_COUNT_IDX: u32 = 219u;
 const TALLY_PIN_DEFICIT_SUM_IDX: u32 = 220u;
 const TALLY_EDGE_OVER_C_IDX: u32 = 221u;
 const TALLY_TWIST_TO_NORMAL_IDX: u32 = 228u;
+const TALLY_STACK_EVENTS_IDX: u32 = 232u;
+const TALLY_UNSTACK_EVENTS_IDX: u32 = 233u;
+const TALLY_STACK_CAPPED_IDX: u32 = 234u;
 // The pre-rewrite kernel's fixed candidate cap -- used only to measure how
 // concentrated collisions are among the lowest-id photons per cell (see
 // TALLY_LOW_RANK64_IDX doc in gpu_types.rs), not as a limit here.
@@ -100,14 +106,105 @@ fn chi_of(flags: u32) -> f32 {
 }
 
 
+
+// Doc §13.7 stacking. Inner levels 0..2 live in photon.e/.f/.g, the outer
+// level k in .d (spin w passed separately here and written back by the caller).
+fn set_inner(p: ptr<function, GpuPhoton>, lvl: u32, w: vec3<f32>) {
+    switch lvl {
+        case 0u: { (*p).e = vec4<f32>(w, 0.0); }
+        case 1u: { (*p).f = vec4<f32>(w, 0.0); }
+        default: { (*p).g = vec4<f32>(w, 0.0); }
+    }
+}
+
+fn get_inner(p: ptr<function, GpuPhoton>, lvl: u32) -> vec3<f32> {
+    switch lvl {
+        case 0u: { return (*p).e.xyz; }
+        case 1u: { return (*p).f.xyz; }
+        default: { return (*p).g.xyz; }
+    }
+}
+
+// Mirrors rough_sphere::Stacked::restack (unit mass, I = kappa*R^2, every
+// level holds 0.5*kappa at edge c). Returns the new outer spin; updates k
+// and the inner levels in place.
+fn restack(p: ptr<function, GpuPhoton>, w_in: vec3<f32>, dw: vec3<f32>) -> vec3<f32> {
+    let kappa = params.rough_kappa;
+    var w = w_in;
+    var stacked = 0u;
+    loop {
+        let k = (*p).c[3];
+        let r = exp2(f32(k));
+        let wl = length(w);
+        if (wl * r <= 1.0 + 1e-4) {
+            break;
+        }
+        if (k >= params.stack_max_level) {
+            atomicAdd(&tallies[TALLY_STACK_CAPPED_IDX], 1);
+            break;
+        }
+        let excess = 0.5 * kappa * r * r * wl * wl - 0.5 * kappa;
+        let axis_old = w / wl;
+        set_inner(p, k, axis_old / r);
+        var axis_new = axis_old;
+        if (length(dw) > 1e-9) {
+            axis_new = normalize(dw);
+        }
+        let r_new = 2.0 * r;
+        (*p).c[3] = k + 1u;
+        w = axis_new * sqrt(2.0 * max(excess, 0.0) / (kappa * r_new * r_new));
+        stacked = stacked + 1u;
+    }
+    if (stacked > 0u) {
+        atomicAdd(&tallies[TALLY_STACK_EVENTS_IDX], i32(stacked));
+        return w;
+    }
+    loop {
+        let k = (*p).c[3];
+        if (k == 0u) {
+            break;
+        }
+        let r = exp2(f32(k));
+        if (length(w) * r >= params.unstack_edge) {
+            break;
+        }
+        let e_out = 0.5 * kappa * r * r * dot(w, w);
+        let kb = k - 1u;
+        let rb = exp2(f32(kb));
+        let wb = get_inner(p, kb);
+        set_inner(p, kb, vec3<f32>(0.0));
+        (*p).c[3] = kb;
+        let e_b = 0.5 * kappa * rb * rb * dot(wb, wb) + e_out;
+        let len = length(wb);
+        if (len > 0.0) {
+            w = wb / len * sqrt(2.0 * e_b / (kappa * rb * rb));
+        } else {
+            w = wb;
+        }
+        atomicAdd(&tallies[TALLY_UNSTACK_EVENTS_IDX], 1);
+    }
+    return w;
+}
+
+// Helicity of the axial (level 0) spin, +-1 at birth.
+fn axial_helicity(p: ptr<function, GpuPhoton>, w_outer: vec3<f32>, d: vec3<f32>) -> f32 {
+    var w0 = w_outer;
+    if ((*p).c[3] > 0u) {
+        w0 = (*p).e.xyz;
+    }
+    return dot(w0, d) / max(params.spin_edge0, 1e-6);
+}
+
 // Doc §13: one rough-sphere contact. Mirrors crate::rough_sphere::collide_full
 // (plus contact_normal) line for line; rs_gpu_matches_cpu_reference compares
 // the two, so keep them in sync. m = R = 2^k, I = kappa*m*R^2.
 fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key_base: u32, draw0: u32) {
-    let ma = exp2(f32((*pa).c[3]));
-    let mb = exp2(f32((*pb).c[3]));
-    let ra = ma;
-    let rb = mb;
+    // Stacking: unit linear mass, contact radius of the outer level. Without
+    // stacking: E1 stiffness, m = R = 2^k.
+    let ra = exp2(f32((*pa).c[3]));
+    let rb = exp2(f32((*pb).c[3]));
+    let ma = select(ra, 1.0, params.stacking != 0u);
+    let mb = select(rb, 1.0, params.stacking != 0u);
     let kappa = params.rough_kappa;
     let ia = kappa * ma * ra * ra;
     let ib = kappa * mb * rb * rb;
@@ -115,6 +212,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     var vb = (*pb).b.xyz * (*pb).d.w;
     var wa = (*pa).d.xyz;
     var wb = (*pb).d.xyz;
+    let wa_pre = wa;
+    let wb_pre = wb;
     let e_rot_in = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
     let u = va - vb;
     let ulen = length(u);
@@ -151,8 +250,12 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     va = va + j / ma;
     vb = vb - j / mb;
     let nj = cross(n, j);
-    wa = wa + ra * nj / ia;
-    wb = wb + rb * nj / ib;
+    // Spin kicks tracked separately so the stacking axis (the kick
+    // direction) never comes from subtracting two nearly equal f32 spins.
+    var kick_a = ra * nj / ia;
+    var kick_b = rb * nj / ib;
+    wa = wa + kick_a;
+    wb = wb + kick_b;
 
     // Torsional (drilling) grip about n.
     let omega_n = dot(wa - wb, n);
@@ -160,6 +263,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     let e_rot_before = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
     wa = wa + tq * n / ia;
     wb = wb - tq * n / ib;
+    kick_a = kick_a + tq * n / ia;
+    kick_b = kick_b - tq * n / ib;
     let lost = e_rot_before - (0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb));
     if (params.twist_loss_to_normal != 0u && lost > 0.0) {
         let w_n = dot(va - vb, n);
@@ -180,6 +285,9 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
             let sc = sqrt(e_rot_in / e_rot);
             wa = wa * sc;
             wb = wb * sc;
+            // w' - w_pre = sc*(w_pre + kick) - w_pre = (sc - 1)*w_pre + sc*kick
+            kick_a = (sc - 1.0) * wa_pre + sc * kick_a;
+            kick_b = (sc - 1.0) * wb_pre + sc * kick_b;
         } else {
             let fl = length(nj);
             if (fl < 1e-9) {
@@ -191,6 +299,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
                 let ax = nj / fl;
                 wa = ax * sqrt(e_rot_in / ia);
                 wb = ax * sqrt(e_rot_in / ib);
+                kick_a = wa - wa_pre;
+                kick_b = wb - wb_pre;
             }
         }
     }
@@ -198,16 +308,20 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     let sb = length(vb);
     let da = va / max(sa, 1e-12);
     let db = vb / max(sb, 1e-12);
+    // Edge > c BEFORE stacking resolves it (the stacking trigger rate).
     if (length(wa) * ra > 1.0 + 1e-4) {
         atomicAdd(&tallies[TALLY_EDGE_OVER_C_IDX], 1);
     }
     if (length(wb) * rb > 1.0 + 1e-4) {
         atomicAdd(&tallies[TALLY_EDGE_OVER_C_IDX], 1);
     }
-    // Scalar spin slot = helicity, +-1 at birth.
-    let e0 = max(params.spin_edge0, 1e-6);
-    (*pa).b = vec4<f32>(da, dot(wa, da) * ra / e0);
-    (*pb).b = vec4<f32>(db, dot(wb, db) * rb / e0);
+    if (params.stacking != 0u) {
+        wa = restack(pa, wa, kick_a);
+        wb = restack(pb, wb, kick_b);
+    }
+    // Scalar spin slot = helicity of the axial level, +-1 at birth.
+    (*pa).b = vec4<f32>(da, axial_helicity(pa, wa, da));
+    (*pb).b = vec4<f32>(db, axial_helicity(pb, wb, db));
     (*pa).d = vec4<f32>(wa, sa);
     (*pb).d = vec4<f32>(wb, sb);
 }

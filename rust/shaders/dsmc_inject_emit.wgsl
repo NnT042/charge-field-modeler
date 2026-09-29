@@ -11,6 +11,9 @@ struct GpuPhoton {
     b: vec4<f32>,
     c: vec4<u32>,
     d: vec4<f32>,
+    e: vec4<f32>,
+    f: vec4<f32>,
+    g: vec4<f32>,
 };
 
 struct GpuBody {
@@ -39,7 +42,7 @@ struct Params {
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
-    glancing_bias: u32, _pad12a: u32, _pad12b: u32, _pad12c: u32,
+    glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -159,6 +162,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         // (photon2.html), sense = chirality (clockwise from behind = +dir,
         // quark.html right-hand rule). R = 1 at k = 0. Speed c.
         out.d = vec4<f32>(dir * (chi * params.spin_edge0), 1.0);
+        out.e = vec4<f32>(0.0);
+        out.f = vec4<f32>(0.0);
+        out.g = vec4<f32>(0.0);
         atomicAdd(&tallies[60], 1); // TALLY_INJECTED
     } else {
         // --- emitted: find owning body by walking per-body counts ---
@@ -212,6 +218,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         // Doc §13: same helical birth spin, radius R = 2^k0.
         let r_emit = exp2(f32(params.emit_stiffness_level));
         out.d = vec4<f32>(dir * (chirality * params.spin_edge0 / r_emit), 1.0);
+        out.e = vec4<f32>(0.0);
+        out.f = vec4<f32>(0.0);
+        out.g = vec4<f32>(0.0);
 
         atomicAdd(&tallies[56u + body_idx], 1); // TALLY_EMITTED
         let bin = hist_bin(lat0);

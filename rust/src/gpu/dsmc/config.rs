@@ -92,11 +92,20 @@ pub struct RoughParams {
     /// (rho = 1-(1-u)^3) exactly as `RotateRelative` does (arp.pdf "glancing"),
     /// so E3 can compare with E2 on equal transport.
     pub glancing_bias: bool,
+    /// Doc §13.7 (user rule 2026-09-29): spin stacking. When the outer edge
+    /// would exceed c, that level locks at c and the excess starts level k+1
+    /// (twice the radius, axis = the collision's spin kick). A stacked level
+    /// spun below `unstack_edge` is stripped. Linear mass is 1 at every level.
+    /// Off: the E1 model (m = R = 2^k, levels fixed).
+    pub stacking: bool,
+    /// Highest level index (3 = photon tier z-spin; storage allows <= 3).
+    pub stack_max_level: u32,
+    pub unstack_edge: f64,
 }
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01 }
     }
 }
 

@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-/// 64-byte photon record, 4 x vec4 (doc §6, grown for §13).
+/// 112-byte photon record, 7 x vec4 (doc §6, grown for §13).
 ///
 /// `a` = pos.xyz, bitcast(id) as f32 in `.w`.
 /// `b` = dir.xyz (unit), scalar spin in `.w`. Under `RoughSphere` the scalar
@@ -10,6 +10,9 @@ use bytemuck::{Pod, Zeroable};
 /// `c` = [flags, bounces, birth_step, stiffness level k] (u32 x4).
 /// `d` = spin vector w.xyz (edge speed |w|*R_k in c, with R_k = 2^k), and
 ///       speed |v| in c in `.w` (1.0 except under `RoughSphere`+`Free`).
+/// `e`, `f`, `g` = spin vectors of inner stacked levels 0, 1, 2 (doc §13.7;
+///       each locked at edge c, zero above the outer level k). Under stacking
+///       the scalar in `b.w` is the helicity of level 0 (the axial spin).
 ///
 /// flags bits: 0 alive, 1 kind (0 ambient/1 emitted), 2 species (0 -> -1, 1 -> +1),
 /// 3-4 source body index, 5-8 crossed-lane mask, 9-12 arrived mask,
@@ -21,6 +24,9 @@ pub struct GpuPhoton {
     pub b: [f32; 4],
     pub c: [u32; 4],
     pub d: [f32; 4],
+    pub e: [f32; 4],
+    pub f: [f32; 4],
+    pub g: [f32; 4],
 }
 
 pub const FLAG_ALIVE: u32 = 1 << 0;
@@ -39,6 +45,9 @@ impl GpuPhoton {
             b: [0.0; 4],
             c: [0; 4],
             d: [0.0; 4],
+            e: [0.0; 4],
+            f: [0.0; 4],
+            g: [0.0; 4],
         }
     }
 
@@ -117,6 +126,33 @@ impl GpuPhoton {
     pub fn edge_speed(&self) -> f64 {
         let w = self.omega();
         (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt() * self.stiffness_mass()
+    }
+
+    /// Spin vector of level `lvl` (0..=k): inner levels from e/f/g, the outer
+    /// level from d.
+    pub fn level_omega(&self, lvl: u32) -> [f64; 3] {
+        let v = if lvl == self.c[3] {
+            self.d
+        } else {
+            match lvl {
+                0 => self.e,
+                1 => self.f,
+                _ => self.g,
+            }
+        };
+        [v[0] as f64, v[1] as f64, v[2] as f64]
+    }
+
+    /// Stacking mass model (doc §13.7): (linear, rotational summed over all
+    /// levels), with unit linear mass and I = kappa*R_level^2.
+    pub fn energies_stacked(&self, kappa: f64) -> (f64, f64) {
+        let mut rot = 0.0;
+        for lvl in 0..=self.c[3].min(3) {
+            let w = self.level_omega(lvl);
+            let r = (2.0f64).powi(lvl as i32);
+            rot += 0.5 * kappa * r * r * (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+        }
+        (0.5 * self.speed() * self.speed(), rot)
     }
 
     /// (linear, rotational) kinetic energy with m = R = 2^k, I = kappa*m*R^2.
@@ -219,9 +255,11 @@ pub struct GpuParams {
 
     /// 0/1: skew rough-sphere impact parameters toward grazing (arp.pdf).
     pub glancing_bias: u32,
-    pub _pad12a: u32,
-    pub _pad12b: u32,
-    pub _pad12c: u32,
+    /// Doc §13.7: 0/1 stacking on (unit linear mass), highest level, unstack
+    /// threshold (edge, in c).
+    pub stacking: u32,
+    pub stack_max_level: u32,
+    pub unstack_edge: f32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -352,7 +390,15 @@ pub const TALLY_ESC_EDGE_OVER_C: usize = 227;
 /// Energy moved from twist grip into normal separation (fixed-point).
 pub const TALLY_TWIST_TO_NORMAL: usize = 228;
 
-pub const TALLY_LEN: usize = 232;
+/// Doc §13.7 stacking: stack events (levels added), unstack events, and
+/// photons left above edge c at the top level.
+pub const TALLY_STACK_EVENTS: usize = 232;
+pub const TALLY_UNSTACK_EVENTS: usize = 233;
+pub const TALLY_STACK_CAPPED: usize = 234;
+/// Escapes by outer level k (0..3), all kinds.
+pub const TALLY_ESC_LEVEL: usize = 235;
+
+pub const TALLY_LEN: usize = 240;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

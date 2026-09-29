@@ -190,6 +190,143 @@ pub fn contact_normal(u: DVec3, rho: f64, psi: f64) -> DVec3 {
     (uh * (1.0 - rho).max(0.0).sqrt() + e_perp * rho.sqrt()).normalize()
 }
 
+// ---------------------------------------------------------------------
+// Spin stacking (doc §13.7, user rule 2026-09-29)
+// ---------------------------------------------------------------------
+
+/// A photon with stacked spin levels: level 0 = axial (radius 1), then x, y,
+/// z at radius 2, 4, 8 (PHYSICS_REFERENCE §2). Only the OUTER level `k`
+/// collides (neut2.pdf: "collisions affect only the outer spins"). Linear
+/// mass is 1 at every level. The outer level's contact radius is 2^k and its
+/// inertia is kappa * 1 * (2^k)^2. Inner levels are locked at edge speed c,
+/// each keeping its own axis.
+#[derive(Clone, Copy, Debug)]
+pub struct Stacked {
+    pub v: DVec3,
+    /// Spin vector per level; entries above `k` are zero.
+    pub w: [DVec3; 4],
+    pub k: u32,
+}
+
+/// Stack/unstack settings.
+#[derive(Clone, Copy, Debug)]
+pub struct StackRule {
+    /// Highest level index allowed (3 = the photon tier's z-spin).
+    pub max_level: u32,
+    /// Stack only when the edge exceeds c by more than this.
+    pub stack_tol: f64,
+    /// Unstack when a stacked outer level's edge falls below this (in c).
+    pub unstack_edge: f64,
+    pub kappa: f64,
+}
+
+impl Default for StackRule {
+    fn default() -> Self {
+        StackRule { max_level: 3, stack_tol: 1e-4, unstack_edge: 0.01, kappa: KAPPA_SOLID }
+    }
+}
+
+/// What one [`Stacked::restack`] call did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestackEvents {
+    pub stacked: u32,
+    pub unstacked: u32,
+    /// The outer edge is still above c at `max_level` (nowhere to stack).
+    pub capped: bool,
+}
+
+pub fn level_radius(k: u32) -> f64 {
+    (2.0f64).powi(k as i32)
+}
+
+impl Stacked {
+    pub fn new(v: DVec3, w0: DVec3) -> Self {
+        Stacked { v, w: [w0, DVec3::ZERO, DVec3::ZERO, DVec3::ZERO], k: 0 }
+    }
+
+    /// The colliding body: unit mass, outer-level radius and spin.
+    pub fn outer_ball(&self) -> Ball {
+        Ball { v: self.v, w: self.w[self.k as usize], m: 1.0, r: level_radius(self.k) }
+    }
+
+    pub fn set_outer(&mut self, b: &Ball) {
+        self.v = b.v;
+        self.w[self.k as usize] = b.w;
+    }
+
+    /// Total energy: linear + every level's spin.
+    pub fn energy(&self, kappa: f64) -> f64 {
+        let mut e = 0.5 * self.v.length_squared();
+        for i in 0..=self.k as usize {
+            let r = level_radius(i as u32);
+            e += 0.5 * kappa * r * r * self.w[i].length_squared();
+        }
+        e
+    }
+
+    /// Applies the user's rule after a collision. `dw` is the change the
+    /// collision made to the outer spin (the kick that overfilled it).
+    /// - Stack: while the outer edge exceeds c (and k < max), lock the outer
+    ///   level at edge c, keeping its axis, and move the excess energy into a
+    ///   new level k+1 at twice the radius. The new axis is the kick
+    ///   direction `dw` (super.html: the new spin is centred on the collision
+    ///   point), falling back to the old axis. The new spin runs at whatever
+    ///   fraction of c the excess buys.
+    /// - Unstack (only when nothing stacked this call): a stacked outer level
+    ///   spun down below `unstack_edge` is removed. Its energy goes back into
+    ///   the level below, which becomes the outer level again (limat.pdf
+    ///   "stripped down").
+    ///
+    /// Energy is exact in both directions.
+    pub fn restack(&mut self, dw: DVec3, rule: &StackRule) -> RestackEvents {
+        let kappa = rule.kappa;
+        let mut ev = RestackEvents::default();
+        loop {
+            let k = self.k as usize;
+            let r = level_radius(self.k);
+            let w = self.w[k];
+            let edge = w.length() * r;
+            if edge <= 1.0 + rule.stack_tol {
+                break;
+            }
+            if self.k >= rule.max_level {
+                ev.capped = true;
+                break;
+            }
+            // E_cap = 0.5 * I * (1/r)^2 = 0.5 * kappa (unit mass).
+            let excess = 0.5 * kappa * r * r * w.length_squared() - 0.5 * kappa;
+            let axis_old = w / w.length();
+            self.w[k] = axis_old / r;
+            let axis_new = if dw.length() > 1e-9 { dw.normalize() } else { axis_old };
+            let r_new = 2.0 * r;
+            self.k += 1;
+            self.w[self.k as usize] = axis_new * (2.0 * excess.max(0.0) / (kappa * r_new * r_new)).sqrt();
+            ev.stacked += 1;
+        }
+        if ev.stacked == 0 {
+            while self.k > 0 {
+                let k = self.k as usize;
+                let r = level_radius(self.k);
+                if self.w[k].length() * r >= rule.unstack_edge {
+                    break;
+                }
+                let e_out = 0.5 * kappa * r * r * self.w[k].length_squared();
+                self.w[k] = DVec3::ZERO;
+                self.k -= 1;
+                let kb = self.k as usize;
+                let rb = level_radius(self.k);
+                let e_b = 0.5 * kappa * rb * rb * self.w[kb].length_squared() + e_out;
+                let len = self.w[kb].length();
+                if len > 0.0 {
+                    self.w[kb] = self.w[kb] / len * (2.0 * e_b / (kappa * rb * rb)).sqrt();
+                }
+                ev.unstacked += 1;
+            }
+        }
+        ev
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +394,66 @@ mod tests {
         assert!(max_dl < 1e-12, "angular momentum not conserved: {max_dl}");
         assert!(max_de_elastic < 1e-12, "energy not conserved at beta=+-1: {max_de_elastic}");
         assert!(min_de_beta0 < -1e-3, "negative control: beta=0 must dissipate, got {min_de_beta0}");
+    }
+
+    fn stacked_state(s: &mut u64, k: u32, edge_scale: f64) -> Stacked {
+        let mut p = Stacked::new(rand_unit(s), rand_unit(s));
+        for i in 0..=k as usize {
+            p.w[i] = rand_unit(s) / level_radius(i as u32);
+        }
+        p.k = k;
+        p.w[k as usize] *= edge_scale;
+        p
+    }
+
+    /// Stack/unstack gates: energy exact through every event, multi-level
+    /// stacks, the top cap, inner levels locked at edge c with their own
+    /// axes, and a stack -> unstack round trip back to the axial level.
+    #[test]
+    fn stacking_conserves_energy_and_round_trips() {
+        let rule = StackRule::default();
+        let kappa = rule.kappa;
+        let mut s = 0x57AC_u64;
+        let (mut n_stack, mut n_multi, mut n_cap, mut n_unstack) = (0, 0, 0, 0);
+        let mut max_de: f64 = 0.0;
+        for i in 0..20_000 {
+            let k = (i % 4) as u32;
+            let scale = [0.005, 0.5, 1.0, 1.7, 3.0, 9.0][i % 6];
+            let mut p = stacked_state(&mut s, k, scale);
+            let e0 = p.energy(kappa);
+            let ev = p.restack(rand_unit(&mut s), &rule);
+            max_de = max_de.max(((p.energy(kappa) - e0) / e0).abs());
+            n_stack += (ev.stacked > 0) as u32;
+            n_multi += (ev.stacked > 1) as u32;
+            n_cap += ev.capped as u32;
+            n_unstack += ev.unstacked;
+            for lvl in 0..p.k as usize {
+                let edge = p.w[lvl].length() * level_radius(lvl as u32);
+                assert!((edge - 1.0).abs() < 1e-9, "inner level {lvl} not locked at c: {edge}");
+            }
+            if !ev.capped {
+                assert!(p.w[p.k as usize].length() * level_radius(p.k) <= 1.0 + rule.stack_tol + 1e-12);
+            }
+            for lvl in (p.k as usize + 1)..4 {
+                assert_eq!(p.w[lvl], DVec3::ZERO);
+            }
+        }
+        println!("stacking: stack {n_stack} (multi {n_multi}) capped {n_cap} unstack {n_unstack} max|dE/E| {max_de:.1e}");
+        assert!(max_de < 1e-12);
+        assert!(n_stack > 1000 && n_multi > 100 && n_cap > 100 && n_unstack > 100);
+
+        let mut p = Stacked::new(DVec3::X, DVec3::X * 1.3); // new edge = sqrt(1.3^2 - 1) = 0.83: one stack
+        let e0 = p.energy(kappa);
+        let ev = p.restack(DVec3::Y, &rule);
+        assert_eq!((ev.stacked, p.k), (1, 1));
+        assert!((p.w[0] - DVec3::X).length() < 1e-12, "axial level keeps its axis at edge c");
+        assert!(p.w[1].normalize().dot(DVec3::Y) > 0.999999, "new level takes the kick axis");
+        assert!((p.energy(kappa) - e0).abs() < 1e-12);
+        p.w[1] *= 0.001;
+        let ev = p.restack(DVec3::ZERO, &rule);
+        assert_eq!((ev.unstacked, p.k), (1, 0));
+        assert!(p.w[0].normalize().dot(DVec3::X) > 0.999999);
+        assert!(p.w[0].length() >= 1.0);
     }
 
     /// Smooth spheres (beta = -1) must leave both spins untouched: the
