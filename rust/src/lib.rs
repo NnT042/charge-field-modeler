@@ -13,6 +13,7 @@ mod focus_particle;
 pub mod hitbox;
 mod path_trace;
 pub mod recycling;
+pub mod rough_sphere;
 mod spin_stack;
 mod types;
 mod units;
