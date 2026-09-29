@@ -7927,10 +7927,18 @@ mod dsmc_gates {
         d5: bool,
         cancel_redirect: f64,
         pole_intake_bias: f64,
+        /// Doc §13: Some -> ExchangeRule::RoughSphere with this contact law
+        /// (redirect and spin_transfer forced to 0).
+        rough: Option<crate::gpu::dsmc::RoughParams>,
     }
 
-    fn g23_settings() -> [DsmcSetting; 4] {
-        [
+    /// S1-S4 (B2c) plus the doc §13 rough-sphere settings S5/S6. Set
+    /// CFM_G23_SETTINGS to a comma list of name prefixes (e.g. "S5,S6") to run
+    /// a subset.
+    fn g23_settings() -> Vec<DsmcSetting> {
+        use crate::gpu::dsmc::RoughParams;
+        let rough_base = RoughParams { glancing_bias: true, ..RoughParams::default() };
+        let all = vec![
             DsmcSetting {
                 name: "S1-compat",
                 rate_kernel: RateKernel::Constant,
@@ -7940,6 +7948,7 @@ mod dsmc_gates {
                 d5: true,
                 cancel_redirect: 0.5,
                 pole_intake_bias: 0.5,
+                rough: None,
             },
             DsmcSetting {
                 name: "S2-P1gear",
@@ -7950,6 +7959,7 @@ mod dsmc_gates {
                 d5: false,
                 cancel_redirect: 0.5,
                 pole_intake_bias: 0.5,
+                rough: None,
             },
             DsmcSetting {
                 name: "S3-DirRel",
@@ -7960,6 +7970,7 @@ mod dsmc_gates {
                 d5: false,
                 cancel_redirect: 0.5,
                 pole_intake_bias: 0.5,
+                rough: None,
             },
             DsmcSetting {
                 name: "S4-DirRel-nored",
@@ -7970,8 +7981,38 @@ mod dsmc_gates {
                 d5: false,
                 cancel_redirect: 0.0,
                 pole_intake_bias: 0.5,
+                rough: None,
             },
-        ]
+            DsmcSetting {
+                name: "S5-rough-twist",
+                rate_kernel: RateKernel::Catch,
+                mesh_mode: MeshMode::DirRel,
+                exchange_rule: ExchangeRule::RoughSphere,
+                bounce_cap: 0,
+                d5: false,
+                cancel_redirect: 0.0,
+                pole_intake_bias: 0.5,
+                rough: Some(RoughParams { beta: -1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..rough_base }),
+            },
+            DsmcSetting {
+                name: "S6-rough-edge+twist",
+                rate_kernel: RateKernel::Catch,
+                mesh_mode: MeshMode::DirRel,
+                exchange_rule: ExchangeRule::RoughSphere,
+                bounce_cap: 0,
+                d5: false,
+                cancel_redirect: 0.0,
+                pole_intake_bias: 0.5,
+                rough: Some(RoughParams { beta: 1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..rough_base }),
+            },
+        ];
+        match std::env::var("CFM_G23_SETTINGS") {
+            Ok(list) => {
+                let want: Vec<String> = list.split(',').map(|x| x.trim().to_string()).collect();
+                all.into_iter().filter(|s| want.iter().any(|w| s.name.starts_with(w.as_str()))).collect()
+            }
+            Err(_) => all,
+        }
     }
 
     const G23_LAMBDA: f64 = 3.0;
@@ -7989,7 +8030,7 @@ mod dsmc_gates {
             photon_fraction: PHOTON_FRACTION,
             pole_intake_bias: s.pole_intake_bias,
             cancel_redirect: s.cancel_redirect,
-            spin_transfer: DEFAULT_SPIN_TRANSFER,
+            spin_transfer: if s.rough.is_some() { 0.0 } else { DEFAULT_SPIN_TRANSFER },
             swing_boost: DEFAULT_SWING_BOOST,
             rate_kernel: s.rate_kernel,
             mesh_mode: s.mesh_mode,
@@ -8002,7 +8043,7 @@ mod dsmc_gates {
             stiffness_shed: StiffnessShed::None,
             sigma_size_scaling: false,
             debug_force_equal_mass_exchange: false,
-            rough: crate::gpu::dsmc::RoughParams::default(),
+            rough: s.rough.unwrap_or_default(),
         }
     }
 

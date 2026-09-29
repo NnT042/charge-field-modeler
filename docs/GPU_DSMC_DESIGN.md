@@ -659,6 +659,99 @@ below equipartition, so edge grip spins photons *up*, and a large fraction of
 post-collision edges exceed c. That is exactly super.html's stacking trigger, so
 stacking is not optional under edge grip (§13.6).
 
+### 13.6 E3: E2 rerun with the mechanics doing the work (2026-09-29)
+
+**Setup:** `report_e3_rough_single_body`. Single body, λ = 3, pump emission, no
+redirect, no spin_transfer. Runs cover 4 contact laws × both D7 modes × both
+impact distributions × proton/neutron, at 2400 warmup + 2000 averaging steps, 1 seed.
+- "glanc" is the RotateRelative/arp.pdf grazing skew, i.e. E2's transport.
+- "geom" is the true geometric hard-sphere impact distribution: near-isotropic
+  scattering, diffusive at λ = 1.
+
+| law (glancing, PinnedC) | polar | mid | equat | proton hel/esc | neutron hel/esc | esc edge>c |
+|---|---|---|---|---|---|---|
+| smooth (spin inert, null) | 0.138 | 0.366 | 0.497 | +0.31 | −0.31 | 0 |
+| edge grip | 0.191 | 0.400 | 0.408 | +0.02 | −0.00 | 0.40 |
+| twist grip → normal | 0.137 | 0.366 | 0.497 | **+0.40** | **−0.16** | 0.43 |
+| edge + twist | 0.152 | 0.378 | 0.469 | +0.03 | +0.01 | 0.40 |
+
+- **The null reproduces.** Smooth spheres give E2's collision-free geometry exactly.
+  Helicity decays to ±0.31 even with inert spin, because directions scatter while ω
+  doesn't (helicity = ω·d).
+- **Topology is chirality-blind in every law.** Proton and neutron rows agree to
+  within 0.003 in all 32 runs.
+  - Edge grip squashes both toward the pole by 5 points, via spin → linear
+    tangential kicks.
+  - Twist grip touches no topology at all.
+  - With emission geometry identical, **the disc vs polar-funnel distinction does not
+    emerge from photon-photon mechanics at a single body.** It has to come from the
+    emitter: the body's own spin geometry and channelling, i.e. where Mathis puts it.
+- **The magnetic channel is where the mechanics act.**
+  - Twist grip preserves the majority-chirality exhaust (proton +0.40 vs +0.31
+    smooth) and spins the minority down (neutron −0.16 vs −0.31). That is the 2:1
+    ambient field despinning the opposite species (antimatter-instability
+    reference), and it emerges from DirRel-signed twist contacts.
+  - Edge grip scrambles helicity to zero for both.
+- **D7.** Free-mode speeds drift down under edge grip: escaping 0.79 ± 0.27 c
+  (glancing), 0.86 ± 0.28 c (geometric). Spin soaks up linear energy on the way to
+  equipartition, and Free runs never pass the steady check (the gas keeps cooling).
+  - Photons do not stay "within a few % of c" under a free rough-sphere law. That
+    favours (b) PinnedC, or a law that doesn't pump linear into spin.
+  - Twist-only Free stays at 1.05 ± 0.34 c.
+- **Edge speeds above c:** 40–67% of escaping photons under edge grip; 43% under
+  pinned twist, because the restore step re-inflates the pair's spin. super.html's
+  stacking trigger fires constantly, so §13.7 is needed before these numbers are
+  final.
+- The geometric impact distribution gives the same picture with weaker effects
+  (escaping helicity is 0.20 even for smooth spheres).
+
+**G3 p-n-p stack, rough-sphere settings** (`report_g3_pnp_stack`,
+`CFM_G23_SETTINGS=S5,S6`, glancing, PinnedC, λ = 3, 1 seed):
+
+| p-n-p headline | S5 twist | S6 edge+twist | B2c S1–S4 | Phase-1 |
+|---|---|---|---|---|
+| through M/esc | 0.34 | 0.02 | 0.69–1.48 | 1.46–1.51 |
+| hand-off | 71.4% | 67.5% | 72–77% | 77–78.5% |
+| north / south survival | 0.75 / 0.77 | 0.78 / 0.80 | ~0.73–0.91 | ≈0.47 |
+| densification (1 < r < 1.5, vs n alone) | 1.37× | 1.41× | 1.4–2.2× | needs ~175× |
+| total-sum shift, p-n-p vs n alone | 0.007 | 0.002 | ≤ 0.08 | — |
+
+- Hand-off and densification are unchanged by the photon mechanics. They are
+  geometric/transport properties of an optically thin pump-mode stack. **Real contact
+  mechanics do not close the ~175× densification gap.**
+- The through-lane feed is almost pure χ+: 618 : 11 in the p-n-p. That is the feeders'
+  proton exhaust.
+  - Under twist grip it keeps a third of its helicity (0.34).
+  - Under edge grip it is scrambled (0.02).
+- A lone neutron's own exhaust is despun by the field: −0.16 under S5, ≈0 under S6.
+
+### 13.7 **[DECISION] S1 — spin stacking accounting (proposal)**
+super.html: at edge speed c, extra spin energy stacks a new level centred on the
+collision point. bottom.pdf: each stacked level doubles collision mass (m, R → 2m, 2R).
+The proposed event, applied after the contact whenever the outer edge exceeds c:
+- The old outer level locks at edge c into a per-photon inner-energy store. Inner
+  levels don't collide (neut2.pdf "collisions affect only the outer spins").
+- k → k + 1.
+- The new outer spin's axis is the contact torque axis n×J.
+
+The open question is where the cost comes from. At speed c, doubling m doubles the
+linear energy ½mc². Options:
+- **(i) Energy-exact:**
+  - The lock energy ½I/R² and the linear cost ½m_k c² are paid from the spin excess.
+    A k = 0 photon needs an edge of ≥ 1.87c to afford a stack.
+  - Short of that, the edge stays above c (pinned mode) or the excess goes to speed
+    (free mode).
+  - Momentum is not conserved at the stacking event.
+- **(ii) Cap-only:**
+  - The edge is clamped at c and the excess banked as inner energy; no mass or size
+    change.
+  - It's simple, but ignores bottom.pdf.
+- **(iii) Stack without a linear cost:** the doubled mass is a collision property
+  only, and energy is tallied separately. This breaks the conservation gates.
+
+Unstacking (limat.pdf, collisions "strip" high photons down) is the reverse event and
+needs a threshold. *Recommend (i) with unstacking at outer spin → 0.*
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
