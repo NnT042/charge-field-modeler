@@ -812,6 +812,108 @@ conserved and levels are fractional.** Built as `RoughParams::stacking`
   the no-stacking Free result (0.79c), **D7 favours PinnedC** whenever edge grip is
   on. Twist-only Free stays near c (1.03 ± 0.34).
 
+## 14. Next: a mechanical baryon on the new engine (proposal, 2026-09-29)
+
+**Why.** Across §13 the photon gas turned out to set the *magnetic* channel (helicity),
+but never the *topology*. Proton and neutron exits are identical in every contact law
+while the emitter is a fixed-profile absorb/re-emit sphere. Densification also needs a
+real trap. Both point at the emitter. The current bodies are placeholders: they absorb
+whatever touches them and re-emit from a hard-coded latitude histogram (7°/58°, the
+Spin-mode trace).
+
+**What Mathis says the body does:**
+- **pole.pdf:** "any spinning sphere will have more angular momentum at the equator
+  than the poles. Given an ambient field of smaller particles (the photons) and
+  permeability of the larger body by the smaller, this will create a net vector out at
+  the equator and a net vector in at the poles… the photons will feel a 'negative
+  pressure' at the poles and will be sucked in." Also, the greater field "will sort
+  the smaller particles, sending the photons to the south pole… and antiphotons to the
+  north pole".
+- **rhrule.pdf:** "protons act like fans (the photons don't just channel through the
+  nucleus, they channel through the individual nucleons as well)". Pole-to-equator is
+  the primary channel; pole-to-pole through-charge is the neutron's primary scheme.
+- **galcharge.pdf / core2.pdf:** incoming photons "gain energy by stacking on more
+  outer spins" as they come in at the poles. Through-charge meeting the opposite
+  stream is spun *up* (opposite twice). §13.7 stacking and the twist grip already
+  carry both.
+- **graphene.pdf:** the nucleus is "spun up by the ambient charge field", and emission
+  leaves "like a spinning lawn sprinkler".
+
+So the body is **permeable, spinning matter that photons pass through and collide
+with.** Emission is scattered ambient, not absorbed-and-reborn charge, and the
+equatorial preference should come from the radial growth of surface speed (ω×r).
+Nothing imposes it.
+
+### 14.1 [DECISION] B1 — how much of the 12-level stack is modelled
+- **(a) Uniform fan.** One permeable sphere rotating rigidly about its axis at edge c.
+  Photons inside collide with "body matter" at velocity Ω×r. This is the minimal
+  mechanism of pole.pdf. It has no chirality structure, so proton and neutron are
+  identical by construction. It is a control.
+- **(b) Layered shells (recommended).** The baryon-tier levels 9–12 (axial, x, y, z)
+  become four nested permeable shells at radii ⅛, ¼, ½, 1. Each moves with that level's
+  *instantaneous* angular velocity, taken from `spin_stack.rs` (the same sourced
+  kinematics that drives Spin mode: hierarchy, orbit radius = amplitude/2, precession).
+  Each has its own chirality sign from the proton/neutron patterns in
+  PHYSICS_REFERENCE §3 (each class has four listed states, e.g. proton +a+x+y+z, neutron −a−x−y+z; all four get run). A photon inside shell k
+  collides with matter moving at that level's local velocity and carrying that level's
+  spin. That is where proton and neutron can finally differ mechanically: the
+  neutron's reversed outer z-spin meets photons the inner levels have already
+  channelled.
+- **(c) Full trace.** The Spin-mode swept path (spirograph capsules) at full
+  resolution, with photons hitting capsule segments. This is the most literal version,
+  and the old 7°/58° histogram came from it. It is heavy and time-dependent, and the
+  trace at levels 9–12 is enormous relative to a photon. It is best kept as a later
+  validation of (b), not the workhorse.
+
+### 14.2 [DECISION] B2 — what a photon-body contact is
+Use the same rough-sphere contact (twist grip default, PinnedC). The partner is an
+infinitely massive element of the shell, moving at the shell's local velocity and
+spinning with the shell's level spin. There is no new physics rule: the contact law is
+the one gated in §13.
+- **Alternative:** a smooth "fan-blade" deflection (tangential velocity kick only). It
+  is simpler but repeats the redirect mistake of imposing the outcome.
+
+### 14.3 [DECISION] B3 — how permeable the body is
+This means how many body contacts a photon suffers crossing a shell: an optical depth
+τ_body per shell. Mathis gives no number, so it is a **swept knob**:
+- τ_body → 0: transparent, no channelling.
+- τ_body → ∞: an opaque ball that reflects.
+
+The prediction to test is that a window of τ_body produces pole-in / equator-out with
+proton ≠ neutron. We report how wide that window is, never a best fit.
+- Possible later anchor: the charge-recycling rate (19× mass/s,
+  reference_charge_recycling_rate) as a throughput constraint.
+
+### 14.4 [DECISION] B4 — does the body feel the photons (back-reaction)
+- **(a) Driven (recommended first):** level spins are held fixed (steady state, "spun
+  up by the ambient field"). The net torque and force the photons exert are tallied
+  per level. A consistent model should show the torque roughly balancing, which is a
+  check rather than an input.
+- **(b) Free:** levels gain and lose angular momentum from hits, and the body can
+  drift. This is the free-drift focus particle from the backlog, and the natural step
+  after (a).
+
+### 14.5 What goes away, what stays
+- **Retired:** pump mode, the absorb/re-emit emission histogram, the through-lane gate
+  (`lane.x`, cos 20°). Through-charge must now *emerge* as photons crossing pole to
+  pole, and the neutron's "primary scheme" is a prediction.
+- **Kept:** the ambient injector, the DSMC photon gas (§13 mechanics + stacking), and
+  every observable (exit bands, helicity, survival, density maps, absorbed momentum
+  → now "momentum delivered to the body").
+- **Gates first:**
+  - **BG0:** a transparent body (τ = 0) leaves the ambient field untouched (flux and
+    isotropy match G0).
+  - **BG1:** in a non-rotating opaque body, spin and linear momentum given to the body
+    balance the photons' change (conservation across the body boundary).
+  - **BG2:** under the uniform fan (a), photon angular momentum about the axis is
+    delivered in the rotation sense, and the equatorial exit excess grows with τ
+    (pole.pdf's mechanism, measured).
+  - **BG3:** mirror symmetry. Proton vs anti-proton (all signs flipped) in a mirrored
+    field gives mirrored results.
+- **First physics run:** single proton vs neutron under (b). Does topology split? Does
+  a neutron pass pole-to-pole? What exit latitudes appear (compare 7°/58° and the
+  30°-cone claim), and does the stack densify?
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
