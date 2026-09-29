@@ -39,6 +39,7 @@ struct Params {
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
+    glancing_bias: u32, _pad12a: u32, _pad12b: u32, _pad12c: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;

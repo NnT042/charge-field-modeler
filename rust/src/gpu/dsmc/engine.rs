@@ -516,6 +516,10 @@ impl DsmcEngine {
             twist_loss_to_normal: c.rough.twist_loss_to_normal as u32,
             speed_mode: if c.rough.speed_mode == SpeedMode::PinnedC { 1 } else { 0 },
             spin_edge0: c.rough.spin_edge0 as f32,
+            glancing_bias: c.rough.glancing_bias as u32,
+            _pad12a: 0,
+            _pad12b: 0,
+            _pad12c: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
     }

@@ -87,11 +87,16 @@ pub struct RoughParams {
     /// Birth edge speed |w|*R in units of c. It is 1.0 per photon2.html:
     /// "let the tangential velocity of the spin of the photon equal c".
     pub spin_edge0: f64,
+    /// Impact-parameter distribution. false: geometric (b/d = sqrt(rho), rho
+    /// uniform), which scatters near-isotropically. true: rho skewed toward 1
+    /// (rho = 1-(1-u)^3) exactly as `RotateRelative` does (arp.pdf "glancing"),
+    /// so E3 can compare with E2 on equal transport.
+    pub glancing_bias: bool,
 }
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0 }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false }
     }
 }
 

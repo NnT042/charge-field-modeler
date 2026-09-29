@@ -216,6 +216,12 @@ pub struct GpuParams {
     /// D7: 0 = Free, 1 = PinnedC.
     pub speed_mode: u32,
     pub spin_edge0: f32,
+
+    /// 0/1: skew rough-sphere impact parameters toward grazing (arp.pdf).
+    pub glancing_bias: u32,
+    pub _pad12a: u32,
+    pub _pad12b: u32,
+    pub _pad12c: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side

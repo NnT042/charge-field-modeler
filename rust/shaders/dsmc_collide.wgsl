@@ -47,6 +47,7 @@ struct Params {
     density_accumulate: u32, emit_stiffness_level: u32, stiffness_shed: u32, sigma_size_scaling: u32,
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
+    glancing_bias: u32, _pad12a: u32, _pad12b: u32, _pad12c: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -126,7 +127,12 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     let helper = perp_helper(uh);
     let t = normalize(cross(uh, helper));
     let bp = cross(uh, t);
-    let rho = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+    var rho = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+    if (params.glancing_bias != 0u) {
+        // Same skew as RotateRelative / sample_contact_normal (arp.pdf).
+        let om = 1.0 - rho;
+        rho = 1.0 - om * om * om;
+    }
     let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) * TAU;
     let e_perp = t * cos(psi) + bp * sin(psi);
     let n = normalize(uh * sqrt(max(1.0 - rho, 0.0)) + e_perp * sqrt(rho));

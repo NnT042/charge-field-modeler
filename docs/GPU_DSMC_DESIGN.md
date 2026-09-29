@@ -601,6 +601,64 @@ The options:
 - **Then:** rerun E2 (single body, no redirect) and the G3 stack with the
   mechanics doing the work.
 
+### 13.5 Built (2026-09-29): user chose D7 (c), both speed modes
+
+**Sources pinned:**
+- photon2.html: "let the tangential velocity of the spin of the photon equal c", so
+  photons are born at edge speed c (`RoughParams::spin_edge0 = 1`), helical, with
+  ω along +d for chirality +1 (clockwise from behind, quark.html right-hand rule).
+- super.html (2013 update): a photon "stacks a second spin on top of the first because
+  it cannot spin any faster on the first axis. It has reached a spin velocity of c",
+  and the new spin is centred on the collision point. That is the stacking rule
+  (§13.6).
+
+**Contact law: two channels, not one.** A spinning-ball contact can grip in two ways:
+- **Edge (sliding) grip `beta`:** the classical rough sphere of §13.2.
+- **Twist (drilling) grip `beta_twist`:** the contact faces twist against each other
+  about the line of centres. This is a pure couple, so spin is exchanged but linear
+  motion is untouched. `twist_loss_to_normal` pays any energy it removes into normal
+  separation (halbach.pdf: "repulsion implies a real loss of local spin… transferred
+  from spin energy to linear").
+
+**RS3 result (CPU, `rough_sphere::rs3_sign_patterns`).** The §13.2 claim that D2 falls
+out of the textbook model is **wrong as stated**:
+- **Twist channel:** reproduces grav4/halbach DirRel exactly. Same spins head-on catch,
+  spin down and push apart; opposite spins head-on pass clean; the pattern flips for
+  co-moving pairs.
+- **Edge channel:** gives the **exact inverse**. Two same-helicity photons meeting
+  head-on counter-rotate in the lab frame, and counter-rotating gears mesh.
+- **Control:** end-over-end spin (no helicity) is chirality-blind.
+- With both channels on, the edge channel dominates (about 2× larger).
+
+So which way the gear sign goes depends on which grip photons have: an empirical
+question. E3 runs all of them.
+
+**D7 (b) had to be reformulated.** Pinning each photon's speed and booking the change
+into its *own* spin ran out of spin energy:
+- a κ = 0.4 sphere at edge c holds 0.2 spin vs 0.5 linear;
+- 664k deficits in a 200k-photon box, i.e. energy created.
+
+`PinnedC` is now pair-level: after the contact, both speeds go back to c and both spins
+are scaled by one factor so the pair's spin energy equals what it came in with. That
+matches neutron.pdf's "collisions affect only the spins, not c".
+- Energy is exact by construction.
+- Momentum is not: 0.9% of Σm|v| drift over ~19 collisions/photon.
+
+**Gates (all pass, each with a control that fails):**
+
+| Gate | Result | Control |
+|---|---|---|
+| RS1 CPU per collision | P, L, E exact to 1e-14 | partial grip β = 0 loses energy |
+| GPU vs CPU, 5 law × D7 combos | ≤ 4e-6 per collision | wrong law (β = 0.5) differs by 0.7–5.5 |
+| RS1 GPU box, Free | dE/E ~1e-6, dP ~1e-9 | β = 0 loses 82% |
+| RS1 GPU box, PinnedC | dE/E 1.6e-7, all \|v\| = c to 2e-7 | — |
+| RS2 equipartition | E_rot/E_lin 0.400 → 0.9996, ⟨v⁴⟩/⟨v²⟩² = 1.669 (Maxwell 5/3) | smooth spheres stay at 0.400 |
+
+**Edge speeds exceed c constantly under edge grip.** At birth, E_rot/E_lin = κ = 0.4,
+below equipartition, so edge grip spins photons *up*, and a large fraction of
+post-collision edges exceed c. That is exactly super.html's stacking trigger, so
+stacking is not optional under edge grip (§13.6).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

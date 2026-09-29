@@ -191,7 +191,12 @@ fn run_pair_match(rough: RoughParams, seed: u64) -> MatchResult {
             continue;
         }
         res.accepted += 1;
-        let rho = rand01(seed, key_base, 3) as f64;
+        let mut rho = rand01(seed, key_base, 3);
+        if rough.glancing_bias {
+            let om = 1.0 - rho;
+            rho = 1.0 - om * om * om;
+        }
+        let rho = rho as f64;
         let psi = rand01(seed, key_base, 4) as f64 * std::f64::consts::TAU;
         let (ba0, bb0) = (to_ball(&pa), to_ball(&pb));
         let u = ba0.v - bb0.v;
@@ -232,6 +237,7 @@ fn rs_gpu_matches_cpu_reference() {
         ("twist->normal, PinnedC", twist),
         ("twist->normal, Free", RoughParams { speed_mode: SpeedMode::Free, g_max: 4.0, ..twist }),
         ("edge+twist, Free", RoughParams { speed_mode: SpeedMode::Free, g_max: 4.0, ..both }),
+        ("edge+twist, PinnedC, glancing", RoughParams { glancing_bias: true, ..both }),
     ];
     for (i, (name, rough)) in cases.into_iter().enumerate() {
         let r = run_pair_match(rough, 0x5EED_0000 + i as u64);

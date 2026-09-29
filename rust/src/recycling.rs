@@ -7814,6 +7814,98 @@ mod dsmc_gates {
         }
     }
 
+    /// E3 (doc §13): E2 rerun with the mechanics doing the work. There is no
+    /// redirect and no spin_transfer. Photons carry spin vectors and collide
+    /// as rough spheres under each contact law and each D7 speed mode. The
+    /// question is whether exit topology or the magnetic channel now emerges.
+    /// The smooth law (spin inert) is the null case and must reproduce the
+    /// collision-free emission geometry (~0.14/0.37/0.49).
+    #[test]
+    #[ignore]
+    fn report_e3_rough_single_body() {
+        use crate::gpu::dsmc::{RoughParams, SpeedMode};
+        use std::time::Instant;
+        let ctx = require_gpu!();
+        const N_A: f64 = 400.0;
+        const CAPACITY: u32 = 6_000_000;
+        let warmup: u32 = std::env::var("CFM_E3_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(1200);
+        let avg: u32 = std::env::var("CFM_E3_AVG").ok().and_then(|v| v.parse().ok()).unwrap_or(2000);
+        let lambdas: Vec<f64> = std::env::var("CFM_E3_LAMBDAS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+            .unwrap_or(vec![3.0]);
+        // CFM_E3_GLANCING: "0" geometric, "1" glancing (arp.pdf), default both.
+        let glancings: Vec<bool> = match std::env::var("CFM_E3_GLANCING").as_deref() {
+            Ok("0") => vec![false],
+            Ok("1") => vec![true],
+            _ => vec![true, false],
+        };
+        let base = RoughParams::default();
+        let laws: [(&str, RoughParams); 4] = [
+            ("smooth", RoughParams { beta: -1.0, ..base }),
+            ("edge", RoughParams { beta: 1.0, ..base }),
+            ("twist", RoughParams { beta: -1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..base }),
+            ("edge+twist", RoughParams { beta: 1.0, beta_twist: 0.0, twist_loss_to_normal: true, ..base }),
+        ];
+        println!("=== E3: single body, rough-sphere photons, no redirect (warmup {warmup}, avg {avg}; speed std is tally-resolution-limited ~0.01) ===");
+        println!(
+            "{:<8} {:<5} {:<11} {:<6} {:>4} {:>6} {:>6} {:>6} {:>6} {:>8} {:>13} {:>13} {:>6} {:>7} {:>6} {:>6}",
+            "class", "imp", "law", "D7", "lam", "escFr", "polar", "mid", "equat", "hel/esc", "speed m+-s", "edge m+-s", "edge>c", "coll/ph", "ovfl", "steady"
+        );
+        for &glancing in &glancings {
+        for class in [GpuClass::Proton, GpuClass::Neutron] {
+            for &lambda in &lambdas {
+                for (name, law) in laws {
+                    for mode in [SpeedMode::PinnedC, SpeedMode::Free] {
+                        let seed = 0xE3E3_0000u64 ^ ((class as u64) << 8) ^ (lambda as u64);
+                        let mut config =
+                            physics_default_config_e1(class, MeshMode::DirRel, lambda, N_A, CAPACITY, seed, 0, StiffnessShed::None, false);
+                        config.exchange_rule = ExchangeRule::RoughSphere;
+                        config.cancel_redirect = 0.0;
+                        config.spin_transfer = 0.0;
+                        config.rough =
+                            RoughParams { speed_mode: mode, g_max: if mode == SpeedMode::Free { 6.0 } else { 2.0 }, glancing_bias: glancing, ..law };
+                        let started = Instant::now();
+                        let mut engine = DsmcEngine::new(&ctx, config);
+                        let report = engine.run_steady(&ctx, warmup, avg, 250);
+                        let secs = started.elapsed().as_secs_f64();
+                        let t = &report.totals;
+                        let esc: Vec<i64> = (0..3).map(|b| t.escaped_band[0][0][b] + t.escaped_band[0][1][b]).collect();
+                        let n_esc: i64 = esc.iter().sum();
+                        let hel: f64 =
+                            (0..2).flat_map(|sp| (0..3).map(move |b| (sp, b))).map(|(sp, b)| t.escaped_band_spin[0][sp][b]).sum();
+                        let share = |b: usize| esc[b] as f64 / n_esc.max(1) as f64;
+                        let throughput = (t.injected + t.emitted[0]).max(1) as f64;
+                        let (sm, ss) = t.esc_speed_stats();
+                        let (em, es) = t.esc_edge_stats();
+                        println!(
+                            "{:<8} {:<5} {:<11} {:<6} {:>4} {:>6.4} {:>6.3} {:>6.3} {:>6.3} {:>+8.4} {:>6.3}+-{:<5.3} {:>6.3}+-{:<5.3} {:>6.3} {:>7.3} {:>6} {:>6}  ({secs:.0}s)",
+                            format!("{class:?}"),
+                            if glancing { "glanc" } else { "geom" },
+                            name,
+                            if mode == SpeedMode::Free { "free" } else { "pinned" },
+                            lambda,
+                            n_esc as f64 / t.emitted[0].max(1) as f64,
+                            share(0),
+                            share(1),
+                            share(2),
+                            hel / n_esc.max(1) as f64,
+                            sm,
+                            ss,
+                            em,
+                            es,
+                            t.esc_edge_over_c as f64 / t.esc_all.max(1) as f64,
+                            2.0 * t.collisions as f64 / throughput,
+                            t.accept_overflow,
+                            report.steady_ok
+                        );
+                    }
+                }
+            }
+        }
+        }
+    }
+
     // ================================================================
     // B2c: G2 single-body + G3 p-n-p stack reports (doc §9, §11).
     // ================================================================
