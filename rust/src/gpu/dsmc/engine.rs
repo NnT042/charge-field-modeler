@@ -21,7 +21,7 @@ use crate::gpu::context::GpuContext;
 use crate::gpu::kernel::{workgroup_grid_for_threads, Kernel};
 use crate::gpu::sort::CellSorter;
 
-use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel, SpeedMode, StiffnessShed};
+use super::config::{BodyModel, Boundary, DsmcConfig, GpuClass, EmissionMode, ExchangeRule, GpuOrient, MeshMode, RateKernel, SpeedMode, StiffnessShed};
 use super::gpu_types::{GpuBody, GpuInjectParams, GpuParams, GpuPhoton, HIST_LEN, TALLY_LEN};
 use super::precompute::{precompute, Grid};
 
@@ -94,6 +94,18 @@ pub struct Totals {
     pub unstack_events: i64,
     pub stack_capped: i64,
     pub esc_level: [i64; 4],
+
+    // --- Doc §14: permeable shell bodies (per body) ---
+    pub sh_entries: [i64; 4],
+    pub sh_exits: [i64; 4],
+    pub sh_through: [i64; 4],
+    pub sh_contacts: [i64; 4],
+    pub sh_clean: [i64; 4],
+    pub sh_exit_band: [[i64; 3]; 4],
+    pub sh_exit_band_hel: [[f64; 3]; 4],
+    pub sh_dp: [[f64; 3]; 4],
+    pub sh_torque: [[f64; 3]; 4],
+    pub sh_work: [f64; 4],
 }
 
 impl Totals {
@@ -177,6 +189,20 @@ impl Totals {
         self.stack_capped += other.stack_capped;
         for k in 0..4 {
             self.esc_level[k] += other.esc_level[k];
+        }
+        for b in 0..4 {
+            self.sh_entries[b] += other.sh_entries[b];
+            self.sh_exits[b] += other.sh_exits[b];
+            self.sh_through[b] += other.sh_through[b];
+            self.sh_contacts[b] += other.sh_contacts[b];
+            self.sh_clean[b] += other.sh_clean[b];
+            self.sh_work[b] += other.sh_work[b];
+            for a in 0..3 {
+                self.sh_exit_band[b][a] += other.sh_exit_band[b][a];
+                self.sh_exit_band_hel[b][a] += other.sh_exit_band_hel[b][a];
+                self.sh_dp[b][a] += other.sh_dp[b][a];
+                self.sh_torque[b][a] += other.sh_torque[b][a];
+            }
         }
     }
 
@@ -301,6 +327,24 @@ impl Totals {
         for k in 0..4 {
             self.esc_level[k] += raw[TALLY_ESC_LEVEL + k] as i64;
         }
+        use super::gpu_types::{
+            TALLY_SH_CLEAN, TALLY_SH_CONTACTS, TALLY_SH_DP, TALLY_SH_ENTRIES, TALLY_SH_EXITS, TALLY_SH_EXIT_BAND, TALLY_SH_EXIT_BAND_HEL,
+            TALLY_SH_THROUGH, TALLY_SH_TORQUE, TALLY_SH_WORK,
+        };
+        for b in 0..4 {
+            self.sh_entries[b] += raw[TALLY_SH_ENTRIES + b] as i64;
+            self.sh_exits[b] += raw[TALLY_SH_EXITS + b] as i64;
+            self.sh_through[b] += raw[TALLY_SH_THROUGH + b] as i64;
+            self.sh_contacts[b] += raw[TALLY_SH_CONTACTS + b] as i64;
+            self.sh_clean[b] += raw[TALLY_SH_CLEAN + b] as i64;
+            self.sh_work[b] += raw[TALLY_SH_WORK + b] as f64 / SCALE;
+            for a in 0..3 {
+                self.sh_exit_band[b][a] += raw[TALLY_SH_EXIT_BAND + b * 3 + a] as i64;
+                self.sh_exit_band_hel[b][a] += raw[TALLY_SH_EXIT_BAND_HEL + b * 3 + a] as f64 / SCALE;
+                self.sh_dp[b][a] += raw[TALLY_SH_DP + b * 3 + a] as f64 / SCALE;
+                self.sh_torque[b][a] += raw[TALLY_SH_TORQUE + b * 3 + a] as f64 / SCALE;
+            }
+        }
     }
 }
 
@@ -340,6 +384,10 @@ pub struct DsmcEngine {
     params_buf: wgpu::Buffer,
     gather_params_buf: wgpu::Buffer,
     sorter: CellSorter,
+    /// Doc §14: per-body shell kinematics (empty unless BodyModel::Shells)
+    /// and the GPU copy of their frames (8 vec4 per body).
+    pub shell_bodies: Vec<crate::baryon_shells::ShellBody>,
+    shells_buf: wgpu::Buffer,
 
     inject_emit_kernel: Kernel,
     move_kernel: Kernel,
@@ -371,6 +419,10 @@ impl DsmcEngine {
             assert!(config.rough.speed_mode == SpeedMode::Free || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
             assert!(config.rough.stack_max_level <= 3, "stacking storage holds levels 0..=3");
             assert!(!config.rough.stacking || config.emit_stiffness_level == 0, "stacking: photons are born at level 0");
+        }
+        if let BodyModel::Shells { .. } = config.body_model {
+            assert!(config.exchange_rule == ExchangeRule::RoughSphere, "Shells bodies use the rough-sphere photon mechanics");
+            assert!(config.bodies.len() <= 4, "at most 4 bodies");
         }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
@@ -424,6 +476,24 @@ impl DsmcEngine {
 
         let sorter = CellSorter::new_generic(ctx, grid.num_cells + 1, config.capacity);
 
+        let shell_bodies: Vec<crate::baryon_shells::ShellBody> = match config.body_model {
+            BodyModel::Absorber => vec![],
+            BodyModel::Shells { .. } => config
+                .bodies
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let signs = config.shell_signs.get(i).copied().unwrap_or(match b.class {
+                        GpuClass::Neutron => crate::baryon_shells::NEUTRON_STATES[0],
+                        _ => crate::baryon_shells::PROTON_STATES[0],
+                    });
+                    let orient = glam::DQuat::from_rotation_arc(glam::DVec3::Z, b.orient.spin_axis());
+                    crate::baryon_shells::ShellBody::new(b.center, orient, 1.0, signs)
+                })
+                .collect(),
+        };
+        let shells_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(32, wgpu::BufferUsages::empty());
+
         let inject_emit_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_inject_emit.wgsl"));
         let move_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_move.wgsl"));
         let gather_kernel = load(ctx, false, include_str!("../../../shaders/dsmc_gather.wgsl"));
@@ -453,6 +523,8 @@ impl DsmcEngine {
             params_buf,
             gather_params_buf,
             sorter,
+            shell_bodies,
+            shells_buf,
             inject_emit_kernel,
             move_kernel,
             gather_kernel,
@@ -539,8 +611,42 @@ impl DsmcEngine {
             stacking: c.rough.stacking as u32,
             stack_max_level: c.rough.stack_max_level,
             unstack_edge: c.rough.unstack_edge as f32,
+            body_model: match c.body_model {
+                BodyModel::Absorber => 0,
+                BodyModel::Shells { .. } => 1,
+            },
+            tau_body: match c.body_model {
+                BodyModel::Absorber => 0.0,
+                BodyModel::Shells { tau_body } => tau_body as f32,
+            },
+            _pad13a: 0,
+            _pad13b: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
+        self.upload_shells(ctx);
+    }
+
+    /// Doc §14: uploads every shell body's current level frames (world
+    /// space) to the move kernel.
+    fn upload_shells(&self, ctx: &GpuContext) {
+        if self.shell_bodies.is_empty() {
+            return;
+        }
+        let mut data = vec![[0.0f32; 4]; 32];
+        for (b, body) in self.shell_bodies.iter().enumerate() {
+            for (k, f) in body.frames().iter().enumerate() {
+                data[b * 8 + 2 * k] = [f.origin.x as f32, f.origin.y as f32, f.origin.z as f32, f.radius as f32];
+                data[b * 8 + 2 * k + 1] = [f.omega.x as f32, f.omega.y as f32, f.omega.z as f32, 0.0];
+            }
+        }
+        ctx.write_buffer(&self.shells_buf, &data);
+    }
+
+    fn advance_shells(&mut self) {
+        let dt = self.config.dt;
+        for body in &mut self.shell_bodies {
+            body.advance(dt);
+        }
     }
 
     /// Injects `n_ambient` ambient photons and `emit_counts[i]` emitted
@@ -595,7 +701,7 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf],
             Some(&self.params_buf),
             grid,
         );
@@ -603,6 +709,7 @@ impl DsmcEngine {
         ctx.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll failed");
         self.readback_tallies(ctx, totals, self.n_used);
         self.step += 1;
+        self.advance_shells();
     }
 
     /// Full move -> sort -> gather -> collide step (G1, and the future
@@ -617,7 +724,7 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf],
             Some(&self.params_buf),
             grid_n,
         );
@@ -678,6 +785,7 @@ impl DsmcEngine {
 
         self.readback_tallies(ctx, totals, n);
         self.step += 1;
+        self.advance_shells();
     }
 
     fn readback_tallies(&mut self, ctx: &GpuContext, totals: &mut Totals, sample_count: u32) {
@@ -802,9 +910,12 @@ impl DsmcEngine {
 
         let mut counts = Vec::with_capacity(self.config.bodies.len());
         for (i, _b) in self.config.bodies.iter().enumerate() {
-            let rate = match self.config.emission_mode {
-                EmissionMode::Forced => self.forced_emission_rate_per_step(),
-                EmissionMode::Pump => self.pump_rate_ema.get(i).copied().unwrap_or(0.0),
+            let rate = match (self.config.body_model, self.config.emission_mode) {
+                // Doc §14: shell bodies emit nothing; their "emission" is
+                // scattered ambient.
+                (BodyModel::Shells { .. }, _) => 0.0,
+                (_, EmissionMode::Forced) => self.forced_emission_rate_per_step(),
+                (_, EmissionMode::Pump) => self.pump_rate_ema.get(i).copied().unwrap_or(0.0),
             };
             self.emit_remainder[i] += rate;
             let n = self.emit_remainder[i].floor().max(0.0) as u32;

@@ -7,7 +7,8 @@ use bytemuck::{Pod, Zeroable};
 /// `a` = pos.xyz, bitcast(id) as f32 in `.w`.
 /// `b` = dir.xyz (unit), scalar spin in `.w`. Under `RoughSphere` the scalar
 ///       is the helicity (w.dir)*R/spin_edge0, which is +-1 at birth.
-/// `c` = [flags, bounces, birth_step, stiffness level k] (u32 x4).
+/// `c` = [flags, bounces, passage state (doc §14 shells; 0 otherwise),
+///       stiffness/stack level k] (u32 x4).
 /// `d` = spin vector w.xyz (edge speed |w|*R_k in c, with R_k = 2^k), and
 ///       speed |v| in c in `.w` (1.0 except under `RoughSphere`+`Free`).
 /// `e`, `f`, `g` = spin vectors of inner stacked levels 0, 1, 2 (doc §13.7;
@@ -260,6 +261,13 @@ pub struct GpuParams {
     pub stacking: u32,
     pub stack_max_level: u32,
     pub unstack_edge: f32,
+
+    /// Doc §14: 0 = Absorber bodies (legacy), 1 = permeable Shells.
+    pub body_model: u32,
+    /// Shells: body-grain contact rate per unit relative path length.
+    pub tau_body: f32,
+    pub _pad13a: u32,
+    pub _pad13b: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -398,7 +406,26 @@ pub const TALLY_STACK_CAPPED: usize = 234;
 /// Escapes by outer level k (0..3), all kinds.
 pub const TALLY_ESC_LEVEL: usize = 235;
 
-pub const TALLY_LEN: usize = 240;
+// --- Doc §14: permeable shell bodies (per body, 4 bodies max) ---
+pub const TALLY_SH_ENTRIES: usize = 240;
+/// Passages that ended after >= 1 body contact (the body's "emission").
+pub const TALLY_SH_EXITS: usize = 244;
+/// Passages entering above +60 deg and leaving below -60 deg (or vice versa).
+pub const TALLY_SH_THROUGH: usize = 248;
+pub const TALLY_SH_CONTACTS: usize = 252;
+/// Passages with no contact (straight through, untouched).
+pub const TALLY_SH_CLEAN: usize = 256;
+/// Contacted exits by body x |latitude| band (0 polar, 1 mid, 2 equatorial).
+pub const TALLY_SH_EXIT_BAND: usize = 260;
+pub const TALLY_SH_EXIT_BAND_HEL: usize = 272;
+/// Momentum delivered to the body [body*3 + axis] (fixed-point).
+pub const TALLY_SH_DP: usize = 284;
+/// Torque from delivered linear momentum, (x - center) x dp (fixed-point).
+pub const TALLY_SH_TORQUE: usize = 296;
+/// Linear energy given to photons by the driven body (fixed-point).
+pub const TALLY_SH_WORK: usize = 308;
+
+pub const TALLY_LEN: usize = 312;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

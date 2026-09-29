@@ -121,6 +121,18 @@ pub enum StiffnessShed {
     Transfer,
 }
 
+/// Doc §14: what a body is. `Absorber` is the legacy absorb/re-emit sphere
+/// (pump or forced emission from a fixed exit profile). `Shells` is the
+/// mechanical baryon: levels 9-12 as nested permeable shells moving with the
+/// Spin-mode kinematics (`crate::baryon_shells`). Photons pass through and
+/// meet body grains at rate `tau_body * |v - V(x)|`. There is no absorption
+/// and no emission; all charge is scattered ambient.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BodyModel {
+    Absorber,
+    Shells { tau_body: f64 },
+}
+
 /// Nucleon seating in a stack (recycling.rs `StackOrient`, duplicated here so
 /// the GPU module has no dependency on the CPU Phase-1 module).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -255,6 +267,11 @@ pub struct DsmcConfig {
     /// Doc §13: contact law and D7 speed mode, used only when
     /// `exchange_rule == RoughSphere`.
     pub rough: RoughParams,
+    /// Doc §14 body model. Shells requires `ExchangeRule::RoughSphere`.
+    pub body_model: BodyModel,
+    /// Shells: per-body level signs (a, x, y, z). An empty vector uses each
+    /// class's first listed state (`baryon_shells::{PROTON,NEUTRON}_STATES[0]`).
+    pub shell_signs: Vec<[f64; 4]>,
 }
 
 impl DsmcConfig {

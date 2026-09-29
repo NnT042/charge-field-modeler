@@ -51,6 +51,7 @@ struct Params {
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
+    body_model: u32, tau_body: f32, _pad13a: u32, _pad13b: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;
@@ -75,9 +76,6 @@ const TALLY_PIN_DEFICIT_COUNT_IDX: u32 = 219u;
 const TALLY_PIN_DEFICIT_SUM_IDX: u32 = 220u;
 const TALLY_EDGE_OVER_C_IDX: u32 = 221u;
 const TALLY_TWIST_TO_NORMAL_IDX: u32 = 228u;
-const TALLY_STACK_EVENTS_IDX: u32 = 232u;
-const TALLY_UNSTACK_EVENTS_IDX: u32 = 233u;
-const TALLY_STACK_CAPPED_IDX: u32 = 234u;
 // The pre-rewrite kernel's fixed candidate cap -- used only to measure how
 // concentrated collisions are among the lowest-id photons per cell (see
 // TALLY_LOW_RANK64_IDX doc in gpu_types.rs), not as a limit here.
@@ -106,94 +104,6 @@ fn chi_of(flags: u32) -> f32 {
 }
 
 
-
-// Doc §13.7 stacking. Inner levels 0..2 live in photon.e/.f/.g, the outer
-// level k in .d (spin w passed separately here and written back by the caller).
-fn set_inner(p: ptr<function, GpuPhoton>, lvl: u32, w: vec3<f32>) {
-    switch lvl {
-        case 0u: { (*p).e = vec4<f32>(w, 0.0); }
-        case 1u: { (*p).f = vec4<f32>(w, 0.0); }
-        default: { (*p).g = vec4<f32>(w, 0.0); }
-    }
-}
-
-fn get_inner(p: ptr<function, GpuPhoton>, lvl: u32) -> vec3<f32> {
-    switch lvl {
-        case 0u: { return (*p).e.xyz; }
-        case 1u: { return (*p).f.xyz; }
-        default: { return (*p).g.xyz; }
-    }
-}
-
-// Mirrors rough_sphere::Stacked::restack (unit mass, I = kappa*R^2, every
-// level holds 0.5*kappa at edge c). Returns the new outer spin; updates k
-// and the inner levels in place.
-fn restack(p: ptr<function, GpuPhoton>, w_in: vec3<f32>, dw: vec3<f32>) -> vec3<f32> {
-    let kappa = params.rough_kappa;
-    var w = w_in;
-    var stacked = 0u;
-    loop {
-        let k = (*p).c[3];
-        let r = exp2(f32(k));
-        let wl = length(w);
-        if (wl * r <= 1.0 + 1e-4) {
-            break;
-        }
-        if (k >= params.stack_max_level) {
-            atomicAdd(&tallies[TALLY_STACK_CAPPED_IDX], 1);
-            break;
-        }
-        let excess = 0.5 * kappa * r * r * wl * wl - 0.5 * kappa;
-        let axis_old = w / wl;
-        set_inner(p, k, axis_old / r);
-        var axis_new = axis_old;
-        if (length(dw) > 1e-9) {
-            axis_new = normalize(dw);
-        }
-        let r_new = 2.0 * r;
-        (*p).c[3] = k + 1u;
-        w = axis_new * sqrt(2.0 * max(excess, 0.0) / (kappa * r_new * r_new));
-        stacked = stacked + 1u;
-    }
-    if (stacked > 0u) {
-        atomicAdd(&tallies[TALLY_STACK_EVENTS_IDX], i32(stacked));
-        return w;
-    }
-    loop {
-        let k = (*p).c[3];
-        if (k == 0u) {
-            break;
-        }
-        let r = exp2(f32(k));
-        if (length(w) * r >= params.unstack_edge) {
-            break;
-        }
-        let e_out = 0.5 * kappa * r * r * dot(w, w);
-        let kb = k - 1u;
-        let rb = exp2(f32(kb));
-        let wb = get_inner(p, kb);
-        set_inner(p, kb, vec3<f32>(0.0));
-        (*p).c[3] = kb;
-        let e_b = 0.5 * kappa * rb * rb * dot(wb, wb) + e_out;
-        let len = length(wb);
-        if (len > 0.0) {
-            w = wb / len * sqrt(2.0 * e_b / (kappa * rb * rb));
-        } else {
-            w = wb;
-        }
-        atomicAdd(&tallies[TALLY_UNSTACK_EVENTS_IDX], 1);
-    }
-    return w;
-}
-
-// Helicity of the axial (level 0) spin, +-1 at birth.
-fn axial_helicity(p: ptr<function, GpuPhoton>, w_outer: vec3<f32>, d: vec3<f32>) -> f32 {
-    var w0 = w_outer;
-    if ((*p).c[3] > 0u) {
-        w0 = (*p).e.xyz;
-    }
-    return dot(w0, d) / max(params.spin_edge0, 1e-6);
-}
 
 // Doc §13: one rough-sphere contact. Mirrors crate::rough_sphere::collide_full
 // (plus contact_normal) line for line; rs_gpu_matches_cpu_reference compares

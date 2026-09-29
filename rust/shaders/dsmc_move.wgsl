@@ -33,6 +33,7 @@ struct Params {
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
+    body_model: u32, tau_body: f32, _pad13a: u32, _pad13b: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -46,6 +47,7 @@ const FLAG_COLLIDED_SINCE_CROSS: u32 = 1u << 13u;
 const HIST_BINS: u32 = 36u;
 const HIST_MAX_BODIES: u32 = 4u;
 const HIST_ARRIVAL_BLOCK: u32 = HIST_MAX_BODIES * HIST_BINS;
+const HIST_EMISSION_BLOCK_MV: u32 = 0u;
 const TALLY_SCALE: f32 = 4096.0;
 // B2b item 3 (doc §8) tally offsets -- must stay in sync with gpu_types.rs.
 const TALLY_ABSORBED_MOM: u32 = 72u;
@@ -64,7 +66,22 @@ const TALLY_ESC_SPEED_SUMSQ: u32 = 224u;
 const TALLY_ESC_EDGE_SUM: u32 = 225u;
 const TALLY_ESC_EDGE_SUMSQ: u32 = 226u;
 const TALLY_ESC_EDGE_OVER_C: u32 = 227u;
+const TALLY_TWIST_TO_NORMAL_IDX: u32 = 228u;
 const TALLY_ESC_LEVEL: u32 = 235u; // [k], len 4
+// Doc §14 shells -- must stay in sync with gpu_types.rs.
+const TALLY_SH_ENTRIES: u32 = 240u;      // [body]
+const TALLY_SH_EXITS: u32 = 244u;        // [body], exits after >= 1 contact
+const TALLY_SH_THROUGH: u32 = 248u;      // [body], pole-to-pole passages
+const TALLY_SH_CONTACTS: u32 = 252u;     // [body], contact count
+const TALLY_SH_CLEAN: u32 = 256u;        // [body], passages with no contact
+const TALLY_SH_EXIT_BAND: u32 = 260u;    // [body*3 + band]
+const TALLY_SH_EXIT_BAND_HEL: u32 = 272u;// [body*3 + band], helicity sum (fixed)
+const TALLY_SH_DP: u32 = 284u;           // [body*3 + axis], momentum to body (fixed)
+const TALLY_SH_TORQUE: u32 = 296u;       // [body*3 + axis], (x - c) x dp (fixed)
+const TALLY_SH_WORK: u32 = 308u;         // [body], energy given to photons (fixed)
+// Passage state packed in c[2] (birth_step is unused): bits 0-2 = inside
+// body index + 1 (0 = outside), bits 3-8 = entry latitude bin, bits 9-31 =
+// contacts this passage.
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -72,7 +89,11 @@ const TALLY_ESC_LEVEL: u32 = 235u; // [k], len 4
 @group(0) @binding(3) var<storage, read_write> tallies: array<atomic<i32>>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> density: array<atomic<u32>>;
-@group(0) @binding(6) var<uniform> params: Params;
+// Doc §14 shells: per body 8 vec4 -- [2k] = (origin.xyz, radius),
+// [2k+1] = (omega.xyz, 0) for levels k = 0..3 (9..12), world space,
+// uploaded every step from baryon_shells::ShellBody::frames.
+@group(0) @binding(6) var<storage, read> shells: array<vec4<f32>>;
+@group(0) @binding(7) var<uniform> params: Params;
 
 fn hist_bin(lat_deg: f32) -> u32 {
     let raw = i32(floor((lat_deg + 90.0) / 5.0));
@@ -93,6 +114,114 @@ fn escape_band(abs_lat_deg: f32) -> u32 {
     return 2u;
 }
 
+
+fn shell_origin(b: u32, k: u32) -> vec3<f32> { return shells[b * 8u + 2u * k].xyz; }
+fn shell_radius(b: u32, k: u32) -> f32 { return shells[b * 8u + 2u * k].w; }
+fn shell_omega(b: u32, k: u32) -> vec3<f32> { return shells[b * 8u + 2u * k + 1u].xyz; }
+
+// Innermost shell of body b containing x, or 4 when outside the body.
+fn shell_region(b: u32, x: vec3<f32>) -> u32 {
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let d = x - shell_origin(b, k);
+        let r = shell_radius(b, k);
+        if (dot(d, d) <= r * r) {
+            return k;
+        }
+    }
+    return 4u;
+}
+
+// Matter velocity in shell k: sum_{j>=k} w_j x (x - o_j)
+// (baryon_shells::matter_velocity).
+fn shell_velocity(b: u32, k: u32, x: vec3<f32>) -> vec3<f32> {
+    var v = vec3<f32>(0.0);
+    for (var j = k; j < 4u; j = j + 1u) {
+        v = v + cross(shell_omega(b, j), x - shell_origin(b, j));
+    }
+    return v;
+}
+
+fn body_of(x: vec3<f32>) -> u32 {
+    for (var i = 0u; i < params.n_bodies; i = i + 1u) {
+        if (shell_region(i, x) < 4u) {
+            return i;
+        }
+    }
+    return 4u;
+}
+
+fn body_lat_deg(b: u32, x: vec3<f32>) -> f32 {
+    let body = bodies[b];
+    let d = x - body.center.xyz;
+    let colat = acos(clamp(dot(d, body.axis.xyz) / max(length(d), 1e-6), -1.0, 1.0));
+    return 90.0 - degrees(colat);
+}
+
+// Doc §14: one photon vs body-grain contact. Mirrors
+// rough_sphere::wall_contact line for line (infinitely massive, non-spinning
+// grain moving at gv), then the §13.7 restack. Stacking mass model: m = 1
+// when stacking, else m = R = 2^k. Returns the momentum given to the body.
+fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let r = exp2(f32((*p).c[3]));
+    let m = select(r, 1.0, params.stacking != 0u);
+    let kappa = params.rough_kappa;
+    let inertia = kappa * m * r * r;
+    var v = (*p).b.xyz * (*p).d.w;
+    var w = (*p).d.xyz;
+    let v_in = v;
+    let w_in = w;
+    let e_rot_in = 0.5 * inertia * dot(w, w);
+    let g = (v - gv) + r * cross(w, n);
+    let gn = dot(g, n);
+    if (gn <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let g_t = g - gn * n;
+    let j_n = -m * 2.0 * gn * n; // e = 1
+    let k_t = (1.0 / m) * (1.0 + 1.0 / kappa);
+    let j_t = -(1.0 + params.rough_beta) * g_t / k_t;
+    let j = j_n + j_t;
+    v = v + j / m;
+    let nj = cross(n, j);
+    var kick = r * nj / inertia;
+    w = w + kick;
+    let omega_n = dot(w, n);
+    let e_before = 0.5 * inertia * dot(w, w);
+    let dtw = -(1.0 + params.rough_beta_twist) * omega_n * n;
+    w = w + dtw;
+    kick = kick + dtw;
+    let lost = e_before - 0.5 * inertia * dot(w, w);
+    if (params.twist_loss_to_normal != 0u && lost > 0.0) {
+        let w_n = dot(v - gv, n);
+        let jx = m * (-w_n - sqrt(w_n * w_n + 2.0 * lost / m));
+        v = v + jx * n / m;
+        atomicAdd(&tallies[TALLY_TWIST_TO_NORMAL_IDX], i32(lost * TALLY_SCALE));
+    }
+    if (params.speed_mode == 1u) {
+        v = normalize(v);
+        let e_rot = 0.5 * inertia * dot(w, w);
+        if (e_rot > 1e-12) {
+            let sc = sqrt(e_rot_in / e_rot);
+            kick = (sc - 1.0) * w_in + sc * kick;
+            w = w * sc;
+        } else {
+            let fl = length(nj);
+            if (fl > 1e-9 && e_rot_in > 1e-12) {
+                w = nj / fl * sqrt(2.0 * e_rot_in / inertia);
+                kick = w - w_in;
+            }
+        }
+    }
+    let s = length(v);
+    let d = v / max(s, 1e-12);
+    if (params.stacking != 0u) {
+        w = restack(p, w, kick);
+    }
+    (*p).b = vec4<f32>(d, axial_helicity(p, w, d));
+    (*p).d = vec4<f32>(w, s);
+    return -(v - v_in) * m;
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
     let linear_wg = wid.x + wid.y * nwg.x;
@@ -107,6 +236,53 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         return;
     }
 
+    // Doc §14 shells: body-grain contact at the start of the step, before
+    // the photon moves (so this step's path uses the post-contact velocity).
+    let shells_mode = params.body_model == 1u;
+    if (shells_mode) {
+        let x0 = ph.a.xyz;
+        let bi = body_of(x0);
+        if (bi < 4u) {
+            let k = shell_region(bi, x0);
+            let gv = shell_velocity(bi, k, x0);
+            let u = ph.b.xyz * ph.d.w - gv;
+            let ulen = length(u);
+            let pid = bitcast<u32>(ph.a.w);
+            let key = hash_u32(pid ^ hash_u32(params.step ^ 0xB0D1E5u));
+            let p_hit = 1.0 - exp(-params.tau_body * ulen * params.dt);
+            if (ulen > 1e-6 && rand01(params.seed_hi, params.seed_lo, key, 0u) < p_hit) {
+                var rho = rand01(params.seed_hi, params.seed_lo, key, 1u);
+                if (params.glancing_bias != 0u) {
+                    let om = 1.0 - rho;
+                    rho = 1.0 - om * om * om;
+                }
+                let psi = rand01(params.seed_hi, params.seed_lo, key, 2u) * TAU;
+                let uh = u / ulen;
+                let helper = perp_helper(uh);
+                let t = normalize(cross(uh, helper));
+                let bp = cross(uh, t);
+                let e_perp = t * cos(psi) + bp * sin(psi);
+                let n = normalize(uh * sqrt(max(1.0 - rho, 0.0)) + e_perp * sqrt(rho));
+                let v_before = ph.b.xyz * ph.d.w;
+                let e_before = 0.5 * dot(v_before, v_before);
+                let dp = wall_contact(&ph, gv, n);
+                if (dot(dp, dp) > 0.0) {
+                    let bc = bodies[bi].center.xyz;
+                    let tq = cross(x0 - bc, dp);
+                    for (var a = 0u; a < 3u; a = a + 1u) {
+                        atomicAdd(&tallies[TALLY_SH_DP + bi * 3u + a], i32(dp[a] * TALLY_SCALE));
+                        atomicAdd(&tallies[TALLY_SH_TORQUE + bi * 3u + a], i32(tq[a] * TALLY_SCALE));
+                    }
+                    let v_after = ph.b.xyz * ph.d.w;
+                    atomicAdd(&tallies[TALLY_SH_WORK + bi], i32((0.5 * dot(v_after, v_after) - e_before) * TALLY_SCALE));
+                    atomicAdd(&tallies[TALLY_SH_CONTACTS + bi], 1);
+                    // Count the contact against this passage (bits 9-31).
+                    ph.c[2] = ph.c[2] + (1u << 9u);
+                }
+            }
+        }
+    }
+
     var pos = ph.a.xyz;
     let dir = ph.b.xyz;
     let id = bitcast<u32>(ph.a.w);
@@ -119,7 +295,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     var remaining = params.dt * speed;
     var hit_body: i32 = -1;
     var hit_t = remaining;
-    for (var i = 0u; i < params.n_bodies; i = i + 1u) {
+    // Absorber bodies only; shells are transparent regions.
+    let n_absorbers = select(params.n_bodies, 0u, shells_mode);
+    for (var i = 0u; i < n_absorbers; i = i + 1u) {
         let b = bodies[i];
         let t = ray_sphere_hit(pos, dir, b.center.xyz, b.center.w, remaining);
         if (t >= 0.0 && t < hit_t) {
@@ -217,6 +395,42 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
     } else {
         pos = pos + dir * remaining;
+    }
+
+    // Doc §14 passage bookkeeping after the move.
+    if (shells_mode && !dead) {
+        let prev_inside = ph.c[2] & 7u;
+        let now_body = body_of(pos);
+        let now_inside = select(0u, now_body + 1u, now_body < 4u);
+        if (prev_inside != now_inside) {
+            if (prev_inside != 0u) {
+                let b = prev_inside - 1u;
+                let contacts = ph.c[2] >> 9u;
+                if (contacts == 0u) {
+                    atomicAdd(&tallies[TALLY_SH_CLEAN + b], 1);
+                } else {
+                    atomicAdd(&tallies[TALLY_SH_EXITS + b], 1);
+                    let lat_out = body_lat_deg(b, pos);
+                    let band = escape_band(abs(lat_out));
+                    atomicAdd(&tallies[TALLY_SH_EXIT_BAND + b * 3u + band], 1);
+                    atomicAdd(&tallies[TALLY_SH_EXIT_BAND_HEL + b * 3u + band], i32(ph.b.w * TALLY_SCALE));
+                    atomicAdd(&hist[HIST_EMISSION_BLOCK_MV + b * HIST_BINS + hist_bin(lat_out)], 1u);
+                    let lat_in = f32((ph.c[2] >> 3u) & 63u) * 5.0 - 87.5;
+                    if ((lat_in > 60.0 && lat_out < -60.0) || (lat_in < -60.0 && lat_out > 60.0)) {
+                        atomicAdd(&tallies[TALLY_SH_THROUGH + b], 1);
+                    }
+                }
+            }
+            var packed = 0u;
+            if (now_inside != 0u) {
+                let b = now_inside - 1u;
+                let lat_in = body_lat_deg(b, pos);
+                atomicAdd(&tallies[TALLY_SH_ENTRIES + b], 1);
+                atomicAdd(&hist[HIST_ARRIVAL_BLOCK + b * HIST_BINS + hist_bin(lat_in)], 1u);
+                packed = now_inside | (hist_bin(lat_in) << 3u);
+            }
+            ph.c[2] = packed;
+        }
     }
 
     if (!dead) {

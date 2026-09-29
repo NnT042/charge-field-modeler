@@ -84,6 +84,8 @@ fn box_config(half_extent: f64, h: f64, dt: f64, sigma: f64, capacity: u32, seed
         sigma_size_scaling: false,
         debug_force_equal_mass_exchange: false,
         rough,
+        body_model: crate::gpu::dsmc::BodyModel::Absorber,
+        shell_signs: vec![],
     }
 }
 
