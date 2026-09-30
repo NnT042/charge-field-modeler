@@ -89,11 +89,27 @@ pub struct ShellBody {
     pub signs: [f64; 4],
     /// Current rotation angle per level.
     pub angles: [f64; 4],
+    /// Doc §15.4: how many electron-tier levels (8, 7, 6, 5 in that order)
+    /// are resolved as motion instead of being folded into the base ball.
+    /// 0 = the §15 ball (levels 1-8, radius 1/8); 1 = levels 1-7 (1/16)
+    /// carried by level 8; 2 = levels 1-6 (1/32); 3 = levels 1-5 (1/64);
+    /// 4 = levels 1-4 (1/64) spun in place by the level-5 precession.
+    /// Only `ball()` uses it; the shells model ignores it.
+    pub depth: usize,
+    /// Rotation sense of levels 8, 7, 6, 5 (Spin-mode presets: all +1).
+    pub inner_signs: [f64; 4],
+    /// Current rotation angle of levels 8, 7, 6, 5.
+    pub inner_angles: [f64; 4],
 }
 
 impl ShellBody {
     pub fn new(center: DVec3, orient: DQuat, radius: f64, signs: [f64; 4]) -> Self {
-        ShellBody { center, orient, radius, signs, angles: [0.0; 4] }
+        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4] }
+    }
+
+    /// Angular rate of electron-tier level `8 - m` at edge speed c.
+    pub fn inner_rate(&self, m: usize) -> f64 {
+        self.inner_signs[m] / (inner_geom(m).2 * self.radius)
     }
 
     /// Angular rate of level i at edge speed c (spin_stack `advance` with
@@ -105,6 +121,9 @@ impl ShellBody {
     pub fn advance(&mut self, dt: f64) {
         for i in 0..4 {
             self.angles[i] += self.rate(i) * dt;
+        }
+        for m in 0..self.depth {
+            self.inner_angles[m] += self.inner_rate(m) * dt;
         }
     }
 
@@ -166,11 +185,74 @@ pub struct BallState {
     pub omega: DVec3,
 }
 
+/// (local axis, local offset, orbit radius) of electron-tier level 8 - m, in
+/// body units (level-12 amplitude = 1), from Spin mode's own `SpinLevel`
+/// rules: level 8 = Z orbit, 7 = Y, 6 = X, 5 = axial precession about Z.
+fn inner_geom(m: usize) -> (DVec3, DVec3, f64) {
+    let l = crate::spin_stack::SpinLevel::new(8 - m as u8);
+    let scale = level_amplitude(12);
+    let orbit = l.orbit_radius() / scale;
+    let offset = if l.is_orbital() { l.spin_type.orbital_start() * orbit } else { DVec3::ZERO };
+    (l.rotation_axis(), offset, orbit)
+}
+
+/// Base-ball radius at resolution `depth` (body units): the amplitude of the
+/// outermost unresolved level, 8 - depth.
+pub fn ball_radius_at_depth(depth: usize) -> f64 {
+    level_amplitude(8 - depth as u8) / level_amplitude(12)
+}
+
 impl ShellBody {
+    /// The instantaneous base ball at `self.depth`. The resolved chain is
+    /// levels (9 - depth)..=12, innermost first; each maps x -> R_j(x + s_j)
+    /// about a fixed local axis (spin_stack `compose`). The ball centre is the
+    /// chain applied to the origin; every chain level carries the ball, so
+    /// V = sum_j w_j x (c - o_j) and Omega = sum_j w_j.
     pub fn ball(&self) -> BallState {
-        let f = self.frames();
-        let center = f[0].origin;
-        BallState { center, radius: f[0].radius, velocity: matter_velocity(&f, 0, center), omega: (0..4).map(|j| f[j].omega).sum() }
+        // (rotation, offset, axis, rate) per chain level, innermost first.
+        let mut chain: Vec<(DQuat, DVec3, DVec3, f64)> = Vec::with_capacity(8);
+        for m in (0..self.depth).rev() {
+            let (axis, offset, _) = inner_geom(m);
+            chain.push((DQuat::from_axis_angle(axis, self.inner_angles[m]), offset, axis, self.inner_rate(m)));
+        }
+        for i in 0..4 {
+            chain.push((self.rot(i), local_offset(i), local_axis(i), self.rate(i)));
+        }
+        let n = chain.len();
+        let mut center_b = DVec3::ZERO;
+        for (r, s, _, _) in &chain {
+            center_b = *r * (center_b + *s);
+        }
+        let center = self.center + self.orient * (center_b * self.radius);
+        let mut velocity = DVec3::ZERO;
+        let mut omega = DVec3::ZERO;
+        for j in 0..n {
+            // T_{>j}: levels above j, as (rotation, translation).
+            let (mut r, mut t) = (DQuat::IDENTITY, DVec3::ZERO);
+            for (rk, sk, _, _) in &chain[j + 1..] {
+                t = *rk * (t + *sk);
+                r = *rk * r;
+            }
+            let o_j = self.center + self.orient * (t * self.radius);
+            let w_j = self.orient * (r * chain[j].2) * chain[j].3;
+            velocity += w_j.cross(center - o_j);
+            omega += w_j;
+        }
+        BallState { center, radius: ball_radius_at_depth(self.depth) * self.radius, velocity, omega }
+    }
+
+    /// World position of a point `p` (body units) fixed in the base ball's
+    /// frame at `self.depth` (for kinematics tests).
+    pub fn carry_ball(&self, p: DVec3) -> DVec3 {
+        let mut x = p;
+        for m in (0..self.depth).rev() {
+            let (axis, offset, _) = inner_geom(m);
+            x = DQuat::from_axis_angle(axis, self.inner_angles[m]) * (x + offset);
+        }
+        for i in 0..4 {
+            x = self.rot(i) * (x + local_offset(i));
+        }
+        self.center + self.orient * (x * self.radius)
     }
 }
 
@@ -288,6 +370,106 @@ mod tests {
         }
         println!("ball kinematics worst rel err {worst:.2e}");
         assert!(worst < 1e-6);
+    }
+
+    /// Doc §15.4: the deeper balls. Depth 0 reproduces the §15 ball exactly;
+    /// every depth's centre velocity and surface velocity match finite
+    /// differences of the composed motion; each depth's ball stays inside the
+    /// previous depth's ball; and Spin mode's own level rules agree with this
+    /// module for levels 9-12.
+    #[test]
+    fn deeper_ball_kinematics() {
+        let mut worst: f64 = 0.0;
+        for signs in PROTON_STATES.iter().chain(NEUTRON_STATES.iter()) {
+            for depth in 0..=4 {
+                let mut body = ShellBody::new(DVec3::new(0.2, 0.1, -0.3), DQuat::from_rotation_arc(DVec3::Z, DVec3::new(0.3, 1.0, 0.2).normalize()), 1.3, *signs);
+                body.depth = depth;
+                for step in 0..25 {
+                    body.angles = [0.3 * step as f64, 0.7 + 0.11 * step as f64, 0.2 * step as f64, 1.0 - 0.05 * step as f64];
+                    body.inner_angles = [0.9 * step as f64, 0.4 + 1.3 * step as f64, 2.0 - 0.7 * step as f64, 0.17 * step as f64];
+                    let b = body.ball();
+                    if depth == 0 {
+                        let f = body.frames();
+                        assert!((b.center - f[0].origin).length() < 1e-12 && (b.radius - f[0].radius).abs() < 1e-12);
+                        let v0 = matter_velocity(&f, 0, f[0].origin);
+                        assert!((b.velocity - v0).length() < 1e-12);
+                    } else {
+                        let mut up = body.clone();
+                        up.depth = depth - 1;
+                        let bp = up.ball();
+                        assert!((b.center - bp.center).length() + b.radius <= bp.radius * (1.0 + 1e-9) + 1e-12, "depth {depth} ball leaves its parent");
+                    }
+                    let h = 1e-6;
+                    let (mut plus, mut minus) = (body.clone(), body.clone());
+                    plus.advance(h);
+                    minus.advance(-h);
+                    let fd_c = (plus.ball().center - minus.ball().center) / (2.0 * h);
+                    worst = worst.max((fd_c - b.velocity).length() / fd_c.length().max(1e-9));
+                    let p = DVec3::new(0.08, -0.05, 0.07).normalize() * ball_radius_at_depth(depth);
+                    let x = body.carry_ball(p);
+                    assert!(((x - b.center).length() - b.radius).abs() < 1e-9);
+                    let fd_x = (plus.carry_ball(p) - minus.carry_ball(p)) / (2.0 * h);
+                    worst = worst.max((fd_x - (b.velocity + b.omega.cross(x - b.center))).length() / fd_x.length().max(1e-9));
+                }
+            }
+        }
+        for i in 0..4 {
+            let l = crate::spin_stack::SpinLevel::new(SHELL_LEVELS[i]);
+            assert!((l.rotation_axis() - local_axis(i)).length() < 1e-12);
+            assert!((l.orbit_radius() / level_amplitude(12) - shell_orbit_radius(i)).abs() < 1e-12);
+        }
+        println!("deeper ball kinematics worst rel err {worst:.2e}");
+        assert!(worst < 1e-6);
+    }
+
+    /// Doc §15.4 report: per depth, the ball's centre speed (mean / max), its
+    /// fastest surface point, the fraction of time it blocks the pole axis,
+    /// its centre-latitude spread, and the keyframe error: how far the true
+    /// centre strays from the straight line between two keyframes dt/8 apart
+    /// (dt = 0.05), relative to the ball radius.
+    #[test]
+    #[ignore]
+    fn report_deeper_ball_map() {
+        for (name, signs) in [("proton +a+x+y+z", PROTON_STATES[0]), ("neutron -a-x-y+z", NEUTRON_STATES[0])] {
+            for depth in 0..=4 {
+                let mut body = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, signs);
+                body.depth = depth;
+                let (n, dt) = (400_000, 0.00731);
+                let h = 0.05 / 8.0;
+                let (mut vs, mut vmax, mut smax, mut blocked, mut kerr) = (0.0, 0.0f64, 0.0f64, 0u64, 0.0f64);
+                let mut lat_hist = [0u64; 9];
+                for _ in 0..n {
+                    body.advance(dt);
+                    let b = body.ball();
+                    let v = b.velocity.length();
+                    vs += v;
+                    vmax = vmax.max(v);
+                    smax = smax.max(v + b.omega.length() * b.radius);
+                    let c = b.center;
+                    if (c.x * c.x + c.y * c.y).sqrt() < b.radius {
+                        blocked += 1;
+                    }
+                    let lat = (c.z / c.length().max(1e-12)).clamp(-1.0, 1.0).asin().to_degrees().abs();
+                    lat_hist[((lat / 10.0) as usize).min(8)] += 1;
+                    let mut mid = body.clone();
+                    mid.advance(h / 2.0);
+                    let mut end = body.clone();
+                    end.advance(h);
+                    let lin = (b.center + end.ball().center) / 2.0;
+                    kerr = kerr.max((mid.ball().center - lin).length() / b.radius);
+                }
+                println!(
+                    "{name} depth {depth}: ball r {:.4} | centre speed mean {:.2} max {:.2} c | fastest surface {:.2} c | axis blocked {:.4} | keyframe err max {:.3} r | |lat| 10-deg bins {:?}",
+                    ball_radius_at_depth(depth),
+                    vs / n as f64,
+                    vmax,
+                    smax,
+                    blocked as f64 / n as f64,
+                    kerr,
+                    lat_hist.iter().map(|&x| format!("{:.2}", x as f64 / n as f64)).collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     /// Report: where the ball's centre goes (the "donut"). A long run with

@@ -786,6 +786,15 @@ fn report_c_ball_single_body() {
     let first_only = env("CFM_C_STATES", "all") == "first";
     // CFM_C_SEED: run seed (default 0xC0C0), for multi-seed confirmation.
     let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    // Doc §15.4: CFM_C_DEPTH (0-4) resolves electron-tier levels 8, 7, 6, 5
+    // as motion; CFM_C_DT sets the step (0.05); CFM_C_GMAX the NTC bound.
+    let depth: usize = env("CFM_C_DEPTH", "0").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", "0.05").parse().unwrap();
+    let g_max: f64 = env("CFM_C_GMAX", "12").parse().unwrap();
+    // Doc §15.5 density sweep: CFM_C_H = DSMC cell size (0.25; keep it well
+    // below lambda), CFM_C_CAP = photon capacity (9M).
+    let cell_h: f64 = env("CFM_C_H", "0.25").parse().unwrap();
+    let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
     let LAMBDA: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
     let (b0, t0, l0) = law(&pp);
     let rough = RoughParams {
@@ -801,10 +810,10 @@ fn report_c_ball_single_body() {
     let rough = match speed.as_str() {
         "free" => RoughParams { speed_mode: SpeedMode::Free, g_max: 8.0, ..rough },
         "pinned" => rough,
-        _ => RoughParams { speed_mode: SpeedMode::BodyFree, g_max: 12.0, ..rough },
+        _ => RoughParams { speed_mode: SpeedMode::BodyFree, g_max, ..rough },
     };
     println!(
-        "=== C: instantaneous ball, speed={speed}, photon-photon={pp}, body={body}, grain={grain}, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ==="
+        "=== C: instantaneous ball, speed={speed}, photon-photon={pp}, body={body}, grain={grain}, stacking, depth={depth}, h={cell_h}, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt={dt}, g_max={g_max}, warmup {warmup}, avg {avg} ==="
     );
     let ctx = GpuContext::new().expect("GPU");
     // CFM_C_HIST_DIR: if set, write 1-degree latitude histograms per class
@@ -829,9 +838,13 @@ fn report_c_ball_single_body() {
                 continue;
             }
             let started = Instant::now();
-            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, 9_000_000, seed);
-            config.dt = 0.05;
+            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, cap, seed);
+            config.h = cell_h;
+            config.dt = dt;
             let mut engine = DsmcEngine::new(&ctx, config);
+            for b in engine.shell_bodies.iter_mut() {
+                b.depth = depth;
+            }
             let rep = engine.run_steady(&ctx, warmup, avg, 200);
             let t = &rep.totals;
             // Local gas density vs the nominal ambient: live photons per volume
@@ -856,7 +869,7 @@ fn report_c_ball_single_body() {
                 shell_n(4.0, 5.9) / n_a,
                 engine.n_live,
                 t.collisions,
-                2.0 * t.collisions as f64 / (engine.n_live as f64 * avg as f64 * 0.05)
+                2.0 * t.collisions as f64 / (engine.n_live as f64 * avg as f64 * dt)
             );
             let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { "+" } else if *s < 0.0 { "-" } else { "0" }, c)).collect();
             let passages: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();

@@ -1279,6 +1279,69 @@ plus seeds 1–3 on the first state of each class):
     profile (0.21). Photon vs antiphoton exits are identical within noise.
 - Overlay figure: scratch ball_vs_trace.svg (not committed).
 
+### 15.4 Going deeper: resolving levels 8, 7, 6, 5 (2026-09-29)
+
+**Model.** `ShellBody::depth` (0–4) resolves electron-tier levels 8, 7, 6, 5 as
+motion, using Spin mode's own `SpinLevel` rules (level 8 = Z orbit, 7 = Y, 6 = X,
+5 = axial precession about Z). The base ball is the outermost *unresolved* level's
+sphere.
+
+| depth | ball | radius | centre speed, p mean/max | n mean/max | fastest surface |
+|---|---|---|---|---|---|
+| 0 | levels 1–8 (spun by 9) | 1/8 | 1.78 / 2.30c | 1.67 / 2.52c | 3.8–4.3c |
+| 1 | levels 1–7 (carried by 8) | 1/16 | 2.21 / 3.83c | 1.62 / 3.03c | 3.9–5.4c |
+| 2 | levels 1–6 | 1/32 | 2.53 / 4.73c | 1.90 / 3.21c | 4.3–6.2c |
+| 4 | levels 1–4 (spun by 5) | 1/64 | 2.72 / 4.86c | 2.19 / 4.01c | 5.5–6.1c |
+
+- **Tests:** `deeper_ball_kinematics` checks depth 0 against the §15 ball exactly,
+  checks centre and surface velocity against finite differences at every depth (4e-9),
+  and checks that every ball nests inside its parent.
+- **Reports:** `report_deeper_ball_map`; `CFM_C_DEPTH`, `CFM_C_DT` and `CFM_C_GMAX`
+  in the ball report.
+- **Keyframe interpolation error:** ≤2% of the ball radius at depths ≤2, 6% at depth
+  4, so depth 4 runs at dt = 0.025.
+- **Inner levels use +1 sign** (every Spin-mode preset).
+- **The polar axis is never blocked at any depth.**
+- **Geometric p/n difference appears with depth:** the proton ball reaches the 40–50°
+  latitude band 12–13% of the time, the neutron 5–6% (identical 2% at depth 0).
+- **Speed compounds with depth,** faster for the proton. This is the "speed out of
+  hand" risk; photons still escape at 1.000c on average at every depth.
+
+**Results** (BodyFree, first state of each class, λ = 3; depth 1/2/4 averaged over
+4800/9600/38400 steps; hits are per 2400 steps at dt 0.05, or the same physical time
+at depth 4):
+
+| depth | hits/2400 steps p / n | n/p | contacted-exit equatorial p / n | ball-hit helicity p / n | contact eq p / n | contact mean \|lat\| p / n |
+|---|---|---|---|---|---|---|
+| 0 | 44.1k / 44.2k | 1.00 | 0.547–0.557 / 0.528–0.535 | +0.14 / +0.07 | 0.740 / 0.628 | 19.5° / 24.0° |
+| 1 | 13.7k / 11.1k | **0.81** | 0.537 / 0.523 | +0.062 / +0.070 | 0.718 / 0.647 | 19.7° / 22.5° |
+| 2 | 3.9k / 3.1k | **0.81** | 0.542 / 0.534 | +0.148 / +0.155 | 0.723 / 0.660 | 18.8° / 21.4° |
+| 4 | 1.01k / 0.86k | **0.85** | 0.548 / 0.541 | +0.099 / +0.115 | 0.721 / 0.688 | 19.1° / 20.9° |
+
+- **The depth-0 magnetic (helicity) split does not survive resolution.** From depth 1
+  on, p and n helicity agree within noise (±0.006–0.011). The resolved inner levels
+  (+1 for both classes, and the fastest: rates 16–64 vs 2–8) dominate the ball's
+  surface twist, which carries the helicity. The depth-0 split came from folding the
+  level-9 precession into the ball's own spin.
+- **The contacted-exit equatorial split shrinks with depth:** 2 points at depth 0,
+  1.4 (3σ) at depth 1, then 0.7–0.8 (under 2σ). Photon-photon scattering on the way
+  out washes out most of the geometry.
+- **The proton's contact profile is depth-invariant:** eq 0.72–0.74, mean latitude
+  19–20° at every depth. That matches the old Spin-mode trace, and the user's
+  observation that the tiers are fractals of each other.
+- **The neutron's contact geometry stays more mid-latitude** (0.65–0.69 vs 0.72),
+  converging slowly toward the proton with depth.
+- **New robust p/n difference: once the inner levels move, the neutron is hit
+  15–19% less often.** At depth 0 the rates are equal. Its slower ball sweeps less
+  volume, so a neutron engages (recycles) less of the ambient field than a proton,
+  in every depth tested. A candidate mechanical piece of neutron neutrality: less
+  intake rather than a different exit profile.
+- **Pole table unchanged at every depth:** through-passage 10% / 5.8% / 1.8%. With
+  hits 30× rarer at depth 4 and the same through fractions, the "through" channel is
+  a property of the photon gas and the envelope geometry, not of the ball.
+- **Cost:** hits scale slower than the ball's cross-section (a faster ball sweeps
+  more). Depth 4 needs ~40× the run time of depth 0 for similar statistics.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
