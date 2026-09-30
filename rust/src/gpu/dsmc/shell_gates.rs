@@ -511,9 +511,9 @@ fn ball_config(boundary: Boundary, signs: [f64; 4], rough: RoughParams, sigma: f
     c
 }
 
-/// CPU mirror of the move kernel's ball phase for one photon: 8 linear
-/// sub-intervals between the uploaded keyframes, the earliest hit, and the
-/// contact. Returns (hit, final state, final position).
+/// CPU mirror of the move kernel's ball phase for one photon (multi-hit
+/// loop, push-out on touching, 8 linear sub-intervals between keyframes).
+/// Returns (number of contacts, final state, final position).
 #[allow(clippy::too_many_arguments)]
 fn cpu_ball_step(
     p: &GpuPhoton,
@@ -524,41 +524,69 @@ fn cpu_ball_step(
     rule: &StackRule,
     grain_edge: f64,
     stacking: bool,
-) -> (bool, Stacked, DVec3) {
+) -> (u32, Stacked, DVec3) {
     use crate::rough_sphere::{moving_sphere_hit, wall_contact_general};
     let k = |s: usize, j: usize| {
         let q = keys[s * 3 + j];
         (DVec3::new(q[0] as f64, q[1] as f64, q[2] as f64), q[3] as f64)
     };
-    let st0 = to_stacked(p);
-    let x0 = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
-    let v0 = st0.v;
+    let mut st = to_stacked(p);
+    let mut x = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
     let h = dt / 8.0;
-    for si in 0..8 {
-        let t0 = si as f64 * h;
-        let (c0, rb) = k(si, 0);
-        let (c1, _) = k(si + 1, 0);
-        let vc = (c1 - c0) / h;
-        if let Some(t) = moving_sphere_hit(x0 + v0 * t0, v0, c0, vc, rb, h) {
-            let f = t / h;
-            let th = t0 + t;
-            let xh = x0 + v0 * th;
-            let ch = c0.lerp(c1, f);
-            let om = k(si, 1).0.lerp(k(si + 1, 1).0, f);
-            let vcen = k(si, 2).0.lerp(k(si + 1, 2).0, f);
-            let n = (ch - xh).normalize();
-            let tw = if om.length() > 1e-9 { om.normalize() * grain_edge } else { DVec3::ZERO };
-            let mut st = st0;
-            let mut b = st.outer_ball();
-            let out = wall_contact_general(&mut b, vcen, om * rb, tw, n, law, pinned);
-            st.set_outer(&b);
-            if out.touched && stacking {
+    let mut tc = 0.0;
+    let mut hits = 0;
+    for _ in 0..6 {
+        let v = st.v;
+        let si0 = ((tc / h) as usize).min(7);
+        let f0 = (tc - si0 as f64 * h) / h;
+        let (ca, rb) = k(si0, 0);
+        let (cb, _) = k(si0 + 1, 0);
+        let c_now = ca.lerp(cb, f0);
+        let vc_now = (cb - ca) / h;
+        let d = x - c_now;
+        let mut best: Option<(f64, usize, bool)> = None;
+        if d.length_squared() <= rb * rb * (1.0 + 2e-4) && d.dot(v - vc_now) < 0.0 {
+            best = Some((tc, si0, true));
+        } else {
+            for si in si0..8 {
+                let ts = (si as f64 * h).max(tc);
+                let (c0a, _) = k(si, 0);
+                let (c1a, _) = k(si + 1, 0);
+                let c0 = c0a.lerp(c1a, (ts - si as f64 * h) / h);
+                let vc = (c1a - c0a) / h;
+                if let Some(t) = moving_sphere_hit(x + v * (ts - tc), v, c0, vc, rb, (si + 1) as f64 * h - ts) {
+                    best = Some((ts + t, si, false));
+                    break;
+                }
+            }
+        }
+        let Some((th, si, touching)) = best else { break };
+        let f = (th - si as f64 * h) / h;
+        let mut xh = x + v * (th - tc);
+        let ch = k(si, 0).0.lerp(k(si + 1, 0).0, f);
+        if touching {
+            let dd = xh - ch;
+            if dd.length_squared() > 1e-20 {
+                xh = ch + dd.normalize() * rb;
+            }
+        }
+        let om = k(si, 1).0.lerp(k(si + 1, 1).0, f);
+        let vcen = k(si, 2).0.lerp(k(si + 1, 2).0, f);
+        let n = (ch - xh).normalize();
+        let tw = if om.length() > 1e-9 { om.normalize() * grain_edge } else { DVec3::ZERO };
+        let mut b = st.outer_ball();
+        let out = wall_contact_general(&mut b, vcen, om * rb, tw, n, law, pinned);
+        st.set_outer(&b);
+        if out.touched {
+            hits += 1;
+            if stacking {
                 st.restack(out.kick, rule);
             }
-            return (true, st, xh + st.v * (dt - th));
         }
+        x = xh;
+        tc = th;
     }
-    (false, st0, x0 + v0 * dt)
+    (hits, st, x + st.v * (dt - tc))
 }
 
 /// GPU ball hits == CPU mirror, per photon (position after the step,
@@ -598,14 +626,16 @@ fn ball_gpu_matches_cpu() {
         let law = ContactLaw { e: 1.0, beta: bb, beta_twist: bt, twist_loss_to_normal: bl, kappa: rough.kappa };
         let rule = StackRule { max_level: rough.stack_max_level, stack_tol: 1e-4, unstack_edge: rough.unstack_edge, kappa: rough.kappa };
         let pinned = rough.speed_mode == SpeedMode::PinnedC;
-        let (mut hits, mut mism_hit, mut max_err, mut max_wrong) = (0, 0, 0.0f64, 0.0f64);
+        let (mut hits, mut mism_hit, mut max_err, mut max_wrong, mut multi) = (0, 0, 0.0f64, 0.0f64, 0usize);
         let mut keys_ns = keys[0..27].to_vec();
         for s in 0..9 {
             keys_ns[s * 3 + 1] = [0.0; 4];
         }
         for p in &photons {
             let q = after.iter().find(|q| q.id() == p.id()).expect("lost");
-            let (hit, st, x1) = cpu_ball_step(p, &keys[0..27], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking);
+            let (nhit, st, x1) = cpu_ball_step(p, &keys[0..27], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking);
+            let hit = nhit > 0;
+            multi += (nhit > 1) as usize;
             // Hit = the photon's velocity or spin changed. (The passage
             // counter in c[2] is reset by the envelope-entry bookkeeping for
             // these synthetic photons, which start inside the envelope.)
@@ -633,7 +663,7 @@ fn ball_gpu_matches_cpu() {
             max_wrong = max_wrong.max((st_w.v - g.v).length());
         }
         println!(
-            "ball gpu-vs-cpu [{name}]: hits {hits}/{}, hit/miss disagreements {mism_hit}, max err {max_err:.2e}, no-ball-spin control {max_wrong:.2e}, overlaps {}",
+            "ball gpu-vs-cpu [{name}]: hits {hits}/{} (multi-hit {multi}), hit/miss disagreements {mism_hit}, max err {max_err:.2e}, no-ball-spin control {max_wrong:.2e}, push-outs {}",
             photons.len(),
             t.ball_overlap
         );
@@ -641,7 +671,21 @@ fn ball_gpu_matches_cpu() {
         assert!(mism_hit <= photons.len() / 1000, "{name}: GPU and CPU disagree on which photons hit ({mism_hit})");
         assert!(max_err < 2e-3, "{name}: GPU ball contact disagrees with CPU: {max_err}");
         assert!(max_wrong > 0.05, "{name}: control did not fail");
-        assert!(t.ball_overlap as usize * 1000 <= hits.max(1), "{name}: too many overlaps");
+        // Invariant: no photon ends the step inside the ball.
+        let (ce, re) = (keys[8 * 3], keys[8 * 3][3] as f64);
+        let ce = DVec3::new(ce[0] as f64, ce[1] as f64, ce[2] as f64);
+        let inside = after
+            .iter()
+            .filter(|q| (DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64) - ce).length() < re * (1.0 - 1e-3))
+            .count();
+        println!("   photons inside the ball at step end: {inside}");
+        // Free speed: the invariant must hold. PinnedC: a photon held at c
+        // cannot separate from a ball surface closing faster than c (the
+        // Spin-mode ball moves at ~1.8c), so photons get overrun. That is an
+        // open physics decision (doc §15.1), reported here, not asserted.
+        if rough.speed_mode == SpeedMode::Free {
+            assert!(inside * 1000 <= photons.len(), "{name}: {inside} photons ended inside the ball");
+        }
     }
 }
 
@@ -681,10 +725,16 @@ fn ball_static_conserves_energy() {
         println!("ball [{name}]: hits {} dE/E {de:+.2e} momentum balance {balance:.1e} overlaps {}", t.sh_contacts[0], t.ball_overlap);
         assert!(t.sh_contacts[0] > 10_000);
         assert!(balance < 1e-2);
-        // A ball moving faster than c can re-catch a photon it just hit
-        // before the next step's check; tolerated below 0.1% of hits and
-        // reported in every run.
-        assert!(t.ball_overlap * 1000 <= t.sh_contacts[0], "{name}: overlaps {} vs hits {}", t.ball_overlap, t.sh_contacts[0]);
+        // Invariant: no photon ends inside the ball (push-outs are normal
+        // contacts, reported but not limited).
+        let bs = engine.shell_bodies[0].ball();
+        let inside = engine
+            .read_photons(&ctx)
+            .iter()
+            .filter(|q| q.is_alive() && (DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64) - bs.center).length() < bs.radius * (1.0 - 1e-3))
+            .count();
+        println!("   push-outs {}, photons inside the ball at the end: {inside}", t.ball_overlap);
+        assert!(inside * 10_000 <= n as usize, "{name}: {inside} photons inside the ball");
         if conserving {
             assert!(de.abs() < 1e-4, "static ball changed photon energy {de}");
         } else {
@@ -732,7 +782,7 @@ fn report_c_ball_single_body() {
     let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
     let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
     let first_only = env("CFM_C_STATES", "all") == "first";
-    const LAMBDA: f64 = 3.0;
+    let LAMBDA: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
     let (b0, t0, l0) = law(&pp);
     let rough = RoughParams {
         beta: b0,
@@ -742,8 +792,12 @@ fn report_c_ball_single_body() {
         body_law: Some(law(&body)),
         ..twist_rough(true, SpeedMode::PinnedC)
     };
+    // CFM_C_SPEED: "pinned" (default) or "free" (D7).
+    let free = env("CFM_C_SPEED", "pinned") == "free";
+    let rough = if free { RoughParams { speed_mode: SpeedMode::Free, g_max: 8.0, ..rough } } else { rough };
     println!(
-        "=== C: instantaneous ball, photon-photon={pp}, body={body}, grain={grain}, PinnedC, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ==="
+        "=== C: instantaneous ball, speed={}, photon-photon={pp}, body={body}, grain={grain}, PinnedC, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ===",
+        if free { "free" } else { "pinned" }
     );
     let ctx = GpuContext::new().expect("GPU");
     for (class, states) in [("proton", PROTON_STATES), ("neutron", NEUTRON_STATES)] {
@@ -757,16 +811,42 @@ fn report_c_ball_single_body() {
             let mut engine = DsmcEngine::new(&ctx, config);
             let rep = engine.run_steady(&ctx, warmup, avg, 200);
             let t = &rep.totals;
+            // Local gas density vs the nominal ambient: live photons per volume
+            // in shells around the body, from the time-averaged density map.
+            let dm = crate::gpu::dsmc::DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), rep.density_raw.clone(), avg);
+            let shell_n = |r0: f64, r1: f64| -> f64 {
+                // Mean ambient-kind density over points spread through the shell.
+                let mut rng = Lcg(0xD35);
+                let mut sum = 0.0;
+                let m = 4000;
+                for _ in 0..m {
+                    let r = r0 + (r1 - r0) * rng.f();
+                    sum += dm.density_at_both_species(rng.unit() * r, 0);
+                }
+                sum / m as f64
+            };
+            println!(
+                "   gas density / n_a: r<1 {:.2}, 1-2 {:.2}, 2-4 {:.2}, 4-6 {:.2}; live {}; pp collisions {} ({:.3} per live photon per unit time)",
+                shell_n(0.0, 1.0) / n_a,
+                shell_n(1.0, 2.0) / n_a,
+                shell_n(2.0, 4.0) / n_a,
+                shell_n(4.0, 5.9) / n_a,
+                engine.n_live,
+                t.collisions,
+                2.0 * t.collisions as f64 / (engine.n_live as f64 * avg as f64 * 0.05)
+            );
             let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { '+' } else { '-' }, c)).collect();
             let passages: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();
             let exits = t.sh_exits[0].max(1) as f64;
             let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
             let hel = |o: usize| (t.pass_hel[o][0] + t.pass_hel[o][1]) / ((0..9).map(|a| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>().max(1) as f64);
             println!(
-                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) overlaps {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
+                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) push-outs {} | esc speed {:.3} ovfl {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
                 t.sh_contacts[0],
                 100.0 * t.sh_exits[0] as f64 / passages.max(1) as f64,
                 t.ball_overlap,
+                t.esc_speed_stats().0,
+                t.accept_overflow,
                 band(0),
                 band(1),
                 band(2),
@@ -800,5 +880,48 @@ fn report_c_ball_single_body() {
             }
             println!("{line}");
         }
+    }
+}
+
+/// Regression gate for the carved-free-volume bug: with permeable bodies the
+/// photon-photon collision rate inside the envelope must match the rate in
+/// the gas outside it (same density, same lambda). Measured on a box of gas
+/// with a body in the middle and sigma > 0; the Absorber free-volume rule
+/// would inflate the inside rate by orders of magnitude.
+#[test]
+fn permeable_body_does_not_distort_gas_collision_rate() {
+    for model in [BodyModel::Shells { tau_body: 0.0 }, BodyModel::Ball] {
+        let n: u32 = 400_000;
+        let half: f64 = 2.0;
+        let n_density = n as f64 / (2.0 * half).powi(3);
+        let sigma = 1.0 / (2.0 * n_density);
+        let mut config = shell_config(Boundary::PeriodicBox { half_extent: half }, [0.0; 4], 0.0, twist_rough(false, SpeedMode::PinnedC), sigma, 0.0, 0.5, n + 16, 0x5A7E);
+        config.body_model = model;
+        let ctx = GpuContext::new().expect("GPU");
+        let mut engine = DsmcEngine::new(&ctx, config);
+        let fv = engine.free_volume_cpu().to_vec();
+        let (dim, h) = (engine.grid.dim, engine.grid.h);
+        let cell_vol = (h * h * h) as f32;
+        let carved = fv.iter().filter(|&&v| v < 0.99 * cell_vol).count();
+        let mut rng = Lcg(0x5A7E);
+        let photons: Vec<GpuPhoton> = (0..n)
+            .map(|id| {
+                let pos = DVec3::new(rng.f(), rng.f(), rng.f()) * (2.0 * half) - DVec3::splat(half);
+                let d = rng.unit();
+                let chi = if rng.f() < 0.5 { 1.0 } else { -1.0 };
+                make_photon(id, pos, d, d * chi, chi)
+            })
+            .collect();
+        engine.write_photons_for_test(&ctx, &photons);
+        let mut t = Totals::default();
+        for _ in 0..40 {
+            engine.step_collide(&ctx, &mut t);
+        }
+        // Expected per-photon rate n*sigma*<g> with <g> = 4/3.
+        let rate = 2.0 * t.collisions as f64 / (n as f64 * 40.0 * engine.config.dt);
+        let expect = n_density * sigma * 4.0 / 3.0;
+        println!("{model:?}: carved cells {carved} of {}, collision rate {rate:.4} vs expected {expect:.4}", dim[0] * dim[1] * dim[2]);
+        assert_eq!(carved, 0, "{model:?}: permeable body carved gas volume");
+        assert!((rate / expect - 1.0).abs() < 0.03, "{model:?}: gas collision rate distorted");
     }
 }

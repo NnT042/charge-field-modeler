@@ -433,8 +433,9 @@ pub const TALLY_SH_TORQUE: usize = 296;
 pub const TALLY_SH_WORK: usize = 308;
 
 // --- Doc §15: instantaneous ball ---
-/// Photons found inside a ball at step start (should stay ~0: continuous
-/// detection never lets a photon into the ball).
+/// Push-outs: a photon found touching or inside a ball that is still closing
+/// on it is moved back to the surface and takes the contact there. Happens
+/// when a ball faster than c re-catches a photon; reported every run.
 pub const TALLY_BALL_OVERLAP: usize = 312;
 /// Body-0 passages by entry angle to the pole (10 deg bins, 0..8) x outcome
 /// (0 clean, 1 pp-only, 2 ball hit first, 3 ball hit after pp) x species:

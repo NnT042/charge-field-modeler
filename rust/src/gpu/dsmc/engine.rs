@@ -463,7 +463,17 @@ impl DsmcEngine {
         }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
-        let pc = precompute(&grid, &config.bodies, config.b_max, config.seed ^ 0xB0D7);
+        let mut pc = precompute(&grid, &config.bodies, config.b_max, config.seed ^ 0xB0D7);
+        if config.body_model != BodyModel::Absorber {
+            // Permeable bodies (doc §14/§15) occupy no gas volume: the cells
+            // inside them hold gas like any other. Carving the body spheres
+            // out (the Absorber rule) left near-zero free volume there and
+            // inflated the photon-photon rate inside every envelope, capped
+            // only by the per-cell candidate limit. Found 2026-09-29 by the
+            // §15 passage tallies; the §14 shell results before the fix are
+            // contaminated.
+            pc.free_volume = precompute(&grid, &[], config.b_max, config.seed ^ 0xB0D7).free_volume;
+        }
 
         let gpu_bodies: Vec<GpuBody> = config
             .bodies

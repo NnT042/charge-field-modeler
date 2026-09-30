@@ -84,6 +84,7 @@ const TALLY_SH_WORK: u32 = 308u;         // [body], energy given to photons (fix
 // body index + 1 (0 = outside), bits 3-8 = entry latitude bin, bits 9-12 =
 // entry angle-to-pole bin (doc §15), bits 13-31 = contacts this passage.
 const TALLY_BALL_OVERLAP: u32 = 312u;
+const BALL_MAX_HITS: u32 = 6u;
 const TALLY_PASS: u32 = 313u;         // [(abin*4 + outcome)*2 + spec], body 0, len 72
 const TALLY_PASS_THROUGH: u32 = 385u; // [abin*2 + spec], body 0, len 18
 const TALLY_PASS_HEL: u32 = 403u;     // [outcome*2 + spec], body 0, len 8
@@ -353,46 +354,70 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let speed = ph.d.w;
     var remaining = params.dt * speed;
 
-    // Doc §15 ball: exact hit test against each body's moving base ball over
-    // 8 linear sub-intervals, one hit per step. On a hit the photon moves to
-    // the contact point, takes the contact, and flies the rest of the step on
-    // its new velocity.
+    // Doc §15 ball: exact hit tests against each body's moving base ball over
+    // 8 linear sub-intervals. Up to BALL_MAX_HITS contacts per step: after a
+    // contact the photon continues from the contact point on its new velocity
+    // and is tested again. A ball moving faster than c can catch the photon
+    // again (snowplow). A photon found touching or inside the ball while the
+    // ball still closes on it is pushed back to the surface and takes the
+    // contact there (tallied as TALLY_BALL_OVERLAP). Mirrors
+    // shell_gates::cpu_ball_step.
     var ball_moved = false;
     if (params.body_model == 2u) {
-        let v0 = ph.b.xyz * ph.d.w;
         let h = params.dt / 8.0;
-        var best_t = 1e30;
-        var best_b = 4u;
-        var best_s = 0u;
-        for (var b = 0u; b < params.n_bodies; b = b + 1u) {
-            let d0 = pos - bk(b, 0u, 0u).xyz;
-            let rb0 = bk(b, 0u, 0u).w;
-            if (dot(d0, d0) < rb0 * rb0) {
-                atomicAdd(&tallies[TALLY_BALL_OVERLAP], 1);
-            }
-            for (var si = 0u; si < 8u; si = si + 1u) {
-                let t0 = f32(si) * h;
-                let c0 = bk(b, si, 0u).xyz;
-                let c1 = bk(b, si + 1u, 0u).xyz;
-                let vc = (c1 - c0) / h;
-                let t = moving_sphere_hit(pos + v0 * t0, v0, c0, vc, bk(b, si, 0u).w, h);
-                if (t >= 0.0 && t0 + t < best_t) {
-                    best_t = t0 + t;
+        var x = pos;
+        var tc = 0.0;
+        for (var iter = 0u; iter < BALL_MAX_HITS; iter = iter + 1u) {
+            let v = ph.b.xyz * ph.d.w;
+            var best_t = 1e30;
+            var best_b = 4u;
+            var best_s = 0u;
+            var touching = false;
+            for (var b = 0u; b < params.n_bodies; b = b + 1u) {
+                let si0 = min(u32(tc / h), 7u);
+                let f0 = (tc - f32(si0) * h) / h;
+                let c_now = mix(bk(b, si0, 0u).xyz, bk(b, si0 + 1u, 0u).xyz, f0);
+                let rb = bk(b, si0, 0u).w;
+                let vc_now = (bk(b, si0 + 1u, 0u).xyz - bk(b, si0, 0u).xyz) / h;
+                let d = x - c_now;
+                if (dot(d, d) <= rb * rb * (1.0 + 2e-4) && dot(d, v - vc_now) < 0.0) {
+                    best_t = tc;
                     best_b = b;
-                    best_s = si;
+                    best_s = si0;
+                    touching = true;
+                    break;
                 }
-                if (best_b == b) {
-                    break; // later sub-intervals of this ball are later in time
+                for (var si = si0; si < 8u; si = si + 1u) {
+                    let ts = max(f32(si) * h, tc);
+                    let c0 = mix(bk(b, si, 0u).xyz, bk(b, si + 1u, 0u).xyz, (ts - f32(si) * h) / h);
+                    let vc = (bk(b, si + 1u, 0u).xyz - bk(b, si, 0u).xyz) / h;
+                    let t = moving_sphere_hit(x + v * (ts - tc), v, c0, vc, rb, f32(si + 1u) * h - ts);
+                    if (t >= 0.0 && ts + t < best_t) {
+                        best_t = ts + t;
+                        best_b = b;
+                        best_s = si;
+                    }
+                    if (best_b == b) {
+                        break;
+                    }
                 }
             }
-        }
-        if (best_b < 4u) {
+            if (best_b == 4u) {
+                break;
+            }
             let b = best_b;
             let si = best_s;
             let f = (best_t - f32(si) * h) / h;
-            let xh = pos + v0 * best_t;
+            var xh = x + v * (best_t - tc);
             let ch = mix(bk(b, si, 0u).xyz, bk(b, si + 1u, 0u).xyz, f);
             let rb = bk(b, si, 0u).w;
+            if (touching) {
+                let dd = xh - ch;
+                if (dot(dd, dd) > 1e-20) {
+                    xh = ch + normalize(dd) * rb;
+                }
+                atomicAdd(&tallies[TALLY_BALL_OVERLAP], 1);
+            }
             let om = mix(bk(b, si, 1u).xyz, bk(b, si + 1u, 1u).xyz, f);
             let vcen = mix(bk(b, si, 2u).xyz, bk(b, si + 1u, 2u).xyz, f);
             let n = normalize(ch - xh);
@@ -415,9 +440,12 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 }
                 ph.c[2] = ph.c[2] + (1u << 13u);
             }
-            let v1 = ph.b.xyz * ph.d.w;
-            pos = xh + v1 * (params.dt - best_t);
+            x = xh;
+            tc = best_t;
             ball_moved = true;
+        }
+        if (ball_moved) {
+            pos = x + (ph.b.xyz * ph.d.w) * (params.dt - tc);
         }
     }
 
