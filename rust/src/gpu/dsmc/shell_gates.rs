@@ -420,8 +420,15 @@ fn report_b_shell_single_body() {
     let avg: u32 = std::env::var("CFM_B_AVG").ok().and_then(|v| v.parse().ok()).unwrap_or(1600);
     const N_A: f64 = 400.0;
     const LAMBDA: f64 = 3.0;
-    let rough = twist_rough(true, SpeedMode::PinnedC);
-    println!("=== B: single mechanical baryon (shells), twist/PinnedC/stacking, lambda={LAMBDA}, n_a={N_A}, R_D=6, warmup {warmup}, avg {avg} ===");
+    // CFM_B_LAW: "twist" (default), "edge", "edge+twist".
+    let law_name = std::env::var("CFM_B_LAW").unwrap_or("twist".to_string());
+    let base = twist_rough(true, SpeedMode::PinnedC);
+    let rough = match law_name.as_str() {
+        "edge" => RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, ..base },
+        "edge+twist" => RoughParams { beta: 1.0, ..base },
+        _ => base,
+    };
+    println!("=== B: single mechanical baryon (shells), law={law_name}, PinnedC/stacking, lambda={LAMBDA}, n_a={N_A}, R_D=6, warmup {warmup}, avg {avg} ===");
     println!("isotropic crossing baseline bands: polar 0.134 mid 0.366 equat 0.500");
     println!(
         "{:<9} {:<10} {:>5} {:>4} | {:>7} {:>6} {:>6} | {:>6} {:>6} {:>6} | {:>7} {:>7} {:>7} | {:>7} {:>8} {:>8} {:>6}",

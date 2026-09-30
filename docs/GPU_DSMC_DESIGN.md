@@ -969,6 +969,48 @@ proton ≠ neutron. We report how wide that window is, never a best fit.
 - BG2 uniform fan gives angular momentum in the rotation sense;
 - BG3 mirror symmetry.
 
+### 14.7 First results (2026-09-29, fd00989 + report_b_shell_single_body)
+
+**Setup:** single body, all 4 proton + 4 neutron sign states, λ = 3, PinnedC,
+stacking on, 1600 averaging steps, 1 seed. The isotropic-crossing baseline is
+polar 0.134 / mid 0.366 / equatorial 0.500.
+
+Contacted-exit bands:
+
+| body-contact law | τ_body | polar | mid | equat | p vs n |
+|---|---|---|---|---|---|
+| twist | 1 | 0.108 | 0.348 | 0.543 | identical |
+| twist | 4 | 0.101 | 0.355 | 0.543 | identical |
+| twist | 64 | 0.119 | 0.381 | 0.500 | identical |
+| **edge** | **1** | **0.042** | **0.169** | **0.789** | identical |
+| edge | 4 | 0.074 | 0.321 | 0.605 | identical |
+| edge + twist | 1 | 0.044 | 0.179 | 0.777 | identical |
+
+- **The disc emerges mechanically under edge grip.** With nothing imposed (no
+  emission histogram, no redirect), photons scattered by the spinning shells leave
+  79% equatorial and 4% polar at τ_body = 1, vs 50% / 13% for an isotropic crossing.
+  That is pole.pdf's sprinkler, measured.
+  - It weakens as the body gets opaque (τ = 4: 60%) and is gone by τ = 64.
+  - Twist grip against a non-spinning grain gives only a weak lean (54%).
+- **Proton and neutron are identical in every run.** The torque's sign follows the
+  outer z-level; nothing else depends on the sign pattern. The species-split intake
+  (bias 0.5) changes nothing either.
+- Exiting helicity is ≈ 0 and pole-to-pole passage is ≤ 4% for both.
+- **Why they are identical:** in this model body handedness enters only as the
+  direction of the matter flow V(x). The outer z-level dominates V because the flow
+  speed grows with radius. Reversing a flow field gives the same scattering statistics
+  unless something in the photons prefers one sense. The photon's own helicity could
+  do that, but a few contacts scramble it to ≈ 0 before it matters. The body and the
+  photon never exchange *handedness* information in a way that survives.
+- **Open (user):**
+  - (i) Should photon-body contacts use edge grip (the sprinkler) while photon-photon
+    contacts keep twist grip (the DirRel table)?
+  - (ii) Where should body handedness enter mechanically? Candidates:
+    - grains that carry the level's spin (twist grip against a spinning face, so
+      chirality-matched photons pass and mismatched ones catch);
+    - level-resolved contact rates;
+    - the neutron's "returns with reversed spin" as a real mechanism.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
