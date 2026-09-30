@@ -207,3 +207,82 @@ works) but never states it as one mechanism.
 Option 1 is the natural first step. It is a pure-logic test of Mathis's own
 classification, and its outcome decides the rule that options 2 and 3 would
 carry out mechanically.
+
+---
+
+## Results: the maze on the CPU (2026-09-30, `rust/src/maze.rs`)
+
+**Reading the table first.** Mathis's 16-state table depends only on the relative
+signs of x, y and z; the sign of a never matters.
+
+| class | odd level | escapes | returns upright |
+|---|---|---|---|
+| proton | none (x = y = z) | yes | yes |
+| neutron | z | no | no |
+| anti-proton | y | yes | no |
+| anti-neutron | x | no | yes |
+
+So **escape ⇔ x = z** and **upright ⇔ y = z**. The outer z-spin gates the
+*direction* against x and the *spin* against y. (`table_structure` test.)
+
+**Search.**
+- The family:
+  - turn angle 45–180°;
+  - each level's axis ∈ {X, Y, Z};
+  - lab-fixed vs carried axes; level order a→z vs z→a;
+  - start direction and photon spin;
+  - escape criteria vs d0, and upright criteria vs s0, the pole or d0, fixed in
+    advance, with upright always the positive side.
+- Rules whose results sit within 1e-6 of a threshold are rejected; an earlier
+  pass was fooled by exactly that rounding.
+
+**Rigid turning (spin carried along with the path): 0 of 907,200 reproduce the
+table.**
+- The escape column is easy: 1,236 rules get it right.
+- The upright column is not: among escape-perfect rules the best is 8/16, i.e.
+  chance.
+- A rigid turn preserves helicity, so a trapped photon always comes back the
+  same way. Neutron (trapped, upside-down) and anti-neutron (trapped, upright)
+  cannot be told apart.
+
+**Contact spin rules reproduce it.** Each level also acts on the photon's spin
+component along its axis. Three rules were tried:
+- *Set*: the level imprints its sense.
+- *Flip*: a mismatched spin component is reversed.
+- *Rough*: the §13 twist grip at full grip.
+
+Of 3.6M rules, 24 score 16/16. With **Spin mode's own axes** (a and z about Z, x
+about X, y about Y; spin_stack `rotation_axis`), 20 rules pass, all with:
+- 90° turns about lab-fixed axes, met in the order a → x → y → z;
+- emission starting at **45° between the pole and the x axis**, ±(X + Z)/√2;
+- escape = "not turned back"; *Set* or *Flip*;
+- several initial spins work, including a helical photon (s0 = −d0).
+
+This is locked in by `spin_mode_maze_reproduces_mathis_table`, which checks that
+the rigid version of the same rule fails.
+- **Reading:** the geometry we already use contains Mathis's classification, but
+  only if photons interact with each level *by contact* (spin changed relative to
+  path). This matches the §15.8 finding: bouncing off a rigid body can't carry the
+  p/n magnetic signature.
+
+**Twelve levels (`report_maze_twelve_levels`).** Running the passing rules as one
+long maze through all 12 Spin-mode levels breaks the classification:
+- the four proton states come out as four different classes;
+- the Mathis neutron and the z-flip-every-tier neutron give identical results
+  (flipping levels 4 and 8 changes nothing under these rules).
+
+So the maze is a **single-tier** construct. Emission starts at the surface of the
+"particle" made by the inner tiers (our base ball) and passes the four baryon
+levels, as Mathis describes it. How tiers would chain is open. One option: each
+tier emits from its own core, and a tier's output becomes the next tier's input
+with a fresh 45° start.
+
+**Next (for discussion):** make the maze mechanical inside the DSMC ball model.
+A photon that reaches the base ball is carried out through the four baryon
+levels by this rule (turns + contact spin) instead of bouncing:
+- escapes are emitted with the maze's exit direction and spin;
+- trapped ones are held and released at a pole (neutron.pdf), upright or
+  upside-down per the rule.
+
+That is option 3 ("scoop and release") with the rule now fixed by Mathis's own
+table.

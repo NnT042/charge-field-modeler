@@ -11,6 +11,7 @@ mod atom_sim;
 mod field_sim;
 mod focus_particle;
 pub mod hitbox;
+pub mod maze;
 mod path_trace;
 pub mod recycling;
 pub mod rough_sphere;
