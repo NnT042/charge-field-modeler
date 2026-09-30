@@ -758,7 +758,7 @@ fn report_c_ball_single_body() {
             let rep = engine.run_steady(&ctx, warmup, avg, 200);
             let t = &rep.totals;
             let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { '+' } else { '-' }, c)).collect();
-            let passes: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();
+            let passages: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();
             let exits = t.sh_exits[0].max(1) as f64;
             let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
             let hel = |o: usize| (t.pass_hel[o][0] + t.pass_hel[o][1]) / ((0..9).map(|a| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>().max(1) as f64);
