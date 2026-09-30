@@ -490,6 +490,7 @@ impl DsmcEngine {
         if config.body_model != BodyModel::Absorber {
             assert!(config.exchange_rule == ExchangeRule::RoughSphere, "Shells bodies use the rough-sphere photon mechanics");
             assert!(config.bodies.len() <= 4, "at most 4 bodies");
+            assert!(config.body_model == BodyModel::Ball || config.rough.grain_mode == super::config::GrainMode::EdgeC, "grain modes Rigid/RigidInner need the ball model");
         }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
@@ -570,7 +571,7 @@ impl DsmcEngine {
                 .collect(),
         };
         let shells_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(32, wgpu::BufferUsages::empty());
-        let ballkeys_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(4 * 9 * 3, wgpu::BufferUsages::empty());
+        let ballkeys_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(4 * super::gpu_types::BALLKEY_STRIDE, wgpu::BufferUsages::empty());
 
         let inject_emit_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_inject_emit.wgsl"));
         let move_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_move.wgsl"));
@@ -707,7 +708,11 @@ impl DsmcEngine {
             body_twist_loss: c.rough.body_law.map(|l| l.2).unwrap_or(c.rough.twist_loss_to_normal) as u32,
             body_beta: c.rough.body_law.map(|l| l.0).unwrap_or(c.rough.beta) as f32,
             body_beta_twist: c.rough.body_law.map(|l| l.1).unwrap_or(c.rough.beta_twist) as f32,
-            _pad14a: 0,
+            grain_mode: match c.rough.grain_mode {
+                super::config::GrainMode::EdgeC => 0,
+                super::config::GrainMode::Rigid => 1,
+                super::config::GrainMode::RigidInner => 2,
+            },
             _pad14b: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
@@ -733,19 +738,36 @@ impl DsmcEngine {
         }
     }
 
-    /// Doc §15: 9 keyframes per body over this step (s * dt/8), each as
-    /// (centre, radius), (omega, 0), (centre velocity, 0).
+    /// Doc §15/§15.8: 9 keyframes per body over this step (s * dt/8) plus the
+    /// unresolved inner levels; layout in gpu_types::BALLKEY_STRIDE.
     pub fn ball_keyframes(&self) -> Vec<[f32; 4]> {
-        let mut data = vec![[0.0f32; 4]; 4 * 9 * 3];
+        use super::gpu_types::BALLKEY_STRIDE;
+        let mut data = vec![[0.0f32; 4]; 4 * BALLKEY_STRIDE];
         for (b, body) in self.shell_bodies.iter().enumerate() {
             let mut sb = body.clone();
+            let mut prev_q: Option<glam::DQuat> = None;
             for s in 0..9 {
                 let st = sb.ball();
-                let base = (b * 9 + s) * 3;
+                let base = b * BALLKEY_STRIDE + s * 4;
                 data[base] = [st.center.x as f32, st.center.y as f32, st.center.z as f32, st.radius as f32];
                 data[base + 1] = [st.omega.x as f32, st.omega.y as f32, st.omega.z as f32, 0.0];
                 data[base + 2] = [st.velocity.x as f32, st.velocity.y as f32, st.velocity.z as f32, 0.0];
+                // Keep consecutive quaternions in the same hemisphere so the
+                // shader's normalised lerp takes the short way.
+                let mut q = st.frame;
+                if let Some(pq) = prev_q {
+                    if pq.dot(q) < 0.0 {
+                        q = -q;
+                    }
+                }
+                prev_q = Some(q);
+                data[base + 3] = [q.x as f32, q.y as f32, q.z as f32, q.w as f32];
                 sb.advance(self.config.dt / 8.0);
+            }
+            let lv = body.unresolved_levels();
+            data[b * BALLKEY_STRIDE + 36] = [lv.len() as f32, body.photon_radius() as f32, 0.0, 0.0];
+            for (i, (axis, rate)) in lv.iter().enumerate() {
+                data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }
         }
         data

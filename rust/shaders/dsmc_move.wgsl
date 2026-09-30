@@ -34,7 +34,7 @@ struct Params {
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
-    body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
+    body_beta: f32, body_beta_twist: f32, grain_mode: u32, _pad14b: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -171,7 +171,41 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[(b * 9u + s) * 3u + j]; }
+const BALLKEY_STRIDE: u32 = 45u;
+fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
+
+fn quat_rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    let u = q.xyz;
+    let s = q.w;
+    return 2.0 * dot(u, v) * u + (s * s - dot(u, u)) * v + 2.0 * s * cross(u, v);
+}
+
+fn axis_rot(a: vec3<f32>, th: f32, v: vec3<f32>) -> vec3<f32> {
+    let c = cos(th);
+    let s = sin(th);
+    return v * c + cross(a, v) * s + a * dot(a, v) * (1.0 - c);
+}
+
+// Doc §15.8: summed angular velocity (photon spin units) of the unresolved
+// inner levels of ball b at random phases. Mirrors baryon_shells::inner_twist.
+fn inner_twist(b: u32, q: vec4<f32>, key: u32) -> vec3<f32> {
+    let m = u32(ballkeys[b * BALLKEY_STRIDE + 36u].x);
+    var th: array<f32, 8>;
+    for (var j = 0u; j < m; j = j + 1u) {
+        th[j] = TAU * rand01(params.seed_hi, params.seed_lo, key, 40u + j);
+    }
+    var sum = vec3<f32>(0.0);
+    for (var j = 0u; j < m; j = j + 1u) {
+        let lv = ballkeys[b * BALLKEY_STRIDE + 37u + j];
+        var w = lv.xyz * lv.w;
+        for (var k = j + 1u; k < m; k = k + 1u) {
+            let lk = ballkeys[b * BALLKEY_STRIDE + 37u + k];
+            w = axis_rot(lk.xyz, th[k], w);
+        }
+        sum = sum + quat_rot(q, w);
+    }
+    return sum;
+}
 
 // Mirrors rough_sphere::moving_sphere_hit.
 fn moving_sphere_hit(x0: vec3<f32>, v: vec3<f32>, c0: vec3<f32>, vc: vec3<f32>, r: f32, t_max: f32) -> f32 {
@@ -430,8 +464,19 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             let vcen = mix(bk(b, si, 2u).xyz, bk(b, si + 1u, 2u).xyz, f);
             let n = normalize(ch - xh);
             var tw = vec3<f32>(0.0);
-            if (length(om) > 1e-9) {
-                tw = normalize(om) * params.grain_edge;
+            if (params.grain_mode == 0u) {
+                if (length(om) > 1e-9) {
+                    tw = normalize(om) * params.grain_edge;
+                }
+            } else {
+                // §15.8: the ball's rigid spin in photon spin units, plus
+                // (mode 2) the unresolved inner levels at random phases.
+                tw = om * ballkeys[b * BALLKEY_STRIDE + 36u].y;
+                if (params.grain_mode == 2u) {
+                    let q = normalize(mix(bk(b, si, 3u), bk(b, si + 1u, 3u), f));
+                    let key = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x7A157u ^ (iter * 0x9E3779B9u)));
+                    tw = tw + inner_twist(b, q, key);
+                }
             }
             let pp_before = (ph.c[0] & FLAG_PP_PASSAGE) != 0u;
             let dp = wall_contact_general(&ph, vcen, rb * om, tw, n);

@@ -73,6 +73,20 @@ pub enum SpeedMode {
     BodyFree,
 }
 
+/// Doc §15.8: what spin the twist grip compares a photon with at the ball's
+/// surface. `EdgeC` (§14.8): the direction of the ball's summed angular
+/// velocity, at edge speed `grain_edge`. `Rigid`: the ball's actual rigid
+/// angular velocity, in photon spin units (times the photon radius). No
+/// assumed edge speed. `RigidInner`: `Rigid` plus the unresolved inner levels
+/// 1..(8 - depth) at their Spin-mode rates and class signs, each at a random
+/// phase per contact (their periods are far below the keyframe spacing).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GrainMode {
+    EdgeC,
+    Rigid,
+    RigidInner,
+}
+
 /// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;
 /// `crate::rough_sphere::ContactLaw`).
 #[derive(Clone, Copy, Debug)]
@@ -112,6 +126,8 @@ pub struct RoughParams {
     /// matter's angular velocity direction) at this edge speed on unit
     /// radius. 0 = non-spinning grains (§14.7 behaviour).
     pub grain_edge: f64,
+    /// Doc §15.8: the surface twist a photon meets on the ball.
+    pub grain_mode: GrainMode,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -119,7 +135,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, body_law: None }
     }
 }
 

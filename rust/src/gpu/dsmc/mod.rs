@@ -13,7 +13,7 @@ mod rough_gates;
 #[cfg(test)]
 mod shell_gates;
 
-pub use config::{BodyConfig, BodyModel, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GpuOrient, MeshMode, RateKernel, RoughParams, SpeedMode, StiffnessShed};
+pub use config::{BodyConfig, BodyModel, Boundary, DsmcConfig, EmissionMode, ExchangeRule, GpuClass, GrainMode, GpuOrient, MeshMode, RateKernel, RoughParams, SpeedMode, StiffnessShed};
 pub use density::DensityMap;
 pub use engine::{DsmcEngine, SteadyBlock, SteadyReport, Totals};
 pub use sigma_calib::{calibrate_sigma_for_tau_in, measure_taus, SigmaCalibration};

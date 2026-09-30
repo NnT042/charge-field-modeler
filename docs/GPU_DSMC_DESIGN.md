@@ -1492,6 +1492,77 @@ depth 2, ±0.018 at depth 3):
 - Hits, ball speeds and torque per hit: no class-level difference beyond the state
   spread.
 
+### 15.8 The surface-spin rule: rigid and rigid + inner levels (2026-09-30)
+
+**Question:** §15.7 showed the magnetic split depends on the §14.8 grain rule (twist
+reference = direction of the ball's summed Ω at edge c). The user asked for option
+2 (rigid) to get a fair go, and then option 3 (inner levels) to see if it helps.
+
+**Build:**
+- `RoughParams::grain_mode: GrainMode {EdgeC, Rigid, RigidInner}` (GpuParams
+  `grain_mode`, formerly `_pad14a`).
+- **Rigid:** the twist reference is the ball's actual angular velocity in photon
+  spin units, Ω × photon radius, with photon radius = level-1 / level-12 amplitude
+  = 1/512 of the body radius. No assumed edge speed.
+- **RigidInner:** Rigid plus the unresolved levels 1..(8 − depth), using the
+  Spin-mode `SpinLevel` rates and the class signs:
+  - rates in photon units: 1, 1, ½, ¼ (levels 1–4), ⅛, ⅛, 1/16, 1/32 (levels 5–8);
+  - each level's axis is carried by the unresolved levels above it and the ball
+    frame, each at a random phase per contact (hash RNG; their periods are far
+    below the keyframe spacing);
+  - `ShellBody::{tier1_signs, unresolved_levels, photon_radius}`,
+    `BallState::frame`, `baryon_shells::inner_twist`.
+- **Keyframes** are now 4 vec4 per keyframe (the frame quaternion is added) plus
+  the inner-level table; `BALLKEY_STRIDE` = 45.
+- **The adopted neutron flips level 4 as well** (`CFM_C_TIER1_N`, default
+  (−1, +1, +1, +1)).
+- **Gates:**
+  - `ball_gpu_matches_cpu` adds Rigid (error 8.9e-6) and RigidInner (z-flip neutron,
+    depth 2, random phases mirrored exactly: error 4.8e-5).
+  - The control compares spins too; under Rigid, dropping the ball's spin changes
+    photons by only 2.5e-2.
+  - `unresolved_levels_rates_and_frame` checks the rates and the frame.
+- **Report:** `CFM_C_GRAIN_MODE` = edge | rigid | inner.
+
+**Results** (λ = 3, BodyFree, all 4 states per class; ball-hit helicity, state
+means; errors ±0.006 at depths 0–1, ±0.006 at depth 2, ±0.009 at depth 3):
+
+| grain rule | depth | proton | neutron | contacted-exit eq, p / n |
+|---|---|---|---|---|
+| EdgeC (§15.7) | 2 | +0.12 | −0.07 | 0.542 / 0.534 |
+| EdgeC (§15.7) | 3 | +0.15 | +0.07 | 0.545 / 0.543 |
+| Rigid | 1 | +0.018 | +0.021 | 0.548 / 0.534 |
+| Rigid | 2 | +0.026 | +0.016 | 0.548 / 0.533 |
+| RigidInner | 0 | +0.017 | +0.017 | 0.550 / 0.528 |
+| RigidInner | 1 | +0.017 | +0.014 | 0.549 / 0.530 |
+| RigidInner | 2 | +0.022 | +0.015 | 0.543 / 0.539 |
+| RigidInner | 3 | +0.035 | +0.016 | 0.546 / 0.550 |
+
+- **Under both mechanical rules the ball erases handedness for both classes.**
+  Ball-hit helicity falls to +0.01–0.04 (from +0.137 on arrival), with no p/n
+  difference beyond ~1.5σ at any depth.
+  - **Rigid:** the ball's rigid spin is only ~0.03–0.14 in photon units, so the
+    twist grip despins photons.
+  - **RigidInner:** the inner levels give a twist of order c (levels 1–2 spin at
+    exactly edge c in photon units), but their fast, mutually rotating axes make it
+    a random direction at each contact.
+  - The coherent part (level 4 and level 5, both along the frame's Z) is about 0.1–
+    0.4 and flips for the neutron. Projected onto contact normals all over the
+    ball, it averages out.
+- **The EdgeC split (§15.6–15.7) came from the assumed coherent twist at edge c.**
+  No mechanical version of the rule reproduces it.
+- **The equatorial exit split survives the rule change at shallow depth:** ~1.4–2.2
+  points at depths 0–2, gone at depth 3, as under EdgeC. It is geometric, not a
+  twist effect.
+- **Reading:** a photon that only bounces off the base ball cannot carry the
+  neutron's magnetic signature out. In neutron.pdf the photons "go in, rattle around
+  in the neutron, taking the four given spin paths" before leaving. The magnetic
+  channel needs photons to travel *through* the spin structure (channelling /
+  recycling), which the rigid-ball abstraction does not allow. That points back to
+  the emitter / channelling design question.
+- The report default stays EdgeC for continuity; Rigid / RigidInner are the
+  mechanical references.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

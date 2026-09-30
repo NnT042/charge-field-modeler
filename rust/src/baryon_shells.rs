@@ -100,11 +100,15 @@ pub struct ShellBody {
     pub inner_signs: [f64; 4],
     /// Current rotation angle of levels 8, 7, 6, 5.
     pub inner_angles: [f64; 4],
+    /// Doc §15.8: rotation sense of the photon-tier levels 4, 3, 2, 1 (used
+    /// only by the unresolved-inner-levels surface twist; +1 in every
+    /// Spin-mode preset; the adopted neutron flips level 4).
+    pub tier1_signs: [f64; 4],
 }
 
 impl ShellBody {
     pub fn new(center: DVec3, orient: DQuat, radius: f64, signs: [f64; 4]) -> Self {
-        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4] }
+        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4] }
     }
 
     /// Angular rate of electron-tier level `8 - m` at edge speed c.
@@ -183,6 +187,10 @@ pub struct BallState {
     pub velocity: DVec3,
     /// Ball spin: sum_{j>=9} w_j.
     pub omega: DVec3,
+    /// Doc §15.8: orientation of the ball's inner frame (the composed
+    /// rotation of every resolved level, then `orient`): maps directions
+    /// fixed in the unresolved inner stack to world.
+    pub frame: DQuat,
 }
 
 /// (local axis, local offset, orbit radius) of electron-tier level 8 - m, in
@@ -194,6 +202,24 @@ fn inner_geom(m: usize) -> (DVec3, DVec3, f64) {
     let orbit = l.orbit_radius() / scale;
     let offset = if l.is_orbital() { l.spin_type.orbital_start() * orbit } else { DVec3::ZERO };
     (l.rotation_axis(), offset, orbit)
+}
+
+/// Doc §15.8: summed world angular velocity (photon spin units) of the
+/// unresolved inner levels at the given phases. `levels` is innermost first
+/// (index 0 = level 1); level j's axis is carried by the rotations of the
+/// unresolved levels above it and then by `frame`:
+/// w_j = frame * R_m(th_m) ... R_{j+1}(th_{j+1}) a_j * rate_j.
+pub fn inner_twist(frame: DQuat, levels: &[(DVec3, f64)], angles: &[f64]) -> DVec3 {
+    let m = levels.len();
+    let mut sum = DVec3::ZERO;
+    for j in 0..m {
+        let mut w = levels[j].0 * levels[j].1;
+        for k in (j + 1)..m {
+            w = DQuat::from_axis_angle(levels[k].0, angles[k]) * w;
+        }
+        sum += frame * w;
+    }
+    sum
 }
 
 /// Base-ball radius at resolution `depth` (body units): the amplitude of the
@@ -220,8 +246,10 @@ impl ShellBody {
         }
         let n = chain.len();
         let mut center_b = DVec3::ZERO;
+        let mut rot_total = DQuat::IDENTITY;
         for (r, s, _, _) in &chain {
             center_b = *r * (center_b + *s);
+            rot_total = *r * rot_total;
         }
         let center = self.center + self.orient * (center_b * self.radius);
         let mut velocity = DVec3::ZERO;
@@ -238,7 +266,31 @@ impl ShellBody {
             velocity += w_j.cross(center - o_j);
             omega += w_j;
         }
-        BallState { center, radius: ball_radius_at_depth(self.depth) * self.radius, velocity, omega }
+        BallState { center, radius: ball_radius_at_depth(self.depth) * self.radius, velocity, omega, frame: self.orient * rot_total }
+    }
+
+    /// Doc §15.8: photon radius in world units (level-1 amplitude over the
+    /// level-12 amplitude, times the body radius). Angular velocities times
+    /// this are in the photon's own spin units (edge speed in c for a
+    /// level-1 photon), which is what the twist grip compares.
+    pub fn photon_radius(&self) -> f64 {
+        self.radius * level_amplitude(1) / level_amplitude(12)
+    }
+
+    /// Doc §15.8: the unresolved inner levels 1..=(8 - depth), innermost
+    /// first, as (local rotation axis, signed angular rate in photon spin
+    /// units), from Spin mode's `SpinLevel` rules (rate = sign / orbit
+    /// radius, at edge speed c).
+    pub fn unresolved_levels(&self) -> Vec<(DVec3, f64)> {
+        let m = 8 - self.depth;
+        (1..=m as u8)
+            .map(|lv| {
+                let l = crate::spin_stack::SpinLevel::new(lv);
+                let orbit = l.orbit_radius() / level_amplitude(12);
+                let sign = if lv <= 4 { self.tier1_signs[(4 - lv) as usize] } else { self.inner_signs[(8 - lv) as usize] };
+                (l.rotation_axis(), sign * (level_amplitude(1) / level_amplitude(12)) / orbit)
+            })
+            .collect()
     }
 
     /// World position of a point `p` (body units) fixed in the base ball's
@@ -470,6 +522,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Doc §15.8: the unresolved levels carry Spin mode's rates in photon
+    /// units (levels 1 and 2 spin at exactly edge c for a level-1 photon,
+    /// level 4 at 1/4, level 8 at 1/32), follow the signs, and the ball
+    /// frame composes the resolved rotations (checked by carrying a fixed
+    /// direction through `carry_ball`).
+    #[test]
+    fn unresolved_levels_rates_and_frame() {
+        let mut body = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, NEUTRON_STATES[0]);
+        body.tier1_signs = [-1.0, 1.0, 1.0, 1.0];
+        body.inner_signs = [-1.0, 1.0, 1.0, 1.0];
+        let lv = body.unresolved_levels();
+        assert_eq!(lv.len(), 8);
+        let rates: Vec<f64> = lv.iter().map(|l| l.1).collect();
+        let want = [1.0, 1.0, 0.5, -0.25, 0.125, 0.125, 0.0625, -0.03125];
+        for (a, b) in rates.iter().zip(want) {
+            assert!((a - b).abs() < 1e-12, "rates {rates:?}");
+        }
+        for depth in 0..=4 {
+            body.depth = depth;
+            body.angles = [0.3, 1.1, -0.4, 2.0];
+            body.inner_angles = [0.7, -1.3, 0.2, 0.9];
+            assert_eq!(body.unresolved_levels().len(), 8 - depth);
+            let b = body.ball();
+            let d = DVec3::new(0.3, -0.5, 0.8).normalize() * 1e-3;
+            let moved = body.carry_ball(d) - body.carry_ball(DVec3::ZERO);
+            assert!((moved - b.frame * d).length() < 1e-12, "frame at depth {depth}");
+        }
+        let f = DQuat::from_rotation_y(0.4);
+        let one = [(DVec3::Z, 2.0)];
+        assert!((inner_twist(f, &one, &[1.0]) - f * DVec3::Z * 2.0).length() < 1e-12);
     }
 
     /// Report: where the ball's centre goes (the "donut"). A long run with

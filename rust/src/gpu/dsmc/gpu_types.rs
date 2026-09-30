@@ -273,7 +273,8 @@ pub struct GpuParams {
 
     pub body_beta: f32,
     pub body_beta_twist: f32,
-    pub _pad14a: u32,
+    /// Doc §15.8: 0 EdgeC, 1 Rigid, 2 RigidInner.
+    pub grain_mode: u32,
     pub _pad14b: u32,
 }
 
@@ -463,6 +464,12 @@ pub const TALLY_FLUX: usize = 952;
 pub const FLUX_RADII: [f64; 7] = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
 
 pub const TALLY_LEN: usize = 1456;
+
+/// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
+/// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
+/// then (unresolved count m, photon radius, 0, 0), then 8 x (axis, signed rate
+/// in photon units) for levels 1..8 (the first m are used).
+pub const BALLKEY_STRIDE: usize = 45;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

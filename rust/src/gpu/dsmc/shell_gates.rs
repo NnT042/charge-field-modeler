@@ -27,7 +27,8 @@ use super::config::{
     SpeedMode, StiffnessShed,
 };
 use super::engine::{DsmcEngine, Totals};
-use super::gpu_types::{GpuPhoton, FLAG_ALIVE, FLAG_SPECIES_PLUS};
+use super::gpu_types::{GpuPhoton, BALLKEY_STRIDE, FLAG_ALIVE, FLAG_SPECIES_PLUS};
+use super::config::GrainMode;
 use crate::baryon_shells::{matter_velocity, region_of, PROTON_STATES};
 use crate::gpu::context::GpuContext;
 use crate::rough_sphere::{contact_normal, level_radius, wall_contact_spinning, Ball, ContactLaw, StackRule, Stacked};
@@ -511,6 +512,15 @@ fn ball_config(boundary: Boundary, signs: [f64; 4], rough: RoughParams, sigma: f
     c
 }
 
+/// Doc §15.8 grain mode plus what the RigidInner mirror needs to reproduce
+/// the kernel's random phases (run seed and step index).
+#[derive(Clone, Copy)]
+struct GrainMirror {
+    mode: GrainMode,
+    seed: u64,
+    step: u32,
+}
+
 /// CPU mirror of the move kernel's ball phase for one photon (multi-hit
 /// loop, push-out on touching, 8 linear sub-intervals between keyframes).
 /// Returns (number of contacts, final state, final position).
@@ -524,10 +534,11 @@ fn cpu_ball_step(
     rule: &StackRule,
     grain_edge: f64,
     stacking: bool,
+    grain: GrainMirror,
 ) -> (u32, Stacked, DVec3) {
     use crate::rough_sphere::{moving_sphere_hit, wall_contact_general};
     let k = |s: usize, j: usize| {
-        let q = keys[s * 3 + j];
+        let q = keys[s * 4 + j];
         (DVec3::new(q[0] as f64, q[1] as f64, q[2] as f64), q[3] as f64)
     };
     let mut st = to_stacked(p);
@@ -535,7 +546,7 @@ fn cpu_ball_step(
     let h = dt / 8.0;
     let mut tc = 0.0;
     let mut hits = 0;
-    for _ in 0..6 {
+    for iter in 0..6u32 {
         let v = st.v;
         let si0 = ((tc / h) as usize).min(7);
         let f0 = (tc - si0 as f64 * h) / h;
@@ -573,7 +584,34 @@ fn cpu_ball_step(
         let om = k(si, 1).0.lerp(k(si + 1, 1).0, f);
         let vcen = k(si, 2).0.lerp(k(si + 1, 2).0, f);
         let n = (ch - xh).normalize();
-        let tw = if om.length() > 1e-9 { om.normalize() * grain_edge } else { DVec3::ZERO };
+        let tw = match grain.mode {
+            GrainMode::EdgeC => {
+                if om.length() > 1e-9 {
+                    om.normalize() * grain_edge
+                } else {
+                    DVec3::ZERO
+                }
+            }
+            _ => {
+                let meta = keys[36];
+                let mut tw = om * meta[1] as f64;
+                if grain.mode == GrainMode::RigidInner {
+                    let qa = keys[si * 4 + 3];
+                    let qb = keys[(si + 1) * 4 + 3];
+                    let l = |a: f32, b: f32| (a + (b - a) * f as f32) as f64;
+                    let q = glam::DQuat::from_xyzw(l(qa[0], qb[0]), l(qa[1], qb[1]), l(qa[2], qb[2]), l(qa[3], qb[3])).normalize();
+                    let m = meta[0] as usize;
+                    let levels: Vec<(DVec3, f64)> = (0..m).map(|i| {
+                        let e = keys[37 + i];
+                        (DVec3::new(e[0] as f64, e[1] as f64, e[2] as f64), e[3] as f64)
+                    }).collect();
+                    let key = hash_u32(p.a[3].to_bits() ^ hash_u32(grain.step ^ 0x7A157 ^ iter.wrapping_mul(0x9E37_79B9)));
+                    let angles: Vec<f64> = (0..m).map(|j| (std::f32::consts::TAU * rand01(grain.seed, key, 40 + j as u32)) as f64).collect();
+                    tw += crate::baryon_shells::inner_twist(q, &levels, &angles);
+                }
+                tw
+            }
+        };
         let mut b = st.outer_ball();
         let out = wall_contact_general(&mut b, vcen, om * rb, tw, n, law, pinned);
         st.set_outer(&b);
@@ -599,19 +637,30 @@ fn ball_gpu_matches_cpu() {
         ("twist body law, grain 1, PinnedC, stacking", RoughParams { grain_edge: 1.0, ..twist_rough(true, SpeedMode::PinnedC) }),
         ("edge law, Free", RoughParams { beta: 1.0, speed_mode: SpeedMode::Free, g_max: 6.0, ..RoughParams::default() }),
         ("twist body law, grain 1, BodyFree, stacking", RoughParams { grain_edge: 1.0, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("twist body law, RIGID grain, BodyFree, stacking", RoughParams { grain_mode: GrainMode::Rigid, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("twist body law, RIGID+INNER grain (z-flip neutron, depth 2), BodyFree, stacking", RoughParams { grain_mode: GrainMode::RigidInner, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
     ] {
         let n: u32 = 6000;
-        let mut config = ball_config(Boundary::PeriodicBox { half_extent: 2.0 }, PROTON_STATES[0], rough, 0.0, 0.0, n + 16, 0xBA11);
+        let inner_case = rough.grain_mode == GrainMode::RigidInner;
+        let signs = if inner_case { crate::baryon_shells::NEUTRON_STATES[0] } else { PROTON_STATES[0] };
+        let mut config = ball_config(Boundary::PeriodicBox { half_extent: 2.0 }, signs, rough, 0.0, 0.0, n + 16, 0xBA11);
         config.dt = 0.05;
         let ctx = GpuContext::new().expect("GPU");
         let mut engine = DsmcEngine::new(&ctx, config);
+        if inner_case {
+            let b = &mut engine.shell_bodies[0];
+            b.depth = 2;
+            b.inner_signs = NEUTRON_INNER_SIGNS;
+            b.tier1_signs = NEUTRON_INNER_SIGNS;
+        }
         let keys = engine.ball_keyframes();
+        let grain = GrainMirror { mode: rough.grain_mode, seed: 0xBA11, step: engine.step };
         let ball = engine.shell_bodies[0].ball();
         let mut rng = Lcg(0xBA11);
         let photons: Vec<GpuPhoton> = (0..n)
             .map(|id| {
                 let dir_in = rng.unit();
-                let off = rng.unit() * 0.1;
+                let off = rng.unit() * 0.8 * ball.radius;
                 let pos = ball.center - dir_in * (ball.radius + 0.01 + 0.02 * rng.f()) + off;
                 let speed = if rough.speed_mode != SpeedMode::PinnedC { 0.7 + 0.6 * rng.f() } else { 1.0 };
                 let w = rng.unit() * rng.f();
@@ -628,13 +677,16 @@ fn ball_gpu_matches_cpu() {
         let rule = StackRule { max_level: rough.stack_max_level, stack_tol: 1e-4, unstack_edge: rough.unstack_edge, kappa: rough.kappa };
         let pinned = rough.speed_mode == SpeedMode::PinnedC;
         let (mut hits, mut mism_hit, mut max_err, mut max_wrong, mut multi) = (0, 0, 0.0f64, 0.0f64, 0usize);
-        let mut keys_ns = keys[0..27].to_vec();
+        let mut keys_ns = keys[0..BALLKEY_STRIDE].to_vec();
         for s in 0..9 {
-            keys_ns[s * 3 + 1] = [0.0; 4];
+            keys_ns[s * 4 + 1] = [0.0; 4];
+        }
+        for i in 0..8 {
+            keys_ns[37 + i][3] = 0.0;
         }
         for p in &photons {
             let q = after.iter().find(|q| q.id() == p.id()).expect("lost");
-            let (nhit, st, x1) = cpu_ball_step(p, &keys[0..27], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking);
+            let (nhit, st, x1) = cpu_ball_step(p, &keys[0..BALLKEY_STRIDE], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking, grain);
             let hit = nhit > 0;
             multi += (nhit > 1) as usize;
             // Hit = the photon's velocity or spin changed. (The passage
@@ -660,8 +712,16 @@ fn ball_gpu_matches_cpu() {
                 }
             }
             max_err = max_err.max(e);
-            let (_, st_w, _) = cpu_ball_step(p, &keys_ns, 0.05, &law, pinned, &rule, 0.0, rough.stacking);
-            max_wrong = max_wrong.max((st_w.v - g.v).length());
+            let (_, st_w, _) = cpu_ball_step(p, &keys_ns, 0.05, &law, pinned, &rule, 0.0, rough.stacking, grain);
+            let mut wrong = (st_w.v - g.v).length();
+            if st_w.k == g.k {
+                for lvl in 0..=g.k as usize {
+                    wrong = wrong.max((st_w.w[lvl] - g.w[lvl]).length() * level_radius(lvl as u32));
+                }
+            } else {
+                wrong = f64::INFINITY;
+            }
+            max_wrong = max_wrong.max(wrong);
         }
         println!(
             "ball gpu-vs-cpu [{name}]: hits {hits}/{} (multi-hit {multi}), hit/miss disagreements {mism_hit}, max err {max_err:.2e}, no-ball-spin control {max_wrong:.2e}, push-outs {}",
@@ -671,9 +731,12 @@ fn ball_gpu_matches_cpu() {
         assert!(hits > 500, "{name}: too few hits to test ({hits})");
         assert!(mism_hit <= photons.len() / 1000, "{name}: GPU and CPU disagree on which photons hit ({mism_hit})");
         assert!(max_err < 2e-3, "{name}: GPU ball contact disagrees with CPU: {max_err}");
-        assert!(max_wrong > 0.05, "{name}: control did not fail");
+        // Rigid: the ball's spin in photon units is ~0.03, so dropping it
+        // moves photons far less than under EdgeC; still >> the f32 error.
+        let control_min = if rough.grain_mode == GrainMode::Rigid { 5e-3 } else { 0.05 };
+        assert!(max_wrong > control_min, "{name}: control did not fail ({max_wrong})");
         // Invariant: no photon ends the step inside the ball.
-        let (ce, re) = (keys[8 * 3], keys[8 * 3][3] as f64);
+        let (ce, re) = (keys[8 * 4], keys[8 * 4][3] as f64);
         let ce = DVec3::new(ce[0] as f64, ce[1] as f64, ce[2] as f64);
         let inside = after
             .iter()
@@ -853,11 +916,21 @@ fn report_c_ball_single_body() {
         })
     };
     let inner_p = parse4("CFM_C_INNER_P").unwrap_or([inner; 4]);
+    // Doc §15.8: CFM_C_GRAIN_MODE = edge (default, §14.8) | rigid | inner.
+    // Tier-1 (levels 4,3,2,1) signs per class: the adopted neutron flips
+    // level 4 like level 8 (CFM_C_TIER1_N / CFM_C_TIER1_P override).
+    let grain_mode = match env("CFM_C_GRAIN_MODE", "edge").as_str() {
+        "rigid" => GrainMode::Rigid,
+        "inner" => GrainMode::RigidInner,
+        _ => GrainMode::EdgeC,
+    };
+    let tier1_p = parse4("CFM_C_TIER1_P").unwrap_or([1.0; 4]);
     // Doc §15.7: the adopted neutron has z flipped in every tier (user
     // decision 2026-09-30): level 8 (the tier-2 z) opposes levels 5-7, as
     // level 12 opposes 9-11 in the Mathis states. Override with
     // CFM_C_INNER_N="1,1,1,1" for the outer-only neutron.
     let inner_n = parse4("CFM_C_INNER_N").unwrap_or(if std::env::var("CFM_C_INNER").is_ok() { [inner; 4] } else { NEUTRON_INNER_SIGNS });
+    let tier1_n = parse4("CFM_C_TIER1_N").unwrap_or(NEUTRON_INNER_SIGNS);
     let scale_top = |states: &[[f64; 4]], t: f64| -> Vec<[f64; 4]> { states.iter().map(|s| [s[0], s[1], s[2], s[3] * t]).collect() };
     let classes: Vec<(&str, Vec<[f64; 4]>)> = match custom {
         Some(c) => vec![("custom", c)],
@@ -866,7 +939,7 @@ fn report_c_ball_single_body() {
     // CFM_C_ONLY: "proton" or "neutron" runs one class.
     let only = env("CFM_C_ONLY", "");
     let classes: Vec<(&str, Vec<[f64; 4]>)> = classes.into_iter().filter(|(c, _)| only.is_empty() || *c == only).collect();
-    println!("   top_p {top_p} top_n {top_n} inner {inner} inner_p {inner_p:?} inner_n {inner_n:?}");
+    println!("   top_p {top_p} top_n {top_n} inner {inner} inner_p {inner_p:?} inner_n {inner_n:?} tier1_p {tier1_p:?} tier1_n {tier1_n:?} grain_mode {grain_mode:?}");
     for (class, states) in classes {
         let mut acc_hit = vec![0i64; 180];
         let mut acc_exit = vec![0i64; 360];
@@ -876,13 +949,14 @@ fn report_c_ball_single_body() {
                 continue;
             }
             let started = Instant::now();
-            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, cap, seed);
+            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, RoughParams { grain_mode, ..rough }, 1.0 / (LAMBDA * n_a), n_a, cap, seed);
             config.h = cell_h;
             config.dt = dt;
             let mut engine = DsmcEngine::new(&ctx, config);
             for b in engine.shell_bodies.iter_mut() {
                 b.depth = depth;
                 b.inner_signs = if class == "neutron" { inner_n } else if class == "proton" { inner_p } else { [inner; 4] };
+                b.tier1_signs = if class == "neutron" { tier1_n } else { tier1_p };
             }
             // Time-averaged ball-centre speed (CPU, long incommensurate run).
             let ball_speed = {
