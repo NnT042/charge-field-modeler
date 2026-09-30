@@ -87,7 +87,9 @@ const TALLY_BALL_OVERLAP: u32 = 312u;
 const BALL_MAX_HITS: u32 = 6u;
 const TALLY_PASS: u32 = 313u;         // [(abin*4 + outcome)*2 + spec], body 0, len 72
 const TALLY_PASS_THROUGH: u32 = 385u; // [abin*2 + spec], body 0, len 18
-const TALLY_PASS_HEL: u32 = 403u;     // [outcome*2 + spec], body 0, len 8
+const TALLY_PASS_HEL: u32 = 403u;
+const TALLY_HIT_LAT: u32 = 412u;      // [bin], body 0, 1-degree bins, len 180
+const TALLY_EXIT_LAT: u32 = 592u;     // [spec*180 + bin], body 0, len 360     // [outcome*2 + spec], body 0, len 8
 const FLAG_PP_PASSAGE: u32 = 1u << 14u;
 const FLAG_HIT_CLEAN: u32 = 1u << 15u;    // first ball hit came before any pp collision
 const FLAG_HIT_AFTER_PP: u32 = 1u << 16u; // first ball hit came after a pp collision
@@ -189,6 +191,10 @@ fn moving_sphere_hit(x0: vec3<f32>, v: vec3<f32>, c0: vec3<f32>, vc: vec3<f32>, 
         return t;
     }
     return -1.0;
+}
+
+fn fine_lat_bin(lat_deg: f32) -> u32 {
+    return u32(clamp(i32(floor(lat_deg + 90.0)), 0, 179));
 }
 
 fn body_lat_deg(b: u32, x: vec3<f32>) -> f32 {
@@ -436,6 +442,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tq[a] * TALLY_SCALE));
                 }
                 atomicAdd(&tallies[TALLY_SH_CONTACTS + b], 1);
+                if (b == 0u) {
+                    atomicAdd(&tallies[TALLY_HIT_LAT + fine_lat_bin(body_lat_deg(0u, xh))], 1);
+                }
                 if ((ph.c[2] >> 13u) == 0u && (ph.c[0] & (FLAG_HIT_CLEAN | FLAG_HIT_AFTER_PP)) == 0u) {
                     ph.c[0] = ph.c[0] | select(FLAG_HIT_CLEAN, FLAG_HIT_AFTER_PP, pp_before);
                 }
@@ -591,6 +600,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     atomicAdd(&tallies[TALLY_SH_EXIT_BAND + b * 3u + band], 1);
                     atomicAdd(&tallies[TALLY_SH_EXIT_BAND_HEL + b * 3u + band], i32(ph.b.w * TALLY_SCALE));
                     atomicAdd(&hist[HIST_EMISSION_BLOCK_MV + b * HIST_BINS + hist_bin(lat_out)], 1u);
+                    if (b == 0u) {
+                        atomicAdd(&tallies[TALLY_EXIT_LAT + spec * 180u + fine_lat_bin(lat_out)], 1);
+                    }
                     let lat_in = f32((ph.c[2] >> 3u) & 63u) * 5.0 - 87.5;
                     if ((lat_in > 60.0 && lat_out < -60.0) || (lat_in < -60.0 && lat_out > 60.0)) {
                         atomicAdd(&tallies[TALLY_SH_THROUGH + b], 1);

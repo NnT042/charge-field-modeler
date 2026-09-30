@@ -1226,6 +1226,59 @@ plus seeds 1–3 on the first state of each class):
   - no photon/antiphoton split.
 - **BodyFree is the new default** for the ball report.
 
+### 15.3 Trace-style histograms: new ball vs old Spin-mode trace (2026-09-29)
+
+**New tallies:**
+- `TALLY_HIT_LAT`: 180 one-degree bins, body 0, the latitude of each ball-contact
+  point about the body centre and pole. This is what Spin mode's exit histogram
+  binned: the position of each hit photon relative to the focus centre
+  (field_sim.rs).
+- `TALLY_EXIT_LAT`: 360 bins, [species][bin], the latitude of each contacted exit on
+  the envelope.
+- `report_c_ball_single_body` writes per-class CSVs (summed over states) with
+  `CFM_C_HIST_DIR`. `CFM_C_SIGNS="a,x,y,z"` runs one custom state; 0 means a torpid
+  level.
+
+**Old Spin-mode presets** (godot/config/particle_presets.json):
+- Levels 1–8 are all +1 for every particle, so going deeper can use +1 without a
+  new assumption.
+- The old neutron preset (−a−x−y) ran its z level at **0** (torpid), while the
+  proton had z at c. The new neutron states have z at ±c.
+
+**Results** (BodyFree, all 4 states per class, avg 2400; custom torpid-z run avg
+4800). Folded |latitude|:
+
+| | eq <30° | mid 30–60° | polar >60° | mean \|lat\| | peaks |
+|---|---|---|---|---|---|
+| OLD trace proton | 0.714 | 0.285 | 0.002 | 20.1° | 30° |
+| **NEW ball proton, contact points** | **0.740** | **0.260** | **0.000** | **19.5°** | **28°** |
+| OLD trace neutron (z torpid) | 0.406 | 0.576 | 0.019 | 34.1° | 10, 24, 55° |
+| NEW ball, same torpid-z preset | 0.660 | 0.340 | 0.000 | 22.6° | 28° |
+| NEW ball neutron (z at c), contact points | 0.628 | 0.372 | 0.000 | 24.0° | 2, 11, 30° |
+| NEW ball proton, contacted exits | 0.551 | 0.341 | 0.107 | 30.1° | ~4–10° |
+| NEW ball neutron, contacted exits | 0.529 | 0.360 | 0.112 | 31.2° | ~4–17° |
+| OLD recycling proton / neutron | 0.584 / 0.308 | 0.345 / 0.482 | 0.071 / 0.210 | 28.1 / 41.5° | 5 / 44° |
+
+- **The new ball reproduces the old proton trace almost exactly:** eq 0.74 vs 0.71,
+  mean latitude 19.5° vs 20.1°, peak 28° vs 30°, no polar hits. The new engine's
+  kinematics and the old trace agree where they should.
+- **The old neutron trace is NOT reproduced**, even with the identical torpid-z
+  preset (eq 0.66 vs 0.41). The cause is the hit geometry:
+  - The old trace hit photons against a "snake": capsules along the particle's
+    recent path, held static over one full turn of the second-outermost orbital
+    (`snake_trace_length`). That weights hits by *where the path is*.
+  - The instantaneous ball weights hits by *where the ball spends its time*. For the
+    proton's path the two agree; for the torpid-z neutron path they do not.
+  - The old neutron's mid-latitude butterfly is therefore largely a product of the
+    swept-volume method the user chose to retire (§15).
+- **New p/n split in the contact geometry itself:** the neutron's ball spends more
+  time at mid-latitudes (contact eq 0.63 vs 0.74, mean 24.0° vs 19.5°).
+  - Photon-photon scattering on the way out washes most of this out: the
+    contacted-exit split is only 0.529 vs 0.551.
+  - No polar exit excess for the neutron (0.112 vs 0.107), unlike the old recycling
+    profile (0.21). Photon vs antiphoton exits are identical within noise.
+- Overlay figure: scratch ball_vs_trace.svg (not committed).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

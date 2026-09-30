@@ -113,6 +113,11 @@ pub struct Totals {
     pub pass: [[[i64; 2]; 4]; 9],
     pub pass_through: [[i64; 2]; 9],
     pub pass_hel: [[f64; 2]; 4],
+    /// Doc §15.3: body-0 contact-point latitude, 180 one-degree bins
+    /// (empty until the first readback).
+    pub hit_lat: Vec<i64>,
+    /// Doc §15.3: body-0 contacted-exit latitude, [spec][180 bins] flattened.
+    pub exit_lat: Vec<i64>,
 }
 
 impl Totals {
@@ -225,6 +230,8 @@ impl Totals {
                 self.pass_hel[o][sp] += other.pass_hel[o][sp];
             }
         }
+        add_vec(&mut self.hit_lat, &other.hit_lat);
+        add_vec(&mut self.exit_lat, &other.exit_lat);
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -381,6 +388,23 @@ impl Totals {
                 self.pass_hel[o][sp] += raw[TALLY_PASS_HEL + o * 2 + sp] as f64 / SCALE;
             }
         }
+        use super::gpu_types::{TALLY_EXIT_LAT, TALLY_HIT_LAT};
+        let hit: Vec<i64> = raw[TALLY_HIT_LAT..TALLY_HIT_LAT + 180].iter().map(|&x| x as i64).collect();
+        let exit: Vec<i64> = raw[TALLY_EXIT_LAT..TALLY_EXIT_LAT + 360].iter().map(|&x| x as i64).collect();
+        add_vec(&mut self.hit_lat, &hit);
+        add_vec(&mut self.exit_lat, &exit);
+    }
+}
+
+fn add_vec(a: &mut Vec<i64>, b: &[i64]) {
+    if b.is_empty() {
+        return;
+    }
+    if a.is_empty() {
+        a.resize(b.len(), 0);
+    }
+    for (x, y) in a.iter_mut().zip(b) {
+        *x += *y;
     }
 }
 

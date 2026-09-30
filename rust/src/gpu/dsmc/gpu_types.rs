@@ -446,7 +446,16 @@ pub const TALLY_PASS_THROUGH: usize = 385;
 /// Body-0 exit helicity sum by outcome x species (fixed-point), len 8.
 pub const TALLY_PASS_HEL: usize = 403;
 
-pub const TALLY_LEN: usize = 412;
+/// Doc §15.3: body-0 ball-contact latitude, 1-degree bins over [-90, 90)
+/// (bin = floor(lat + 90)): the contact point's latitude about the body
+/// centre and pole. This is what Spin mode's exit histogram binned (the
+/// position of each hit photon relative to the focus centre).
+pub const TALLY_HIT_LAT: usize = 412;
+/// Doc §15.3: body-0 contacted-exit latitude on the envelope, 1-degree bins,
+/// [spec*180 + bin], len 360.
+pub const TALLY_EXIT_LAT: usize = 592;
+
+pub const TALLY_LEN: usize = 952;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

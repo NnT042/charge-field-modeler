@@ -807,7 +807,23 @@ fn report_c_ball_single_body() {
         "=== C: instantaneous ball, speed={speed}, photon-photon={pp}, body={body}, grain={grain}, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ==="
     );
     let ctx = GpuContext::new().expect("GPU");
-    for (class, states) in [("proton", PROTON_STATES), ("neutron", NEUTRON_STATES)] {
+    // CFM_C_HIST_DIR: if set, write 1-degree latitude histograms per class
+    // (summed over the states run) there, doc §15.3.
+    let hist_dir = std::env::var("CFM_C_HIST_DIR").ok();
+    // CFM_C_SIGNS: "a,x,y,z" runs one custom sign/speed state instead of the
+    // 8 standard states (e.g. "-1,-1,-1,0" = the Spin-mode neutron preset,
+    // whose z level was torpid).
+    let custom: Option<[f64; 4]> = std::env::var("CFM_C_SIGNS").ok().map(|v| {
+        let x: Vec<f64> = v.split(',').map(|t| t.trim().parse().unwrap()).collect();
+        [x[0], x[1], x[2], x[3]]
+    });
+    let classes: Vec<(&str, Vec<[f64; 4]>)> = match custom {
+        Some(c) => vec![("custom", vec![c])],
+        None => vec![("proton", PROTON_STATES.to_vec()), ("neutron", NEUTRON_STATES.to_vec())],
+    };
+    for (class, states) in classes {
+        let mut acc_hit = vec![0i64; 180];
+        let mut acc_exit = vec![0i64; 360];
         for (si, signs) in states.iter().enumerate() {
             if first_only && si > 0 {
                 continue;
@@ -842,7 +858,7 @@ fn report_c_ball_single_body() {
                 t.collisions,
                 2.0 * t.collisions as f64 / (engine.n_live as f64 * avg as f64 * 0.05)
             );
-            let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { '+' } else { '-' }, c)).collect();
+            let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { "+" } else if *s < 0.0 { "-" } else { "0" }, c)).collect();
             let passages: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();
             let exits = t.sh_exits[0].max(1) as f64;
             let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
@@ -887,6 +903,23 @@ fn report_c_ball_single_body() {
                 );
             }
             println!("{line}");
+            for (a, b) in acc_hit.iter_mut().zip(&t.hit_lat) {
+                *a += *b;
+            }
+            for (a, b) in acc_exit.iter_mut().zip(&t.exit_lat) {
+                *a += *b;
+            }
+        }
+        if let Some(dir) = &hist_dir {
+            let mut csv = String::from("degree,hits,exits_photon,exits_antiphoton
+");
+            for d in 0..180usize {
+                csv += &format!("{},{},{},{}
+", d as i32 - 90, acc_hit[d], acc_exit[d], acc_exit[180 + d]);
+            }
+            let path = std::path::Path::new(dir).join(format!("ball_{class}_lat.csv"));
+            std::fs::write(&path, csv).expect("write histogram");
+            println!("   wrote {}", path.display());
         }
     }
 }
