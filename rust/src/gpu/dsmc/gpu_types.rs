@@ -250,7 +250,7 @@ pub struct GpuParams {
 
     pub rough_kappa: f32,
     pub twist_loss_to_normal: u32,
-    /// D7: 0 = Free, 1 = PinnedC.
+    /// D7: 0 = Free, 1 = PinnedC, 2 = BodyFree (doc §15.2).
     pub speed_mode: u32,
     pub spin_edge0: f32,
 

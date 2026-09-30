@@ -190,10 +190,16 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
 
     // D7 speed handling (PinnedC): both speeds back to c, both spins scaled
     // by one factor so the pair's spin energy is what it came in with.
-    // Mirrors rough_sphere::pin_pair.
-    if (params.speed_mode == 1u) {
-        va = normalize(va);
-        vb = normalize(vb);
+    // BodyFree (§15.2): each photon back to its own incoming speed instead.
+    // Mirrors rough_sphere::pin_pair_to.
+    if (params.speed_mode != 0u) {
+        if (params.speed_mode == 1u) {
+            va = normalize(va);
+            vb = normalize(vb);
+        } else {
+            va = normalize(va) * (*pa).d.w;
+            vb = normalize(vb) * (*pb).d.w;
+        }
         let e_rot = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
         if (e_rot > 1e-12) {
             let sc = sqrt(e_rot_in / e_rot);

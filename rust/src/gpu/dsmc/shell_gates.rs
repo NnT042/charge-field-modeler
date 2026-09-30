@@ -598,6 +598,7 @@ fn ball_gpu_matches_cpu() {
     for (name, rough) in [
         ("twist body law, grain 1, PinnedC, stacking", RoughParams { grain_edge: 1.0, ..twist_rough(true, SpeedMode::PinnedC) }),
         ("edge law, Free", RoughParams { beta: 1.0, speed_mode: SpeedMode::Free, g_max: 6.0, ..RoughParams::default() }),
+        ("twist body law, grain 1, BodyFree, stacking", RoughParams { grain_edge: 1.0, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
     ] {
         let n: u32 = 6000;
         let mut config = ball_config(Boundary::PeriodicBox { half_extent: 2.0 }, PROTON_STATES[0], rough, 0.0, 0.0, n + 16, 0xBA11);
@@ -612,7 +613,7 @@ fn ball_gpu_matches_cpu() {
                 let dir_in = rng.unit();
                 let off = rng.unit() * 0.1;
                 let pos = ball.center - dir_in * (ball.radius + 0.01 + 0.02 * rng.f()) + off;
-                let speed = if rough.speed_mode == SpeedMode::Free { 0.7 + 0.6 * rng.f() } else { 1.0 };
+                let speed = if rough.speed_mode != SpeedMode::PinnedC { 0.7 + 0.6 * rng.f() } else { 1.0 };
                 let w = rng.unit() * rng.f();
                 make_photon(id, pos, (dir_in + rng.unit() * 0.3).normalize() * speed, w, if rng.f() < 0.5 { 1.0 } else { -1.0 })
             })
@@ -679,11 +680,11 @@ fn ball_gpu_matches_cpu() {
             .filter(|q| (DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64) - ce).length() < re * (1.0 - 1e-3))
             .count();
         println!("   photons inside the ball at step end: {inside}");
-        // Free speed: the invariant must hold. PinnedC: a photon held at c
-        // cannot separate from a ball surface closing faster than c (the
-        // Spin-mode ball moves at ~1.8c), so photons get overrun. That is an
-        // open physics decision (doc §15.1), reported here, not asserted.
-        if rough.speed_mode == SpeedMode::Free {
+        // Free body contacts (Free, BodyFree): the invariant must hold.
+        // PinnedC: a photon held at c cannot separate from a ball surface
+        // closing faster than c (the Spin-mode ball moves at ~1.8c), so
+        // photons get overrun (doc §15.1); reported, not asserted.
+        if rough.speed_mode != SpeedMode::PinnedC {
             assert!(inside * 1000 <= photons.len(), "{name}: {inside} photons ended inside the ball");
         }
     }
@@ -761,7 +762,8 @@ fn ball_static_conserves_energy() {
 /// - CFM_C_NA: ambient density (default 4000; lambda = 3 is held fixed by
 ///   scaling sigma);
 /// - CFM_C_STATES: "all" (default) or "first" (state 0 of each class);
-/// - CFM_C_WARMUP / CFM_C_AVG: 300 / 1200.
+/// - CFM_C_WARMUP / CFM_C_AVG: 300 / 1200;
+/// - CFM_C_SEED: run seed (default 49344 = 0xC0C0).
 #[test]
 #[ignore]
 fn report_c_ball_single_body() {
@@ -782,6 +784,8 @@ fn report_c_ball_single_body() {
     let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
     let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
     let first_only = env("CFM_C_STATES", "all") == "first";
+    // CFM_C_SEED: run seed (default 0xC0C0), for multi-seed confirmation.
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
     let LAMBDA: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
     let (b0, t0, l0) = law(&pp);
     let rough = RoughParams {
@@ -792,12 +796,15 @@ fn report_c_ball_single_body() {
         body_law: Some(law(&body)),
         ..twist_rough(true, SpeedMode::PinnedC)
     };
-    // CFM_C_SPEED: "pinned" (default) or "free" (D7).
-    let free = env("CFM_C_SPEED", "pinned") == "free";
-    let rough = if free { RoughParams { speed_mode: SpeedMode::Free, g_max: 8.0, ..rough } } else { rough };
+    // CFM_C_SPEED: "bodyfree" (default, doc §15.2), "pinned" or "free" (D7).
+    let speed = env("CFM_C_SPEED", "bodyfree");
+    let rough = match speed.as_str() {
+        "free" => RoughParams { speed_mode: SpeedMode::Free, g_max: 8.0, ..rough },
+        "pinned" => rough,
+        _ => RoughParams { speed_mode: SpeedMode::BodyFree, g_max: 12.0, ..rough },
+    };
     println!(
-        "=== C: instantaneous ball, speed={}, photon-photon={pp}, body={body}, grain={grain}, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ===",
-        if free { "free" } else { "pinned" }
+        "=== C: instantaneous ball, speed={speed}, photon-photon={pp}, body={body}, grain={grain}, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ==="
     );
     let ctx = GpuContext::new().expect("GPU");
     for (class, states) in [("proton", PROTON_STATES), ("neutron", NEUTRON_STATES)] {
@@ -806,7 +813,7 @@ fn report_c_ball_single_body() {
                 continue;
             }
             let started = Instant::now();
-            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, 9_000_000, 0xC0C0);
+            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, 9_000_000, seed);
             config.dt = 0.05;
             let mut engine = DsmcEngine::new(&ctx, config);
             let rep = engine.run_steady(&ctx, warmup, avg, 200);
@@ -841,11 +848,12 @@ fn report_c_ball_single_body() {
             let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
             let hel = |o: usize| (t.pass_hel[o][0] + t.pass_hel[o][1]) / ((0..9).map(|a| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>().max(1) as f64);
             println!(
-                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) push-outs {} | esc speed {:.3} ovfl {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
+                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) push-outs {} | esc speed {:.3}±{:.3} ovfl {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
                 t.sh_contacts[0],
                 100.0 * t.sh_exits[0] as f64 / passages.max(1) as f64,
                 t.ball_overlap,
                 t.esc_speed_stats().0,
+                t.esc_speed_stats().1,
                 t.accept_overflow,
                 band(0),
                 band(1),

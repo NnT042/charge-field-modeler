@@ -1173,6 +1173,59 @@ is 1.1× n_a, and ~46% of passages have a photon-photon hit, as expected.
 - **Caveats:** one seed, one λ, one τ-free geometry, and levels 1–8 as a rigid ball.
   Magnitudes are small (the band split is 2.5 points); the helicity split is large.
 
+### 15.2 BodyFree speed mode: the ball may throw photons off c (2026-09-29)
+
+**User decision:** option 1 from §15.1. Body contacts are free, so a baryon surface
+can throw a photon faster (or slower) than c. The sources:
+- charge3.html: "The speed of light is the speed at which it is ejected by the
+  baryon"; the photons emitted by the electron "are going somewhat faster than c.
+  The speed of light may be an average."
+- photon.html: newly emitted photons may go slightly over c.
+
+The backup, if the speed question gets out of hand: revisit how Spin mode compounds
+level speeds so the ball stays under c.
+
+**Rule (`SpeedMode::BodyFree`, GPU speed_mode 2):**
+- **Body contacts:** full rough-sphere mechanics, with no pin.
+- **Photon-photon collisions:** still pinned, but each photon returns to its *own
+  incoming speed*, not to c (`rough_sphere::pin_pair_to`). Each linear energy is
+  unchanged, and the pair's spin energy is restored with one common factor as
+  before. Energy stays exact, and with every photon at c this is PinnedC exactly.
+- Only a body contact can change a photon's speed. An off-c speed is carried until
+  the next body contact or escape.
+- g_max is 12 (8 left a handful of overflow candidates per run, out of 47M
+  collisions).
+
+**Gates:**
+- `rs_gpu_matches_cpu_reference` has a BodyFree + stacking case with speeds of
+  0.5–1.5: error 1.0e-6.
+- `ball_gpu_matches_cpu` has a BodyFree case: 0 hit/miss disagreements, error
+  8.9e-6, 0 photons left inside the ball.
+
+**Results** (`report_c_ball_single_body`, CFM_C_SPEED=bodyfree, twist/twist, grain
+1, stacking, λ = 3, n_a = 4000, warmup 400, avg 1200; all 8 states on seed 0xC0C0,
+plus seeds 1–3 on the first state of each class):
+
+| | push-outs / run | escape speed | contacted-exit equatorial | helicity of ball-hit exits | torque / hit |
+|---|---|---|---|---|---|
+| proton (4 states + 3 seeds) | 8–30 | 1.001 ± 0.058 | **0.547–0.557** | **+0.136 to +0.147** | ±0.66–0.68 |
+| neutron (4 states + 3 seeds) | 3–20 | 1.001 ± **0.063–0.064** | **0.528–0.535** | **+0.066 to +0.079** | ±0.71–0.73 |
+
+- **The snowplow is gone:** push-outs drop from ~175k per run (PinnedC) to ≤30, and
+  no photons are overrun.
+- **c emerges as an average:** photons leave at 1.001c with a ~6% spread, never
+  imposed. The neutron's spread is consistently wider (0.063–0.064 vs 0.058–0.059,
+  in every state and seed). That is a small third p/n tell.
+- **The p/n split holds under all three speed rules** (Free, PinnedC, BodyFree) and
+  across seeds. The neutron is ~2 points less equatorial and carries ~half the
+  ball-hit helicity (0.07 vs 0.14; the absolute helicity is lower than Free because
+  photon-photon collisions are pinned).
+- **The pole table is unchanged and identical for p and n:**
+  - through-passage 9.4% (0–10°), 5.7% (10–20°), 1.7% (20–30°), 0.3% (30–60°);
+  - pp→hit 0.8–1.1% at every angle;
+  - no photon/antiphoton split.
+- **BodyFree is the new default** for the ball report.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

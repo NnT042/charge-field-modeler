@@ -453,7 +453,7 @@ impl DsmcEngine {
             assert!(config.stiffness_shed == StiffnessShed::None, "RoughSphere: stiffness shedding has no energy accounting");
             assert!(config.bounce_cap == 0, "RoughSphere: bounce cap not supported");
             assert!(config.rate_kernel == RateKernel::Catch, "RoughSphere: collision rate must be the kinetic |v1-v2| kernel");
-            assert!(config.rough.speed_mode == SpeedMode::Free || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
+            assert!(config.rough.speed_mode != SpeedMode::PinnedC || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
             assert!(config.rough.stack_max_level <= 3, "stacking storage holds levels 0..=3");
             assert!(!config.rough.stacking || config.emit_stiffness_level == 0, "stacking: photons are born at level 0");
         }
@@ -654,7 +654,11 @@ impl DsmcEngine {
             rough_beta_twist: c.rough.beta_twist as f32,
             rough_kappa: c.rough.kappa as f32,
             twist_loss_to_normal: c.rough.twist_loss_to_normal as u32,
-            speed_mode: if c.rough.speed_mode == SpeedMode::PinnedC { 1 } else { 0 },
+            speed_mode: match c.rough.speed_mode {
+                SpeedMode::Free => 0,
+                SpeedMode::PinnedC => 1,
+                SpeedMode::BodyFree => 2,
+            },
             spin_edge0: c.rough.spin_edge0 as f32,
             glancing_bias: c.rough.glancing_bias as u32,
             stacking: c.rough.stacking as u32,

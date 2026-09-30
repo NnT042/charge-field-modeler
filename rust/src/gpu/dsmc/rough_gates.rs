@@ -21,7 +21,7 @@ use super::config::{Boundary, DsmcConfig, EmissionMode, ExchangeRule, MeshMode, 
 use super::engine::{DsmcEngine, Totals};
 use super::gpu_types::{GpuPhoton, FLAG_ALIVE, FLAG_SPECIES_PLUS};
 use crate::gpu::context::GpuContext;
-use crate::rough_sphere::{collide_full, contact_normal, level_radius, pin_pair, Ball, ContactLaw, StackRule, Stacked};
+use crate::rough_sphere::{collide_full, contact_normal, level_radius, pin_pair_to, Ball, ContactLaw, StackRule, Stacked};
 
 fn hash_u32(x: u32) -> u32 {
     let mut v = x;
@@ -167,7 +167,7 @@ fn run_pair_match(rough: RoughParams, seed: u64) -> MatchResult {
     let ctx = GpuContext::new().expect("RS gates need a GPU adapter");
     let mut engine = DsmcEngine::new(&ctx, config);
     let (dim, min) = (engine.grid.dim, engine.grid.min);
-    let free_speed = rough.speed_mode == SpeedMode::Free;
+    let free_speed = rough.speed_mode != SpeedMode::PinnedC;
 
     let mut rng = Lcg(seed ^ 0xABCD);
     let mut photons = Vec::new();
@@ -272,8 +272,8 @@ fn run_pair_match(rough: RoughParams, seed: u64) -> MatchResult {
             let (mut a, mut b) = (ba0, bb0);
             let e_rot_in = a.e_rot(l.kappa) + b.e_rot(l.kappa);
             let out = collide_full(&mut a, &mut b, n, l);
-            if !free_speed && slip_n > 0.0 {
-                pin_pair(&mut a, &mut b, l.kappa, e_rot_in, n.cross(out.j));
+            if rough.speed_mode != SpeedMode::Free && slip_n > 0.0 {
+                pin_pair_to(&mut a, &mut b, l.kappa, e_rot_in, n.cross(out.j), ba0.v.length(), bb0.v.length());
             }
             let (mut sa, mut sb) = (sa0, sb0);
             if rough.stacking {
@@ -338,6 +338,7 @@ fn rs_gpu_matches_cpu_reference() {
         ("edge+twist, PinnedC, glancing", RoughParams { glancing_bias: true, ..both }),
         ("STACKING twist, PinnedC", RoughParams { stacking: true, ..twist }),
         ("STACKING edge+twist, Free", RoughParams { stacking: true, speed_mode: SpeedMode::Free, g_max: 4.0, ..both }),
+        ("STACKING twist, BodyFree (off-c speeds)", RoughParams { stacking: true, speed_mode: SpeedMode::BodyFree, g_max: 4.0, ..twist }),
     ];
     let (mut stack_total, mut unstack_total) = (0i64, 0i64);
     for (i, (name, rough)) in cases.into_iter().enumerate() {

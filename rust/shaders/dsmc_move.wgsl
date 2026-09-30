@@ -246,6 +246,7 @@ fn wall_contact_general(p: ptr<function, GpuPhoton>, gv: vec3<f32>, sw: vec3<f32
         v = v + jx * n / m;
         atomicAdd(&tallies[TALLY_TWIST_TO_NORMAL_IDX], i32(lost * TALLY_SCALE));
     }
+    // Body contacts are pinned only in PinnedC; BodyFree leaves them free.
     if (params.speed_mode == 1u) {
         v = normalize(v);
         let e_rot = 0.5 * inertia * dot(w, w);

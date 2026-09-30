@@ -60,10 +60,17 @@ pub enum ExchangeRule {
 /// `PinnedC`: each photon's post-collision velocity is projected back to
 /// |v| = c, and the linear energy that removes (or adds) is booked into that
 /// photon's own spin. Energy stays exact per photon; momentum does not.
+/// `BodyFree` (doc §15.2, user decision 2026-09-29): body contacts are free,
+/// so a baryon surface can throw a photon faster (or slower) than c
+/// (charge3.html: "The speed of light is the speed at which it is ejected by
+/// the baryon"). Photon-photon collisions stay pinned, but each photon is
+/// pinned to its OWN incoming speed, not to c. With every photon at c this is
+/// PinnedC exactly.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SpeedMode {
     Free,
     PinnedC,
+    BodyFree,
 }
 
 /// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;

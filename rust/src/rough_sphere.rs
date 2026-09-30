@@ -158,8 +158,16 @@ pub fn collide_full(a: &mut Ball, b: &mut Ball, n: DVec3, law: &ContactLaw) -> C
 /// `fallback_axis` with half the energy each. Returns true if that fallback
 /// was impossible (a zero axis).
 pub fn pin_pair(a: &mut Ball, b: &mut Ball, kappa: f64, e_rot_before: f64, fallback_axis: DVec3) -> bool {
-    a.v = a.v.normalize();
-    b.v = b.v.normalize();
+    pin_pair_to(a, b, kappa, e_rot_before, fallback_axis, 1.0, 1.0)
+}
+
+/// [`pin_pair`] with each photon pinned to its own speed `sa` / `sb` (the
+/// speed it came in with) instead of c: D7 BodyFree (doc §15.2), where a
+/// body contact may have left a photon off c. Each linear energy is
+/// unchanged, so energy is still exact.
+pub fn pin_pair_to(a: &mut Ball, b: &mut Ball, kappa: f64, e_rot_before: f64, fallback_axis: DVec3, sa: f64, sb: f64) -> bool {
+    a.v = a.v.normalize() * sa;
+    b.v = b.v.normalize() * sb;
     let e_rot = a.e_rot(kappa) + b.e_rot(kappa);
     if e_rot > 1e-12 {
         let s = (e_rot_before / e_rot).sqrt();
