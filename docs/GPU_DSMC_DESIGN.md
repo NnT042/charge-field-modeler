@@ -1011,6 +1011,48 @@ Contacted-exit bands:
     - level-resolved contact rates;
     - the neutron's "returns with reversed spin" as a real mechanism.
 
+### 14.8 Spinning grains + separate body law (2026-09-29, 43dba30)
+- **Built:** `RoughParams::grain_edge`. Body grains spin with their shell (axis =
+  the shell matter's total angular velocity, edge speed c). The twist grip acts on
+  the *relative* spin, so a matched photon meshes, and a mismatched one is locked to
+  the grain's sense, i.e. reversed (the neutron.pdf "returns with reversed spin"
+  mechanism, per contact). `RoughParams::body_law` separates the photon-body law
+  from the photon-photon one. GPU == CPU to 2e-6.
+- **Result: proton == neutron still, in all 48 runs** (3 body laws × τ 1, 4 × 8
+  states), with grain spin on.
+- **Correction to §14.7:** the emergent disc comes from the **photon-photon edge
+  grip**, not from the body-contact law (τ = 1, grain 0, contacted-exit bands):
+
+| photon-photon | photon-body | polar | mid | equat |
+|---|---|---|---|---|
+| twist | edge | 0.101 | 0.342 | 0.557 |
+| edge | twist | 0.041 | 0.149 | 0.810 |
+| edge | edge | 0.043 | 0.171 | 0.786 |
+
+  Under edge grip the gas carries stacked, spinning photons, and those interact with
+  the moving shells very differently from twist-grip photons. The mechanism is not yet
+  diagnosed; next diagnostics are the level distribution at entry and contacts by
+  level. Spinning grains with an edge body law *remove* most of the disc (0.53).
+- **Why p and n stay identical, structurally:**
+  1. **Volume.** The inner levels' shells are small: level 11's region is ⅛ of the
+     body volume, level 10's 1/64, level 9's 1/512. So the outer z-level sets the
+     matter flow almost everywhere, and proton +a+x+y+z and neutron −a−x−y+z share
+     the outer z-sense.
+  2. **Symmetry.** In an isotropic ambient field, a body whose every level is
+     reversed (proton state 1 vs state 0) is statistically a rotated copy. Photon
+     helicity (a pseudoscalar) can only tell them apart if the body has a
+     pseudoscalar property coupling to it. Relative level senses (ω_i · ω_j) are
+     scalars, so p vs n is a *scalar* structural difference: inner levels co- vs
+     counter-rotating with the outer one. That must show up through the inner
+     shells' own flow, and in a volume-filling model hardly any photons sample it.
+- **Implication for the next step (user, 2026-09-29: "stop and think about using
+  what we find to build a new spin trace"):** the p/n difference lives in the inner
+  levels, which a volume-averaged shell model under-weights. The Spin-mode trace
+  (option c) resolves exactly where the inner levels' matter is at each instant, and
+  photons that reach it (through the polar channel) are the ones that can see the
+  difference. That makes the trace rebuild the natural next test, not just a
+  cross-check.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
