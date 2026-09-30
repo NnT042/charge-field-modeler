@@ -488,9 +488,9 @@ pub const LINE_N: usize = 41;
 
 /// Doc §15.11 holding tank: [b*2 + (0 taken in, 1 released)], len 8.
 pub const TALLY_HOLD: usize = 1943;
-/// Doc §15.11: body-0 capture latitude (entry point on the envelope, or
-/// the ball contact point), [(0 never captured before / 1 recaptured)*180 +
-/// bin], len 360.
+/// Doc §15.11: body-0 envelope-capture latitude (entry point on the
+/// envelope; ball captures are in TALLY_HIT_LAT), [(0 never captured before
+/// / 1 recaptured)*180 + bin], len 360.
 pub const TALLY_CAPT_LAT: usize = 1951;
 /// Doc §15.11: envelope captures per body, len 4.
 pub const TALLY_ENV_CAPT: usize = 2311;

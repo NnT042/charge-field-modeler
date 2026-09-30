@@ -109,7 +109,7 @@ const LINE_N: i32 = 41;
 // Doc §15.11 intake and holding tank.
 const FLAG_HELD: u32 = 1u << 20u;  // held in a body's tank; c[1] = release step, c[2] & 7 = body + 1
 const TALLY_HOLD: u32 = 1943u;     // [b*2 + (0 in, 1 out)], len 8
-const TALLY_CAPT_LAT: u32 = 1951u; // [(tag != 0)*180 + bin], body 0, len 360
+const TALLY_CAPT_LAT: u32 = 1951u; // [(tag != 0)*180 + bin], body 0 envelope captures only, len 360
 const TALLY_ENV_CAPT: u32 = 2311u; // [b], len 4
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
@@ -412,9 +412,6 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
 fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, held: ptr<function, bool>) -> vec3<f32> {
     let tag = ((*p).c[0] >> FLAG_EMIT_SHIFT) & 7u;
     atomicAdd(&tallies[TALLY_FEED + b * 5u + tag], 1);
-    if (b == 0u) {
-        atomicAdd(&tallies[TALLY_CAPT_LAT + select(0u, 180u, tag != 0u) + fine_lat_bin(body_lat_deg(0u, xh))], 1);
-    }
     let hold_steps = u32(ballkeys[b * BALLKEY_STRIDE + 47u].y);
     if (hold_steps > 0u) {
         (*p).c[0] = (*p).c[0] | FLAG_HELD;

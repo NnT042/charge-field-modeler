@@ -1848,6 +1848,45 @@ loop?
   - Resolve the neutron intake tension.
   - The tank is built but untested for physics.
 
+#### 15.11b Lower p, and does the loop close? (2026-09-30)
+
+`TALLY_CAPT_LAT` now counts envelope captures only (ball captures sit at the ball
+radius; they stay in `TALLY_HIT_LAT`).
+
+**Lower p (proton, λ = 0.3, maze vs isotropic control, same p):**
+
+| p | captures/step | fresh polar intake ratio | equatorial ratio |
+|---|---|---|---|
+| 1 | 458 | 1.33 | 0.82 |
+| 0.3 | 171 | 1.09 | 0.94 |
+| 0.1 | 74 | 1.045 | 0.98 |
+
+- The field still steers intake at every p.
+- The steering is a **linear response** to emission strength: about 0.06% more
+  polar intake per captured-and-re-emitted photon per step. There is no
+  threshold and no runaway.
+- With uniform capture probability, steering changes *where* charge arrives
+  but not *how much* is taken in, so it cannot feed back.
+
+**Loop closure with polar-only intake.** Intake only near the poles, so
+poleward steering should raise intake, emission, and then steering:
+
+| aperture | λ | envelope captures/step, maze vs isotropic | change |
+|---|---|---|---|
+| 1/3 | 0.3 | 34.5 vs 33.9 | +1.8% |
+| 0.6 | 0.3 | 114.0 vs 108.9 | +4.7% |
+| 1/3 | 1 | 36.0 vs 35.4 | +1.7% |
+| 0.6 | 1 | 125.0 vs 121.3 | +3.1% |
+
+- **The loop closes:** the disc raises its own polar intake. Statistical noise
+  is ~0.3%.
+- **Its gain is small:** roughly 0.04 extra intake per extra emitted photon,
+  far below the ~1 needed for Mathis's "accelerates … up to some calculable
+  maximum".
+- The gain rises with aperture and with density. Raising it means more
+  emitted-vs-incoming collisions just outside the envelope: a denser near
+  field, stronger emission per body, or a longer interaction zone.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
