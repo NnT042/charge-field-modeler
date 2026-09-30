@@ -30,7 +30,7 @@ use super::engine::{DsmcEngine, Totals};
 use super::gpu_types::{GpuPhoton, FLAG_ALIVE, FLAG_SPECIES_PLUS};
 use crate::baryon_shells::{matter_velocity, region_of, PROTON_STATES};
 use crate::gpu::context::GpuContext;
-use crate::rough_sphere::{contact_normal, level_radius, wall_contact, Ball, ContactLaw, StackRule, Stacked};
+use crate::rough_sphere::{contact_normal, level_radius, wall_contact_spinning, Ball, ContactLaw, StackRule, Stacked};
 
 fn hash_u32(x: u32) -> u32 {
     let mut v = x;
@@ -178,7 +178,8 @@ fn run_contact_match(rough: RoughParams, seed: u64) -> (usize, f64, f64, f64) {
     let mut totals = Totals::default();
     engine.step_collide(&ctx, &mut totals);
     let after = engine.read_photons(&ctx);
-    let law = ContactLaw { e: 1.0, beta: rough.beta, beta_twist: rough.beta_twist, twist_loss_to_normal: rough.twist_loss_to_normal, kappa: rough.kappa };
+    let (bb, bt, bl) = rough.body_law.unwrap_or((rough.beta, rough.beta_twist, rough.twist_loss_to_normal));
+    let law = ContactLaw { e: 1.0, beta: bb, beta_twist: bt, twist_loss_to_normal: bl, kappa: rough.kappa };
     let rule = StackRule { max_level: rough.stack_max_level, stack_tol: 1e-4, unstack_edge: rough.unstack_edge, kappa: rough.kappa };
     let (mut checked, mut max_err, mut max_err_wrong) = (0usize, 0.0f64, 0.0f64);
     let mut dp_cpu = DVec3::ZERO;
@@ -188,6 +189,8 @@ fn run_contact_match(rough: RoughParams, seed: u64) -> (usize, f64, f64, f64) {
         let x = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
         let Some(k) = region_of(&frames, x) else { continue };
         let gv = matter_velocity(&frames, k, x);
+        let omega_k: DVec3 = (k..4).map(|j| frames[j].omega).sum();
+        let gw = if omega_k.length() > 1e-9 { omega_k.normalize() * rough.grain_edge } else { DVec3::ZERO };
         let st0 = to_stacked(p);
         let u = st0.v - gv;
         let key = hash_u32(id ^ hash_u32(step ^ 0xB0D1E5));
@@ -203,14 +206,14 @@ fn run_contact_match(rough: RoughParams, seed: u64) -> (usize, f64, f64, f64) {
         let psi = rand01(engine.config.seed, key, 2) as f64 * std::f64::consts::TAU;
         let nrm = contact_normal(u, rho as f64, psi);
         let b0 = st0.outer_ball();
-        let slip_n = ((b0.v - gv) + b0.r * b0.w.cross(nrm)).dot(nrm);
+        let slip_n = ((b0.v - gv) + b0.r * b0.w.cross(nrm) + gw.cross(nrm)).dot(nrm);
         if slip_n.abs() < 1e-4 {
             continue;
         }
         let expect = |gv_used: DVec3| {
             let mut st = st0;
             let mut b: Ball = st.outer_ball();
-            let out = wall_contact(&mut b, gv_used, nrm, &law, !free);
+            let out = wall_contact_spinning(&mut b, gv_used, gw, nrm, &law, !free);
             st.set_outer(&b);
             if out.touched && rough.stacking {
                 st.restack(out.kick, &rule);
@@ -260,6 +263,10 @@ fn shell_gpu_matches_cpu_contact() {
         ("twist, PinnedC, stacking", twist_rough(true, SpeedMode::PinnedC)),
         ("edge, Free", RoughParams { speed_mode: SpeedMode::Free, g_max: 6.0, ..RoughParams::default() }),
         ("edge+twist, PinnedC, stacking, glancing", RoughParams { beta: 1.0, glancing_bias: true, ..twist_rough(true, SpeedMode::PinnedC) }),
+        (
+            "SPINNING GRAINS, body edge+twist law, photon twist law, stacking",
+            RoughParams { grain_edge: 1.0, body_law: Some((1.0, 0.0, true)), ..twist_rough(true, SpeedMode::PinnedC) },
+        ),
     ] {
         let (checked, err, wrong, dp_rel) = run_contact_match(rough, 0x5E11_0001);
         println!("shell contact gpu-vs-cpu [{name}]: checked {checked}, max err {err:.2e} (wrong grain velocity: {wrong:.2e}), delivered-momentum rel diff {dp_rel:.1e}");
@@ -423,11 +430,27 @@ fn report_b_shell_single_body() {
     // CFM_B_LAW: "twist" (default), "edge", "edge+twist".
     let law_name = std::env::var("CFM_B_LAW").unwrap_or("twist".to_string());
     let base = twist_rough(true, SpeedMode::PinnedC);
-    let rough = match law_name.as_str() {
-        "edge" => RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, ..base },
-        "edge+twist" => RoughParams { beta: 1.0, ..base },
-        _ => base,
+    let law_of = |name: &str| -> (f64, f64, bool) {
+        match name {
+            "edge" => (1.0, -1.0, false),
+            "edge+twist" => (1.0, 0.0, true),
+            _ => (-1.0, 0.0, true),
+        }
     };
+    let (b0, t0, l0) = law_of(&law_name);
+    // CFM_B_BODY_LAW: separate photon-body law (default: same as CFM_B_LAW).
+    // CFM_B_GRAIN: grain spin edge speed (default 0 = non-spinning).
+    let body_law_name = std::env::var("CFM_B_BODY_LAW").ok();
+    let grain_edge: f64 = std::env::var("CFM_B_GRAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let rough = RoughParams {
+        beta: b0,
+        beta_twist: t0,
+        twist_loss_to_normal: l0,
+        grain_edge,
+        body_law: body_law_name.as_deref().map(law_of),
+        ..base
+    };
+    let law_name = format!("{law_name} body={} grain={grain_edge}", body_law_name.as_deref().unwrap_or("same"));
     println!("=== B: single mechanical baryon (shells), law={law_name}, PinnedC/stacking, lambda={LAMBDA}, n_a={N_A}, R_D=6, warmup {warmup}, avg {avg} ===");
     println!("isotropic crossing baseline bands: polar 0.134 mid 0.366 equat 0.500");
     println!(

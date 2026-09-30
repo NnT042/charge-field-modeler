@@ -33,7 +33,8 @@ struct Params {
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
-    body_model: u32, tau_body: f32, _pad13a: u32, _pad13b: u32,
+    body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
+    body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -157,11 +158,13 @@ fn body_lat_deg(b: u32, x: vec3<f32>) -> f32 {
     return 90.0 - degrees(colat);
 }
 
-// Doc §14: one photon vs body-grain contact. Mirrors
-// rough_sphere::wall_contact line for line (infinitely massive, non-spinning
-// grain moving at gv), then the §13.7 restack. Stacking mass model: m = 1
-// when stacking, else m = R = 2^k. Returns the momentum given to the body.
-fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+// Doc §14/§14.8: one photon vs body-grain contact. Mirrors
+// rough_sphere::wall_contact_spinning line for line (an infinitely massive
+// grain moving at gv and spinning at gw, unit radius), with the body contact
+// law (body_beta / body_beta_twist / body_twist_loss), then the §13.7
+// restack. Stacking mass model: m = 1 when stacking, else m = R = 2^k.
+// Returns the momentum given to the body.
+fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, gw: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     let r = exp2(f32((*p).c[3]));
     let m = select(r, 1.0, params.stacking != 0u);
     let kappa = params.rough_kappa;
@@ -171,7 +174,7 @@ fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, n: vec3<f32>) -> vec
     let v_in = v;
     let w_in = w;
     let e_rot_in = 0.5 * inertia * dot(w, w);
-    let g = (v - gv) + r * cross(w, n);
+    let g = (v - gv) + r * cross(w, n) + cross(gw, n);
     let gn = dot(g, n);
     if (gn <= 0.0) {
         return vec3<f32>(0.0);
@@ -179,19 +182,19 @@ fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, n: vec3<f32>) -> vec
     let g_t = g - gn * n;
     let j_n = -m * 2.0 * gn * n; // e = 1
     let k_t = (1.0 / m) * (1.0 + 1.0 / kappa);
-    let j_t = -(1.0 + params.rough_beta) * g_t / k_t;
+    let j_t = -(1.0 + params.body_beta) * g_t / k_t;
     let j = j_n + j_t;
     v = v + j / m;
     let nj = cross(n, j);
     var kick = r * nj / inertia;
     w = w + kick;
-    let omega_n = dot(w, n);
+    let omega_n = dot(w - gw, n);
     let e_before = 0.5 * inertia * dot(w, w);
-    let dtw = -(1.0 + params.rough_beta_twist) * omega_n * n;
+    let dtw = -(1.0 + params.body_beta_twist) * omega_n * n;
     w = w + dtw;
     kick = kick + dtw;
     let lost = e_before - 0.5 * inertia * dot(w, w);
-    if (params.twist_loss_to_normal != 0u && lost > 0.0) {
+    if (params.body_twist_loss != 0u && lost > 0.0) {
         let w_n = dot(v - gv, n);
         let jx = m * (-w_n - sqrt(w_n * w_n + 2.0 * lost / m));
         v = v + jx * n / m;
@@ -265,7 +268,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let n = normalize(uh * sqrt(max(1.0 - rho, 0.0)) + e_perp * sqrt(rho));
                 let v_before = ph.b.xyz * ph.d.w;
                 let e_before = 0.5 * dot(v_before, v_before);
-                let dp = wall_contact(&ph, gv, n);
+                // §14.8: the grain spins with its shell (direction of the
+                // shell matter's total angular velocity) at edge speed
+                // grain_edge on unit radius. grain_edge = 0: non-spinning.
+                var omega_k = vec3<f32>(0.0);
+                for (var j = k; j < 4u; j = j + 1u) {
+                    omega_k = omega_k + shell_omega(bi, j);
+                }
+                var gw = vec3<f32>(0.0);
+                if (length(omega_k) > 1e-9) {
+                    gw = normalize(omega_k) * params.grain_edge;
+                }
+                let dp = wall_contact(&ph, gv, gw, n);
                 if (dot(dp, dp) > 0.0) {
                     let bc = bodies[bi].center.xyz;
                     let tq = cross(x0 - bc, dp);

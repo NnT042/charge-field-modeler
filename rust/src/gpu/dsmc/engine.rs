@@ -619,8 +619,12 @@ impl DsmcEngine {
                 BodyModel::Absorber => 0.0,
                 BodyModel::Shells { tau_body } => tau_body as f32,
             },
-            _pad13a: 0,
-            _pad13b: 0,
+            grain_edge: c.rough.grain_edge as f32,
+            body_twist_loss: c.rough.body_law.map(|l| l.2).unwrap_or(c.rough.twist_loss_to_normal) as u32,
+            body_beta: c.rough.body_law.map(|l| l.0).unwrap_or(c.rough.beta) as f32,
+            body_beta_twist: c.rough.body_law.map(|l| l.1).unwrap_or(c.rough.beta_twist) as f32,
+            _pad14a: 0,
+            _pad14b: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);

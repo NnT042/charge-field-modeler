@@ -209,7 +209,18 @@ pub struct WallOutcome {
 /// restored (D7 PinnedC; the grain has no spin to share). `n` points from the
 /// photon's centre toward the grain.
 pub fn wall_contact(b: &mut Ball, grain_v: DVec3, n: DVec3, law: &ContactLaw, pinned: bool) -> WallOutcome {
-    let g = (b.v - grain_v) + b.r * b.w.cross(n);
+    wall_contact_spinning(b, grain_v, DVec3::ZERO, n, law, pinned)
+}
+
+/// [`wall_contact`] against a grain that spins with angular velocity
+/// `grain_w` at unit radius (doc §14.8: body matter carries its shell's spin,
+/// so its surface moves at `grain_w x n`). The sliding slip gains the
+/// grain's surface term. The twist grip acts on the RELATIVE spin about n:
+/// (w - grain_w).n -> -beta_twist * (w - grain_w).n. A chirality-matched
+/// photon therefore passes and a mismatched one catches. The grain is
+/// infinitely heavy, so only the photon changes.
+pub fn wall_contact_spinning(b: &mut Ball, grain_v: DVec3, grain_w: DVec3, n: DVec3, law: &ContactLaw, pinned: bool) -> WallOutcome {
+    let g = (b.v - grain_v) + b.r * b.w.cross(n) + grain_w.cross(n);
     let gn = g.dot(n);
     if gn <= 0.0 {
         return WallOutcome::default();
@@ -227,8 +238,8 @@ pub fn wall_contact(b: &mut Ball, grain_v: DVec3, n: DVec3, law: &ContactLaw, pi
     b.v += j / m;
     let nj = n.cross(j);
     b.w += b.r * nj / inertia;
-    // Twist grip against a non-rotating face: w.n -> -beta_twist * w.n.
-    let omega_n = b.w.dot(n);
+    // Twist grip on the relative spin about n.
+    let omega_n = (b.w - grain_w).dot(n);
     let e_before = b.e_rot(law.kappa);
     b.w -= (1.0 + law.beta_twist) * omega_n * n;
     let lost = e_before - b.e_rot(law.kappa);
@@ -555,6 +566,25 @@ mod tests {
         println!("wall contact: static grain max|dE/E| {max_de:.1e}; moving grain (control) {max_moving:.2}");
         assert!(max_de < 1e-12);
         assert!(max_moving > 0.05, "a moving grain must do work on the photon");
+    }
+
+    /// Spinning grain, twist grip: a photon whose spin about n matches the
+    /// grain's passes untouched; the opposite sense is locked to the grain's
+    /// (reversed).
+    #[test]
+    fn spinning_grain_twist_matches_and_catches() {
+        let twist = ContactLaw { beta_twist: 0.0, twist_loss_to_normal: true, ..ContactLaw::rough(-1.0) };
+        let n = DVec3::X;
+        let v = DVec3::new(1.0, 0.0, 0.0);
+        let mut same = Ball::level(0, v, DVec3::X);
+        let out = wall_contact_spinning(&mut same, DVec3::ZERO, DVec3::X, n, &twist, false);
+        assert!(out.touched && (same.w - DVec3::X).length() < 1e-12, "matched spin must mesh");
+        let mut opp = Ball::level(0, v, -DVec3::X);
+        wall_contact_spinning(&mut opp, DVec3::ZERO, DVec3::X, n, &twist, false);
+        // Lock against an infinitely heavy grain takes the RELATIVE spin to
+        // zero: the mismatched photon is dragged all the way to the grain's
+        // sense (its handedness about n is reversed).
+        assert!((opp.w.dot(n) - 1.0).abs() < 1e-12, "mismatched spin must be locked to the grain's");
     }
 
     /// Smooth spheres (beta = -1) must leave both spins untouched: the

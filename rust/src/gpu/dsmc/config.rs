@@ -101,11 +101,18 @@ pub struct RoughParams {
     /// Highest level index (3 = photon tier z-spin; storage allows <= 3).
     pub stack_max_level: u32,
     pub unstack_edge: f64,
+    /// Doc §14.8: body grains spin with their shell (axis = the shell
+    /// matter's angular velocity direction) at this edge speed on unit
+    /// radius. 0 = non-spinning grains (§14.7 behaviour).
+    pub grain_edge: f64,
+    /// Doc §14.8: a separate law for photon-body contacts, as (beta,
+    /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
+    pub body_law: Option<(f64, f64, bool)>,
 }
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01 }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, body_law: None }
     }
 }
 

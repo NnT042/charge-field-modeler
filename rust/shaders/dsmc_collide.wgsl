@@ -51,7 +51,8 @@ struct Params {
     debug_force_equal_mass_exchange: u32, g_max_catch: f32, rough_beta: f32, rough_beta_twist: f32,
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
-    body_model: u32, tau_body: f32, _pad13a: u32, _pad13b: u32,
+    body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
+    body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
 };
 
 const FLAG_KIND_EMITTED: u32 = 2u;

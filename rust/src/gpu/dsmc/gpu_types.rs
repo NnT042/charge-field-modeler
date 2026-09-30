@@ -266,8 +266,15 @@ pub struct GpuParams {
     pub body_model: u32,
     /// Shells: body-grain contact rate per unit relative path length.
     pub tau_body: f32,
-    pub _pad13a: u32,
-    pub _pad13b: u32,
+    /// §14.8: body-grain spin edge speed (0 = non-spinning grains).
+    pub grain_edge: f32,
+    /// Body-contact law (defaults to the photon-photon law).
+    pub body_twist_loss: u32,
+
+    pub body_beta: f32,
+    pub body_beta_twist: f32,
+    pub _pad14a: u32,
+    pub _pad14b: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
