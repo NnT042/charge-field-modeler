@@ -1342,6 +1342,41 @@ at depth 4):
 - **Cost:** hits scale slower than the ball's cross-section (a faster ball sweeps
   more). Depth 4 needs ~40× the run time of depth 0 for similar statistics.
 
+### 15.5 Density sweep: does photon-photon crowding drive the neutron difference? (2026-09-30)
+
+**Setup:** depth 1 (the depth where the intake difference shows), BodyFree, first
+state of each class, λ = 3 → 1 → 0.3 (photon-photon mean free path, body radius 1).
+- λ = 0.3 needs a finer grid (h = 0.1 instead of 0.25) and n_a = 15000 (13.4M live
+  photons; the 2 GiB binding limit caps capacity near 19M). Warmup 2400, avg 4800.
+- Collision rates came out at 0.434 / 1.30 / 4.36 per photon per unit time, as
+  expected for each λ.
+
+| λ | through-pass (0–10° / 10–20°) | clean passages | hits per passage (hit + pp→hit), p / n | share of hits after a pp collision, p | n/p hit rate | contacted-exit eq, p / n | ball-hit helicity, p / n |
+|---|---|---|---|---|---|---|---|
+| 3 | 10% / 5.8% | 57% | 0.0089 / 0.0073 | 30% | 0.81 | 0.537 / 0.523 | +0.06 / +0.07 |
+| 1 | 3.4% / 2.3% | 21% | 0.0090 / 0.0074 | 64% | 0.82 | 0.540 / 0.529 | +0.05 / +0.05 |
+| 0.3 | 0.4% / 0.4% | 2.6% | 0.0086 / 0.0070 | 95% | 0.805 | 0.548 / 0.537 | +0.04 / +0.04 |
+
+- **Density changes which hits come after a photon-photon collision, not how often
+  the ball is hit.**
+  - At λ = 0.3, 95% of ball hits follow a photon-photon collision inside the
+    envelope: the user's "knocked into the wall" channel dominates.
+  - But hits per passage are flat (0.0086–0.0090), and hits per photon density are
+    flat too.
+- **The neutron's lower intake is density-independent** (n/p 0.81, 0.82, 0.805). It
+  is geometric (a slower ball sweeps less space), not caused by internal
+  photon-photon hits. The internal-hit hypothesis is not supported, as the user
+  suspected.
+- **The contacted-exit equatorial split is about 1 point at every λ.** At λ = 0.3
+  (100k hits) that is ~5σ: small but real, and also density-independent.
+- **The pole-to-pole channel closes with density:** 10% → 3.4% → 0.4% for near-pole
+  entries, identical for p and n. It is a gas-transparency effect.
+- **Density scrambles helicity.** The photon-photon passage helicity falls from
+  +0.066 to +0.002, and the ball-hit helicity falls with it; p ≈ n throughout.
+- **Speed tail:** g_max-overflow pairs grow with density (proton 685 of 7.0e9
+  collisions at λ = 0.3; neutron 3). Negligible bias, but the runaway lives near the
+  faster proton ball. Escape speed is unchanged (1.000 ± 0.050 p, ± 0.037 n).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
