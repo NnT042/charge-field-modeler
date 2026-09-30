@@ -796,7 +796,7 @@ fn report_c_ball_single_body() {
     let free = env("CFM_C_SPEED", "pinned") == "free";
     let rough = if free { RoughParams { speed_mode: SpeedMode::Free, g_max: 8.0, ..rough } } else { rough };
     println!(
-        "=== C: instantaneous ball, speed={}, photon-photon={pp}, body={body}, grain={grain}, PinnedC, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ===",
+        "=== C: instantaneous ball, speed={}, photon-photon={pp}, body={body}, grain={grain}, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ===",
         if free { "free" } else { "pinned" }
     );
     let ctx = GpuContext::new().expect("GPU");

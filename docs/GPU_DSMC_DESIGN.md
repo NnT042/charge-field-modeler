@@ -1106,6 +1106,73 @@ User decisions:
 - the swept-centre map of the ball (CPU) shows the donut's polar hole, for comparison
   with Spin mode's disc-and-hole.
 
+### 15.1 Bug found, results rerun, first proton/neutron split (2026-09-29, 4f10674)
+
+**Bug: permeable bodies carved gas volume.** The per-cell precompute still treated
+every body as a solid sphere (the Absorber rule). Cells inside a permeable envelope
+got near-zero free volume, so their photon-photon candidate count was capped only by
+the per-cell limit.
+- The in-envelope photon-photon rate came out 2.8× the expected rate at λ = 3, and
+  ~40× at λ = 10⁶.
+- It was caught because the §15 passage table showed 92% of passages with a
+  photon-photon collision, vs ~45% expected.
+- Fixed: permeable bodies use the body-free volume. Regression gate
+  `permeable_body_does_not_distort_gas_collision_rate`: 0 cells carved, rate 0.657 vs
+  0.667 expected.
+
+**§14 shell results rerun (supersede §14.7/§14.8 numbers).** τ_body = 1, grain 0,
+PinnedC, stacking; contacted-exit polar/mid/equatorial:
+
+| photon-photon | photon-body | bands | pole-to-pole |
+|---|---|---|---|
+| twist | twist | 0.084 / 0.333 / 0.583 | 17–19% |
+| twist | edge | 0.065 / 0.315 / 0.620 | 7–8% |
+| edge | twist | 0.083 / 0.334 / 0.583 | 17–19% |
+| edge | edge | 0.064 / 0.315 / 0.621 | 6–10% |
+
+- **The 79–81% "disc" was an artifact of the bug.** So was the attribution to
+  photon-photon edge grip. The real shell sprinkler is a modest equatorial lean
+  (58–62% vs 50% isotropic), slightly stronger with edge body contacts.
+- Pole-to-pole passage is real (7–19% of contacted passages at τ = 1).
+- **Proton == neutron still holds in every shell run.**
+
+**§15 instantaneous ball (report_c, all 8 states, λ = 3, n_a = 4000, 1200 steps,
+1 seed; free speed; twist grip; grain 1; stacking).** Gas density near the body
+is 1.1× n_a, and ~46% of passages have a photon-photon hit, as expected.
+
+| | contacted-exit bands (p/m/e) | helicity of ball-hit exits | torque / hit |
+|---|---|---|---|
+| proton, all 4 states | 0.105–0.107 / 0.339–0.345 / **0.548–0.556** | **+0.23 to +0.24** | ±0.65–0.67 |
+| neutron, all 4 states | 0.109–0.116 / 0.352–0.360 / **0.526–0.532** | **+0.11 to +0.13** | ±0.70–0.71 |
+
+- **This is the first proton/neutron split from mechanics alone,** consistent across
+  all four states of each class. There is no imposed profile or redirect, and the
+  only input difference is the level-sign pattern.
+  - The neutron exits ~2.5 points *less* equatorially (~8σ).
+  - The neutron carries about *half* the helicity (0.12 vs 0.23).
+  - In words: the neutron sprinkles less disc and less magnetism.
+- **The pole-angle table is identical for p and n:**
+  - Through-passage is 8.7% for entries within 10° of the pole, 5% at 10–20°,
+    1.7% at 20–30°, and ≈0 beyond. That is the built-in polar hole of the swept
+    donut.
+  - "Photon-photon then ball hit" (the user's knocked-into-the-wall case) is
+    1.1–1.3% of passages at every angle.
+  - Photon vs antiphoton show no split. The neutron's suppression is **not** yet
+    visible in the pole channel; it shows up in *how the ball treats the photons it
+    hits*.
+- **Why the ball separates p and n when the shells could not:** the ball's real
+  instantaneous velocity and spin history differs between sign patterns (mean centre
+  speed 1.78c proton vs 1.67c neutron). Time-averaging into shells erased exactly
+  that. This vindicates the user's instantaneous-hit decision.
+- **PinnedC + ball:** the ball moves at ~1.8c, so a photon held at c cannot get
+  away. 88% of hits are push-outs (snowplow), and some photons are overrun. The split
+  persists (equatorial 0.57 vs 0.53, helicity 0.09–0.13 vs 0.04–0.07), but this
+  combination is inconsistent. **Open decision:** free speed for body contacts
+  (photon.html: "newly emitted photons may be going slightly over c"), or reconsider
+  the superluminal compounding of Spin-mode level speeds.
+- **Caveats:** one seed, one λ, one τ-free geometry, and levels 1–8 as a rigid ball.
+  Magnitudes are small (the band split is 2.5 points); the helicity split is large.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
