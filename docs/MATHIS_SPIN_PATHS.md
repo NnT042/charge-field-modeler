@@ -340,3 +340,111 @@ table.
   at the equator, which is Mathis's recycling pattern with the intake side
   emergent. The neutron is reversed. There is no in/out reversal at a finite
   radius yet: the emitter handles only 3% of the gas.
+
+## D. Intake: what Mathis says about how much charge a baryon takes in (2026-09-30)
+
+Collected for the §15.10 finding that a maze ball recycles only ~3% of the charge
+crossing its envelope, so neighbours barely feed each other. Paraphrased; source
+URLs for checking.
+
+### How much
+- **Absolute rate:** e = 1.602e-19 C; 1 C = 2e-7 kg/s (from the Ampere
+  definition); so e = 3.204e-26 kg/s = 19.19 proton masses per second, about
+  1.15e11 charge photons per second at 2.77e-37 kg each.
+  - Sources: charge3.html, fine3.pdf, xpart.pdf, atmo2.pdf.
+  - mond.html says "11.5 billion" next to 1.15e11, which is a slip:
+    1.15e11 is 115 billion.
+  - It can't be converted to a capture *fraction* without an ambient density
+    in real units, and Mathis gives none usable: mond's ".03 kg/m³/s inside
+    the Bohr radius" has broken units.
+- **Charge held inside:** the proton–Dalton gap (1836 − 1821 = 15 electron
+  masses) is the charge being held in the proton at any moment. The proton
+  recycles "15 electrons during every spin cycle" (fine3.pdf).
+  - The spin cycle he derives (0.00043 s) can't be a z-spin at c on a
+    proton's radius, so only the *ratio* is usable: the proton holds about 0.8%
+    of its mass in transit.
+- **Neutrons hold charge longer and take in less:**
+  - The proton "doesn't hold charge as long" as the neutron, which is why the
+    neutron is heavier (magmom.pdf).
+  - A neutron on a nuclear pole pulls in 0.685 of a proton's charge, its
+    magnetic-moment ratio (phos.pdf).
+
+### Where and why
+- **The poles are where photons go in**, because angular momentum is least
+  there (bohr3.pdf). The shell is porous to photons but not electrons; the
+  "hole" at the pole is shorthand for where they tend to enter.
+- **Potential lows at the poles:** a spinning sphere has potential lows at its
+  poles, and "any passing field of particles will be drawn to the poles"
+  (aurora.pdf). Mathis says there are no real pulls: field densities create
+  the potentials, and a spinning proton acts like a fan that seems to pull
+  (solidlight.pdf).
+- **The mechanism is collective feedback:**
+  1. A spinning, permeable sphere pushes photons out hardest at its equator.
+  2. That creates negative pressure at the poles, which draws photons in
+     (pole.pdf).
+  3. The stronger equatorial emission "drives off ambient photons that are
+     incoming, by direct bombardment", sending the incoming ones to the poles
+     (season.pdf).
+  4. The process "creates a feedback mechanism which accelerates the process
+     up to some calculable maximum, at which point it stabilizes" (pole.pdf).
+- **Focus depends on spin:** incoming charge is focused at the poles, more so
+  the faster the spin (aurora.pdf).
+  - For a fast spinner like the proton, all outgoing charge leaves below 30°
+    and *no* in/out crossover boundary forms; only slow spinners (planets) get
+    an aurora-like boundary.
+  - Charge that enters close enough to the axis dodges the centrifugal effect
+    and exits the opposite pole as **through charge** (aurora.pdf, per4.pdf).
+- **Path inside:** charge comes in at the poles, moves through the inner
+  levels first, then the outer levels, then out at the equator. The inner
+  levels' channel capacity caps the whole particle's throughput (muonmag.pdf).
+
+### Efficiency and limits
+- **Efficiency ~100% at rest:** a proton at rest recycles with ~100%
+  efficiency, like tossing balls into the window of a parked car. Moving
+  (accelerated) protons drop slightly below that (bottom.pdf).
+- **Hits are absorbed:** "Almost all the shots that hit it will be absorbed,
+  or will knock it back", for photons hitting a larger particle (photon.html).
+- **Capacity:** "not all ambient charge can be channeled". A nucleus channels
+  only a given amount, and the residual beats on the exterior and spins it up
+  (emc.pdf). Likewise a growing photon "takes its fill of small photons and
+  they start to spill out" (photon.html).
+- **The boundary holds trapped photons in:** the proton boundary is ambient
+  photons deflecting internal ones. Their spins are orthogonal, so trapped
+  photons can't escape between the channels (fine3.pdf).
+
+### Compared with the §15.9–15.10 model
+
+| Mathis | model now |
+|---|---|
+| intake at the poles, via potential lows that draw the passing field | capture wherever the core ball is hit (mostly equatorial, since the ball moves) |
+| permeable body; channels start at the pole | transparent envelope; only the 1/8 core interacts |
+| ~100% of what reaches the channels | 100% of contacts ✓ |
+| capacity-limited; excess spins the body up | no limit |
+| charge held in transit (~0.8% of mass); the neutron holds longer | zero residence time |
+| near-axis entrants pass straight through to the opposite pole | not modelled for the proton |
+| fast spinner: all outflow below 30°, no crossover boundary | ✓ outflow < 30° (depth 0); intake at poles and mid-latitudes |
+| neutron takes in 0.685 × proton | p and n capture equally |
+
+### Candidate intake mechanisms
+1. **Polar-vortex capture at the envelope:**
+   - Photons entering the level-12 envelope through a polar aperture are
+     captured.
+   - Near the axis they pass through to the opposite pole; otherwise they go
+     through the maze to the equator.
+   - One geometric parameter, which could be anchored to the measured trace
+     hole (1/3 of the radius, from the earlier through-charge limb).
+   - Most directly sourced (bohr3, aurora). It imposes *where* intake happens,
+     not how much.
+2. **Emergent intake via potentials:**
+   - Mathis's actual mechanism: the equatorial emission deflects the incoming
+     ambient poleward, feeding back to a stable maximum.
+   - It needs the emitted share of the near field to be large, so it can only
+     be tested once intake is strong. It works as a check on 1, or on a
+     larger capture body, rather than as a starting rule.
+3. **Reservoir with capacity and residence time:**
+   - Captured photons are held and released at rate N/τ; intake is refused
+     (scattered) when the reservoir is full.
+   - The neutron's τ is longer (magmom) and its intake 0.685 × the proton's
+     (phos).
+   - It adds EMC saturation and the 15 m_e held charge as a ratio target. It
+     combines with 1 or 2.
