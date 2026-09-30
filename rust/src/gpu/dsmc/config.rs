@@ -138,6 +138,10 @@ pub enum StiffnessShed {
 pub enum BodyModel {
     Absorber,
     Shells { tau_body: f64 },
+    /// Doc §15: the instantaneous base ball (levels 1-8, radius 1/8) carried
+    /// by levels 9-12. It is the only body matter. Hits are exact
+    /// moving-sphere contacts; the envelope does bookkeeping only.
+    Ball,
 }
 
 /// Nucleon seating in a stack (recycling.rs `StackOrient`, duplicated here so

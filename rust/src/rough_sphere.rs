@@ -177,6 +177,31 @@ pub fn pin_pair(a: &mut Ball, b: &mut Ball, kappa: f64, e_rot_before: f64, fallb
     false
 }
 
+/// Doc §15: earliest time t in [0, t_max] at which a point starting at `x0`
+/// moving at `v` touches a sphere of radius `r` whose centre starts at `c0`
+/// and moves at `vc`, while approaching. None if it never does, or if the
+/// point starts inside (overlap is reported by the caller, never resolved).
+pub fn moving_sphere_hit(x0: DVec3, v: DVec3, c0: DVec3, vc: DVec3, r: f64, t_max: f64) -> Option<f64> {
+    let d = x0 - c0;
+    let u = v - vc;
+    let a = u.length_squared();
+    let bq = d.dot(u);
+    let c = d.length_squared() - r * r;
+    if c <= 0.0 || a < 1e-18 || bq >= 0.0 {
+        return None;
+    }
+    let disc = bq * bq - a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let t = (-bq - disc.sqrt()) / a;
+    if t >= 0.0 && t <= t_max {
+        Some(t)
+    } else {
+        None
+    }
+}
+
 /// Contact normal for a pair approaching with relative velocity `u`, with
 /// impact parameter b/d = sqrt(rho) (uniform over the collision disk) and
 /// azimuth `psi` around u. This is the geometric hard-sphere distribution,
@@ -220,7 +245,26 @@ pub fn wall_contact(b: &mut Ball, grain_v: DVec3, n: DVec3, law: &ContactLaw, pi
 /// photon therefore passes and a mismatched one catches. The grain is
 /// infinitely heavy, so only the photon changes.
 pub fn wall_contact_spinning(b: &mut Ball, grain_v: DVec3, grain_w: DVec3, n: DVec3, law: &ContactLaw, pinned: bool) -> WallOutcome {
-    let g = (b.v - grain_v) + b.r * b.w.cross(n) + grain_w.cross(n);
+    wall_contact_general(b, grain_v, grain_w, grain_w, n, law, pinned)
+}
+
+/// The general body contact (doc §15). The partner's surface slides at
+/// `grain_v + surface_w x n` at the contact point: `surface_w` is the
+/// partner's angular velocity times its radius, so for a big ball this is the
+/// true rigid-body surface motion. The twist grip acts on the relative spin
+/// `(w - twist_w).n`, with `twist_w` the partner's photon-scale surface spin
+/// (unresolved for the base ball; see doc §15).
+pub fn wall_contact_general(
+    b: &mut Ball,
+    grain_v: DVec3,
+    surface_w: DVec3,
+    twist_w: DVec3,
+    n: DVec3,
+    law: &ContactLaw,
+    pinned: bool,
+) -> WallOutcome {
+    let grain_w = twist_w;
+    let g = (b.v - grain_v) + b.r * b.w.cross(n) + surface_w.cross(n);
     let gn = g.dot(n);
     if gn <= 0.0 {
         return WallOutcome::default();

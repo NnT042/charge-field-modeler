@@ -58,6 +58,9 @@ struct Params {
 const FLAG_KIND_EMITTED: u32 = 2u;
 const FLAG_SPECIES_PLUS: u32 = 4u;
 const FLAG_COLLIDED_SINCE_CROSS: u32 = 1u << 13u;
+// Doc §15: a photon-photon collision happened during the current body
+// passage (cleared by dsmc_move on entering a body envelope).
+const FLAG_PP_PASSAGE: u32 = 1u << 14u;
 const TALLY_SCALE: f32 = 4096.0;
 // Tally indices (must stay in sync with gpu_types.rs).
 const TALLY_COLLISIONS_IDX: u32 = 61u;
@@ -426,8 +429,8 @@ fn main(
             let bounces_b = pb.c[1];
             pa.c[1] = bounces_a + 1u;
             pb.c[1] = bounces_b + 1u;
-            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS;
-            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS;
+            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
+            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
             photons[slot_a] = pa;
             photons[slot_b] = pb;
             continue;
@@ -615,12 +618,12 @@ fn main(
         if (cap == 0u || bounces_a < cap) {
             pa.b = vec4<f32>(new_da, clamp(pa.b.w + spin_delta_a, -2.0, 2.0));
             pa.c[1] = bounces_a + 1u;
-            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS;
+            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
         }
         if (cap == 0u || bounces_b < cap) {
             pb.b = vec4<f32>(new_db, clamp(pb.b.w + spin_delta_b, -2.0, 2.0));
             pb.c[1] = bounces_b + 1u;
-            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS;
+            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
         }
 
         // E1 shedding (doc §11d, Transfer mode): move one stacked level from

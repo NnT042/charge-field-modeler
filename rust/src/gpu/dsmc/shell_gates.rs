@@ -500,3 +500,305 @@ fn report_b_shell_single_body() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Doc §15: the instantaneous ball
+// ---------------------------------------------------------------------------
+
+fn ball_config(boundary: Boundary, signs: [f64; 4], rough: RoughParams, sigma: f64, n_a: f64, capacity: u32, seed: u64) -> DsmcConfig {
+    let mut c = shell_config(boundary, signs, 0.0, rough, sigma, n_a, 2.0 / 3.0, capacity, seed);
+    c.body_model = BodyModel::Ball;
+    c
+}
+
+/// CPU mirror of the move kernel's ball phase for one photon: 8 linear
+/// sub-intervals between the uploaded keyframes, the earliest hit, and the
+/// contact. Returns (hit, final state, final position).
+#[allow(clippy::too_many_arguments)]
+fn cpu_ball_step(
+    p: &GpuPhoton,
+    keys: &[[f32; 4]],
+    dt: f64,
+    law: &ContactLaw,
+    pinned: bool,
+    rule: &StackRule,
+    grain_edge: f64,
+    stacking: bool,
+) -> (bool, Stacked, DVec3) {
+    use crate::rough_sphere::{moving_sphere_hit, wall_contact_general};
+    let k = |s: usize, j: usize| {
+        let q = keys[s * 3 + j];
+        (DVec3::new(q[0] as f64, q[1] as f64, q[2] as f64), q[3] as f64)
+    };
+    let st0 = to_stacked(p);
+    let x0 = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
+    let v0 = st0.v;
+    let h = dt / 8.0;
+    for si in 0..8 {
+        let t0 = si as f64 * h;
+        let (c0, rb) = k(si, 0);
+        let (c1, _) = k(si + 1, 0);
+        let vc = (c1 - c0) / h;
+        if let Some(t) = moving_sphere_hit(x0 + v0 * t0, v0, c0, vc, rb, h) {
+            let f = t / h;
+            let th = t0 + t;
+            let xh = x0 + v0 * th;
+            let ch = c0.lerp(c1, f);
+            let om = k(si, 1).0.lerp(k(si + 1, 1).0, f);
+            let vcen = k(si, 2).0.lerp(k(si + 1, 2).0, f);
+            let n = (ch - xh).normalize();
+            let tw = if om.length() > 1e-9 { om.normalize() * grain_edge } else { DVec3::ZERO };
+            let mut st = st0;
+            let mut b = st.outer_ball();
+            let out = wall_contact_general(&mut b, vcen, om * rb, tw, n, law, pinned);
+            st.set_outer(&b);
+            if out.touched && stacking {
+                st.restack(out.kick, rule);
+            }
+            return (true, st, xh + st.v * (dt - th));
+        }
+    }
+    (false, st0, x0 + v0 * dt)
+}
+
+/// GPU ball hits == CPU mirror, per photon (position after the step,
+/// velocity, every spin level). Photons are launched at the ball from
+/// random directions so most of them hit within the step. Negative control:
+/// the CPU mirror with the ball's spin dropped must disagree.
+#[test]
+fn ball_gpu_matches_cpu() {
+    for (name, rough) in [
+        ("twist body law, grain 1, PinnedC, stacking", RoughParams { grain_edge: 1.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("edge law, Free", RoughParams { beta: 1.0, speed_mode: SpeedMode::Free, g_max: 6.0, ..RoughParams::default() }),
+    ] {
+        let n: u32 = 6000;
+        let mut config = ball_config(Boundary::PeriodicBox { half_extent: 2.0 }, PROTON_STATES[0], rough, 0.0, 0.0, n + 16, 0xBA11);
+        config.dt = 0.05;
+        let ctx = GpuContext::new().expect("GPU");
+        let mut engine = DsmcEngine::new(&ctx, config);
+        let keys = engine.ball_keyframes();
+        let ball = engine.shell_bodies[0].ball();
+        let mut rng = Lcg(0xBA11);
+        let photons: Vec<GpuPhoton> = (0..n)
+            .map(|id| {
+                let dir_in = rng.unit();
+                let off = rng.unit() * 0.1;
+                let pos = ball.center - dir_in * (ball.radius + 0.01 + 0.02 * rng.f()) + off;
+                let speed = if rough.speed_mode == SpeedMode::Free { 0.7 + 0.6 * rng.f() } else { 1.0 };
+                let w = rng.unit() * rng.f();
+                make_photon(id, pos, (dir_in + rng.unit() * 0.3).normalize() * speed, w, if rng.f() < 0.5 { 1.0 } else { -1.0 })
+            })
+            .filter(|p| (DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64) - ball.center).length() > ball.radius + 1e-3)
+            .collect();
+        engine.write_photons_for_test(&ctx, &photons);
+        let mut t = Totals::default();
+        engine.step_collide(&ctx, &mut t);
+        let after = engine.read_photons(&ctx);
+        let (bb, bt, bl) = rough.body_law.unwrap_or((rough.beta, rough.beta_twist, rough.twist_loss_to_normal));
+        let law = ContactLaw { e: 1.0, beta: bb, beta_twist: bt, twist_loss_to_normal: bl, kappa: rough.kappa };
+        let rule = StackRule { max_level: rough.stack_max_level, stack_tol: 1e-4, unstack_edge: rough.unstack_edge, kappa: rough.kappa };
+        let pinned = rough.speed_mode == SpeedMode::PinnedC;
+        let (mut hits, mut mism_hit, mut max_err, mut max_wrong) = (0, 0, 0.0f64, 0.0f64);
+        let mut keys_ns = keys[0..27].to_vec();
+        for s in 0..9 {
+            keys_ns[s * 3 + 1] = [0.0; 4];
+        }
+        for p in &photons {
+            let q = after.iter().find(|q| q.id() == p.id()).expect("lost");
+            let (hit, st, x1) = cpu_ball_step(p, &keys[0..27], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking);
+            // Hit = the photon's velocity or spin changed. (The passage
+            // counter in c[2] is reset by the envelope-entry bookkeeping for
+            // these synthetic photons, which start inside the envelope.)
+            let gpu_hit = (0..4).any(|c| (q.b[c] - p.b[c]).abs() > 1e-6 || (q.d[c] - p.d[c]).abs() > 1e-6);
+            if hit != gpu_hit {
+                mism_hit += 1;
+                continue;
+            }
+            if !hit {
+                continue;
+            }
+            hits += 1;
+            let g = to_stacked(q);
+            let gx = DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64);
+            let mut e = (st.v - g.v).length().max((x1 - gx).length());
+            if st.k != g.k {
+                e = f64::INFINITY;
+            } else {
+                for lvl in 0..=st.k as usize {
+                    e = e.max((st.w[lvl] - g.w[lvl]).length() * level_radius(lvl as u32));
+                }
+            }
+            max_err = max_err.max(e);
+            let (_, st_w, _) = cpu_ball_step(p, &keys_ns, 0.05, &law, pinned, &rule, 0.0, rough.stacking);
+            max_wrong = max_wrong.max((st_w.v - g.v).length());
+        }
+        println!(
+            "ball gpu-vs-cpu [{name}]: hits {hits}/{}, hit/miss disagreements {mism_hit}, max err {max_err:.2e}, no-ball-spin control {max_wrong:.2e}, overlaps {}",
+            photons.len(),
+            t.ball_overlap
+        );
+        assert!(hits > 500, "{name}: too few hits to test ({hits})");
+        assert!(mism_hit <= photons.len() / 1000, "{name}: GPU and CPU disagree on which photons hit ({mism_hit})");
+        assert!(max_err < 2e-3, "{name}: GPU ball contact disagrees with CPU: {max_err}");
+        assert!(max_wrong > 0.05, "{name}: control did not fail");
+        assert!(t.ball_overlap as usize * 1000 <= hits.max(1), "{name}: too many overlaps");
+    }
+}
+
+/// A non-rotating ball conserves photon energy (elastic law, Free) and the
+/// momentum it receives balances the photons' loss; a moving ball (control)
+/// does work.
+#[test]
+fn ball_static_conserves_energy() {
+    let rough = RoughParams { beta: 1.0, speed_mode: SpeedMode::Free, g_max: 6.0, stacking: true, ..RoughParams::default() };
+    for (name, signs, conserving) in [("static", [0.0; 4], true), ("CONTROL moving", PROTON_STATES[0], false)] {
+        let n: u32 = 300_000;
+        let config = ball_config(Boundary::PeriodicBox { half_extent: 1.0 }, signs, rough, 0.0, 0.0, n + 16, 0xBA12);
+        let ctx = GpuContext::new().expect("GPU");
+        let mut engine = DsmcEngine::new(&ctx, config);
+        let mut rng = Lcg(0xBA12);
+        let ball = engine.shell_bodies[0].ball();
+        let photons: Vec<GpuPhoton> = (0..n)
+            .map(|id| loop {
+                let pos = DVec3::new(rng.f(), rng.f(), rng.f()) * 2.0 - DVec3::splat(1.0);
+                if (pos - ball.center).length() > ball.radius + 0.01 {
+                    let d = rng.unit();
+                    let chi = if rng.f() < 0.5 { 1.0 } else { -1.0 };
+                    break make_photon(id, pos, d, d * chi, chi);
+                }
+            })
+            .collect();
+        engine.write_photons_for_test(&ctx, &photons);
+        let (e0, p0) = photon_energy(&engine.read_photons(&ctx), rough.kappa);
+        let mut t = Totals::default();
+        for _ in 0..300 {
+            engine.step_collide(&ctx, &mut t);
+        }
+        let (e1, p1) = photon_energy(&engine.read_photons(&ctx), rough.kappa);
+        let de = (e1 - e0) / e0;
+        let dp_body = DVec3::new(t.sh_dp[0][0], t.sh_dp[0][1], t.sh_dp[0][2]);
+        let balance = ((p1 - p0) + dp_body).length() / dp_body.length().max(1.0);
+        println!("ball [{name}]: hits {} dE/E {de:+.2e} momentum balance {balance:.1e} overlaps {}", t.sh_contacts[0], t.ball_overlap);
+        assert!(t.sh_contacts[0] > 10_000);
+        assert!(balance < 1e-2);
+        // A ball moving faster than c can re-catch a photon it just hit
+        // before the next step's check; tolerated below 0.1% of hits and
+        // reported in every run.
+        assert!(t.ball_overlap * 1000 <= t.sh_contacts[0], "{name}: overlaps {} vs hits {}", t.ball_overlap, t.sh_contacts[0]);
+        if conserving {
+            assert!(de.abs() < 1e-4, "static ball changed photon energy {de}");
+        } else {
+            assert!(de.abs() > 1e-3, "control: a moving ball must do work ({de})");
+        }
+    }
+}
+
+/// Doc §15 first physics run: the instantaneous base ball, all 4 proton and 4
+/// neutron sign states, in the 2:1 ambient field. It prints the user's
+/// pole-to-pole table: passages through the envelope by entry angle to the
+/// pole, split into
+/// - clean passes;
+/// - photon-photon only;
+/// - ball hit first;
+/// - ball hit after a photon-photon collision inside the envelope ("knocked
+///   into the wall");
+///
+/// plus opposite-pole exits and the contacted-exit bands.
+/// Env:
+/// - CFM_C_PP: photon-photon law, "twist" (default) or "edge";
+/// - CFM_C_BODY: body law, "twist" (default) or "edge";
+/// - CFM_C_GRAIN: grain spin edge (default 1);
+/// - CFM_C_NA: ambient density (default 4000; lambda = 3 is held fixed by
+///   scaling sigma);
+/// - CFM_C_STATES: "all" (default) or "first" (state 0 of each class);
+/// - CFM_C_WARMUP / CFM_C_AVG: 300 / 1200.
+#[test]
+#[ignore]
+fn report_c_ball_single_body() {
+    use crate::baryon_shells::NEUTRON_STATES;
+    use std::time::Instant;
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let law = |n: &str| -> (f64, f64, bool) {
+        if n == "edge" {
+            (1.0, -1.0, false)
+        } else {
+            (-1.0, 0.0, true)
+        }
+    };
+    let pp = env("CFM_C_PP", "twist");
+    let body = env("CFM_C_BODY", "twist");
+    let grain: f64 = env("CFM_C_GRAIN", "1").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "4000").parse().unwrap();
+    let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
+    let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
+    let first_only = env("CFM_C_STATES", "all") == "first";
+    const LAMBDA: f64 = 3.0;
+    let (b0, t0, l0) = law(&pp);
+    let rough = RoughParams {
+        beta: b0,
+        beta_twist: t0,
+        twist_loss_to_normal: l0,
+        grain_edge: grain,
+        body_law: Some(law(&body)),
+        ..twist_rough(true, SpeedMode::PinnedC)
+    };
+    println!(
+        "=== C: instantaneous ball, photon-photon={pp}, body={body}, grain={grain}, PinnedC, stacking, lambda={LAMBDA}, n_a={n_a}, R_D=6, dt=0.05, warmup {warmup}, avg {avg} ==="
+    );
+    let ctx = GpuContext::new().expect("GPU");
+    for (class, states) in [("proton", PROTON_STATES), ("neutron", NEUTRON_STATES)] {
+        for (si, signs) in states.iter().enumerate() {
+            if first_only && si > 0 {
+                continue;
+            }
+            let started = Instant::now();
+            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, rough, 1.0 / (LAMBDA * n_a), n_a, 9_000_000, 0xC0C0);
+            config.dt = 0.05;
+            let mut engine = DsmcEngine::new(&ctx, config);
+            let rep = engine.run_steady(&ctx, warmup, avg, 200);
+            let t = &rep.totals;
+            let st: String = signs.iter().zip(['a', 'x', 'y', 'z']).map(|(s, c)| format!("{}{}", if *s > 0.0 { '+' } else { '-' }, c)).collect();
+            let passes: i64 = (0..9).map(|a| (0..4).map(|o| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>()).sum();
+            let exits = t.sh_exits[0].max(1) as f64;
+            let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
+            let hel = |o: usize| (t.pass_hel[o][0] + t.pass_hel[o][1]) / ((0..9).map(|a| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>().max(1) as f64);
+            println!(
+                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) overlaps {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
+                t.sh_contacts[0],
+                100.0 * t.sh_exits[0] as f64 / passages.max(1) as f64,
+                t.ball_overlap,
+                band(0),
+                band(1),
+                band(2),
+                hel(0),
+                hel(1),
+                hel(2),
+                hel(3),
+                t.sh_torque[0][2] / t.sh_contacts[0].max(1) as f64,
+                rep.steady_ok,
+                started.elapsed().as_secs_f64()
+            );
+            // The pole-angle table, aggregated to 0-10, 10-20, 20-30, 30-60,
+            // 60-90 degrees from the pole, both species together, then the
+            // photon (+) / antiphoton (-) split of "hit after pp".
+            let groups: [(&str, std::ops::Range<usize>); 5] = [("0-10", 0..1), ("10-20", 1..2), ("20-30", 2..3), ("30-60", 3..6), ("60-90", 6..9)];
+            let mut line = String::from("   angle-to-pole: ");
+            for (label, r) in groups.iter() {
+                let sum = |o: usize, sp: usize| -> i64 { r.clone().map(|a| t.pass[a][o][sp]).sum() };
+                let tot: i64 = (0..4).map(|o| sum(o, 0) + sum(o, 1)).sum::<i64>().max(1);
+                let thr: i64 = r.clone().map(|a| t.pass_through[a][0] + t.pass_through[a][1]).sum();
+                line += &format!(
+                    "[{label}: n {tot} clean {:.3} pp {:.3} hit {:.4} pp->hit {:.4} (+{:.4}/-{:.4}) thru {:.3}] ",
+                    (sum(0, 0) + sum(0, 1)) as f64 / tot as f64,
+                    (sum(1, 0) + sum(1, 1)) as f64 / tot as f64,
+                    (sum(2, 0) + sum(2, 1)) as f64 / tot as f64,
+                    (sum(3, 0) + sum(3, 1)) as f64 / tot as f64,
+                    sum(3, 1) as f64 / (0..4).map(|o| sum(o, 1)).sum::<i64>().max(1) as f64,
+                    sum(3, 0) as f64 / (0..4).map(|o| sum(o, 0)).sum::<i64>().max(1) as f64,
+                    thr as f64 / tot as f64
+                );
+            }
+            println!("{line}");
+        }
+    }
+}

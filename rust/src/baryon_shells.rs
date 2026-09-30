@@ -152,6 +152,28 @@ impl ShellBody {
     }
 }
 
+/// Doc §15: the instantaneous base particle. Levels 1-8 collapse to a ball of
+/// radius amplitude_8 / amplitude_12 = 1/8 (the level-9 core), carried by
+/// levels 9-12.
+#[derive(Clone, Copy, Debug)]
+pub struct BallState {
+    pub center: DVec3,
+    pub radius: f64,
+    /// Centre velocity: sum_{j>=10} w_j x (o_9 - o_j). Level 9 spins the
+    /// ball in place, so it adds nothing here.
+    pub velocity: DVec3,
+    /// Ball spin: sum_{j>=9} w_j.
+    pub omega: DVec3,
+}
+
+impl ShellBody {
+    pub fn ball(&self) -> BallState {
+        let f = self.frames();
+        let center = f[0].origin;
+        BallState { center, radius: f[0].radius, velocity: matter_velocity(&f, 0, center), omega: (0..4).map(|j| f[j].omega).sum() }
+    }
+}
+
 /// Innermost shell containing `x`, or None outside the body.
 pub fn region_of(frames: &[LevelFrame; 4], x: DVec3) -> Option<usize> {
     (0..4).find(|&k| (x - frames[k].origin).length_squared() <= frames[k].radius * frames[k].radius)
@@ -236,4 +258,71 @@ mod tests {
             assert!((edge - 1.0).abs() < 1e-12, "level {i} edge {edge}");
         }
     }
+    /// The ball's centre velocity is the time derivative of its centre, and
+    /// its surface point velocity V_c + Omega x (x - c) matches the composed
+    /// motion of a point fixed on the ball.
+    #[test]
+    fn ball_kinematics_match_finite_differences() {
+        let mut worst: f64 = 0.0;
+        for signs in PROTON_STATES.iter().chain(NEUTRON_STATES.iter()) {
+            let mut body = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, *signs);
+            for step in 0..30 {
+                body.angles = [0.3 * step as f64, 0.7 + 0.11 * step as f64, 0.2 * step as f64, 1.0 - 0.05 * step as f64];
+                let b = body.ball();
+                let h = 1e-6;
+                let mut plus = body.clone();
+                let mut minus = body.clone();
+                for i in 0..4 {
+                    plus.angles[i] += body.rate(i) * h;
+                    minus.angles[i] -= body.rate(i) * h;
+                }
+                let fd_c = (plus.ball().center - minus.ball().center) / (2.0 * h);
+                worst = worst.max((fd_c - b.velocity).length() / fd_c.length().max(1e-9));
+                // A point on the ball surface, fixed in the level-9 input frame.
+                let p = DVec3::new(0.08, -0.05, 0.07).normalize() * shell_amplitude(0);
+                let x = body.carry(0, p);
+                let fd_x = (plus.carry(0, p) - minus.carry(0, p)) / (2.0 * h);
+                let v = b.velocity + b.omega.cross(x - b.center);
+                worst = worst.max((fd_x - v).length() / fd_x.length().max(1e-9));
+            }
+        }
+        println!("ball kinematics worst rel err {worst:.2e}");
+        assert!(worst < 1e-6);
+    }
+
+    /// Report: where the ball's centre goes (the "donut"). A long run with
+    /// incommensurate phases, binned by the centre's polar angle and
+    /// cylindrical radius. Prints the fraction of time the ball blocks the
+    /// polar axis (its surface within rho < r_ball of the axis).
+    #[test]
+    #[ignore]
+    fn report_ball_swept_map() {
+        for (name, signs) in [("proton +a+x+y+z", PROTON_STATES[0]), ("neutron -a-x-y+z", NEUTRON_STATES[0])] {
+            let mut body = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, signs);
+            let (n, dt) = (2_000_000, 0.0137);
+            let mut lat_hist = [0u64; 18];
+            let mut rho_hist = [0u64; 10];
+            let mut axis_blocked = 0u64;
+            let mut speed_sum = 0.0;
+            for _ in 0..n {
+                body.advance(dt);
+                let b = body.ball();
+                let c = b.center;
+                let r = c.length().max(1e-12);
+                let lat = (c.z / r).clamp(-1.0, 1.0).asin().to_degrees();
+                lat_hist[(((lat + 90.0) / 10.0) as usize).min(17)] += 1;
+                let rho = (c.x * c.x + c.y * c.y).sqrt();
+                rho_hist[((rho / 0.1) as usize).min(9)] += 1;
+                if rho < b.radius {
+                    axis_blocked += 1;
+                }
+                speed_sum += b.velocity.length();
+            }
+            println!("=== ball swept map: {name} ({n} samples) ===");
+            println!("  centre |r| is always {:.4} +- (varies); mean centre speed {:.3} c; axis blocked {:.4} of the time", body.ball().center.length(), speed_sum / n as f64, axis_blocked as f64 / n as f64);
+            println!("  centre latitude (10 deg bins, -90..90): {:?}", lat_hist.iter().map(|&h| format!("{:.3}", h as f64 / n as f64)).collect::<Vec<_>>());
+            println!("  centre cylindrical radius (0.1 bins): {:?}", rho_hist.iter().map(|&h| format!("{:.3}", h as f64 / n as f64)).collect::<Vec<_>>());
+        }
+    }
+
 }

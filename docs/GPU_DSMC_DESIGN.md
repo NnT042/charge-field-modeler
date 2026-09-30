@@ -1053,6 +1053,59 @@ Contacted-exit bands:
   difference. That makes the trace rebuild the natural next test, not just a
   cross-check.
 
+## 15. New spin trace: the instantaneous ball (2026-09-29)
+
+User decisions:
+1. **Targets:** try both and compare. Instantaneous ball vs the §14 smeared shells.
+2. **Levels:** start with levels 1–8 as one spherical base particle (the electron-tier
+   ball, as in the earlier papers), traced through levels 9–12. Go deeper if results
+   say a factor is missing. The user notes the tiers look fractal.
+3. **Pole-to-pole:**
+   - A perfectly axial photon flies through untouched, but that is rare.
+   - Watch whether the entry angle to the pole is steep enough to brush the "donut"
+     wall.
+   - Watch how often a shallow (potential through-exiting) photon has a photon-photon
+     hit inside the envelope that pushes it into the wall it was angled away from.
+     That could be tied to the neutron's charge suppression.
+4. **Time scale:** hits only on the instantaneous location of the real body, never a
+   swept volume. Misses must stay in the simulation, because they hit each other.
+
+**Model:**
+- **The ball.** Levels 1–8 collapse to a ball of radius amplitude₈/amplitude₁₂ = ⅛.
+  That is exactly §14's core shell: centre o₉ (where levels 10–12 carry the level-9
+  frame origin).
+  - Centre velocity: V_c = Σ_{j≥10} ω_j × (o₉ − o_j).
+  - Spin: Ω_b = Σ_{j≥9} ω_j. Level 9's own precession spins the ball in place.
+- **All other matter is gone.** Levels 9–12 are *motion*, not material. The envelope
+  (level-12 ghost, radius 1) is used only for passage bookkeeping.
+- **Continuous collision.** The CPU uploads 9 ball keyframes per step (centre, V_c,
+  Ω_b at 8 sub-intervals). The move kernel solves photon-segment vs moving-sphere in
+  each sub-interval, allowing one hit per step, then continues the rest of the step
+  on the new velocity.
+- **Contact.** The geometric normal is the photon→centre direction at the hit, with
+  no sampling.
+  - The sliding slip uses the true surface velocity V_c + Ω_b × (x − c).
+  - The twist grip uses the grain-spin knob (0, or along Ω_b at edge c): the ball's
+    photon-scale surface spin (levels 1–8), which is not resolved.
+  - Same rough-sphere law, D7 PinnedC, stacking.
+- **Every photon stays in the DSMC gas.** Photon-photon collisions inside the envelope
+  are live and flagged per passage.
+- **Statistics.** Hits scale with n_a. Raising n_a while scaling σ down keeps λ (the
+  physics) fixed, and a λ-held-fixed comparison checks that.
+
+**Passage tallies (body 0):** entry-angle-to-pole bin (10° steps, folded to 0–90°)
+× outcome × species:
+- outcomes: 0 clean; 1 photon-photon only; 2 ball hit first; 3 ball hit after a
+  photon-photon hit;
+- plus the opposite-pole exit count per angle bin and species, and exit helicity.
+
+**Gates:**
+- GPU vs CPU continuous hit + contact (replicated keyframes);
+- a static ball conserves photon energy and delivered momentum balances;
+- a ball with radius → 0 is never hit;
+- the swept-centre map of the ball (CPU) shows the donut's polar hole, for comparison
+  with Spin mode's disc-and-hole.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

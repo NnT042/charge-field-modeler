@@ -106,6 +106,13 @@ pub struct Totals {
     pub sh_dp: [[f64; 3]; 4],
     pub sh_torque: [[f64; 3]; 4],
     pub sh_work: [f64; 4],
+
+    // --- Doc §15 ball ---
+    pub ball_overlap: i64,
+    /// [angle bin][outcome][species]
+    pub pass: [[[i64; 2]; 4]; 9],
+    pub pass_through: [[i64; 2]; 9],
+    pub pass_hel: [[f64; 2]; 4],
 }
 
 impl Totals {
@@ -202,6 +209,20 @@ impl Totals {
                 self.sh_exit_band_hel[b][a] += other.sh_exit_band_hel[b][a];
                 self.sh_dp[b][a] += other.sh_dp[b][a];
                 self.sh_torque[b][a] += other.sh_torque[b][a];
+            }
+        }
+        self.ball_overlap += other.ball_overlap;
+        for ab in 0..9 {
+            for sp in 0..2 {
+                self.pass_through[ab][sp] += other.pass_through[ab][sp];
+                for o in 0..4 {
+                    self.pass[ab][o][sp] += other.pass[ab][o][sp];
+                }
+            }
+        }
+        for o in 0..4 {
+            for sp in 0..2 {
+                self.pass_hel[o][sp] += other.pass_hel[o][sp];
             }
         }
     }
@@ -345,6 +366,21 @@ impl Totals {
                 self.sh_torque[b][a] += raw[TALLY_SH_TORQUE + b * 3 + a] as f64 / SCALE;
             }
         }
+        use super::gpu_types::{TALLY_BALL_OVERLAP, TALLY_PASS, TALLY_PASS_HEL, TALLY_PASS_THROUGH};
+        self.ball_overlap += raw[TALLY_BALL_OVERLAP] as i64;
+        for ab in 0..9 {
+            for sp in 0..2 {
+                self.pass_through[ab][sp] += raw[TALLY_PASS_THROUGH + ab * 2 + sp] as i64;
+                for o in 0..4 {
+                    self.pass[ab][o][sp] += raw[TALLY_PASS + (ab * 4 + o) * 2 + sp] as i64;
+                }
+            }
+        }
+        for o in 0..4 {
+            for sp in 0..2 {
+                self.pass_hel[o][sp] += raw[TALLY_PASS_HEL + o * 2 + sp] as f64 / SCALE;
+            }
+        }
     }
 }
 
@@ -388,6 +424,7 @@ pub struct DsmcEngine {
     /// and the GPU copy of their frames (8 vec4 per body).
     pub shell_bodies: Vec<crate::baryon_shells::ShellBody>,
     shells_buf: wgpu::Buffer,
+    ballkeys_buf: wgpu::Buffer,
 
     inject_emit_kernel: Kernel,
     move_kernel: Kernel,
@@ -420,7 +457,7 @@ impl DsmcEngine {
             assert!(config.rough.stack_max_level <= 3, "stacking storage holds levels 0..=3");
             assert!(!config.rough.stacking || config.emit_stiffness_level == 0, "stacking: photons are born at level 0");
         }
-        if let BodyModel::Shells { .. } = config.body_model {
+        if config.body_model != BodyModel::Absorber {
             assert!(config.exchange_rule == ExchangeRule::RoughSphere, "Shells bodies use the rough-sphere photon mechanics");
             assert!(config.bodies.len() <= 4, "at most 4 bodies");
         }
@@ -478,7 +515,7 @@ impl DsmcEngine {
 
         let shell_bodies: Vec<crate::baryon_shells::ShellBody> = match config.body_model {
             BodyModel::Absorber => vec![],
-            BodyModel::Shells { .. } => config
+            BodyModel::Shells { .. } | BodyModel::Ball => config
                 .bodies
                 .iter()
                 .enumerate()
@@ -493,6 +530,7 @@ impl DsmcEngine {
                 .collect(),
         };
         let shells_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(32, wgpu::BufferUsages::empty());
+        let ballkeys_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(4 * 9 * 3, wgpu::BufferUsages::empty());
 
         let inject_emit_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_inject_emit.wgsl"));
         let move_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_move.wgsl"));
@@ -525,6 +563,7 @@ impl DsmcEngine {
             sorter,
             shell_bodies,
             shells_buf,
+            ballkeys_buf,
             inject_emit_kernel,
             move_kernel,
             gather_kernel,
@@ -614,10 +653,11 @@ impl DsmcEngine {
             body_model: match c.body_model {
                 BodyModel::Absorber => 0,
                 BodyModel::Shells { .. } => 1,
+                BodyModel::Ball => 2,
             },
             tau_body: match c.body_model {
-                BodyModel::Absorber => 0.0,
                 BodyModel::Shells { tau_body } => tau_body as f32,
+                _ => 0.0,
             },
             grain_edge: c.rough.grain_edge as f32,
             body_twist_loss: c.rough.body_law.map(|l| l.2).unwrap_or(c.rough.twist_loss_to_normal) as u32,
@@ -644,6 +684,27 @@ impl DsmcEngine {
             }
         }
         ctx.write_buffer(&self.shells_buf, &data);
+        if self.config.body_model == BodyModel::Ball {
+            ctx.write_buffer(&self.ballkeys_buf, &self.ball_keyframes());
+        }
+    }
+
+    /// Doc §15: 9 keyframes per body over this step (s * dt/8), each as
+    /// (centre, radius), (omega, 0), (centre velocity, 0).
+    pub fn ball_keyframes(&self) -> Vec<[f32; 4]> {
+        let mut data = vec![[0.0f32; 4]; 4 * 9 * 3];
+        for (b, body) in self.shell_bodies.iter().enumerate() {
+            let mut sb = body.clone();
+            for s in 0..9 {
+                let st = sb.ball();
+                let base = (b * 9 + s) * 3;
+                data[base] = [st.center.x as f32, st.center.y as f32, st.center.z as f32, st.radius as f32];
+                data[base + 1] = [st.omega.x as f32, st.omega.y as f32, st.omega.z as f32, 0.0];
+                data[base + 2] = [st.velocity.x as f32, st.velocity.y as f32, st.velocity.z as f32, 0.0];
+                sb.advance(self.config.dt / 8.0);
+            }
+        }
+        data
     }
 
     fn advance_shells(&mut self) {
@@ -705,7 +766,7 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf, &self.ballkeys_buf],
             Some(&self.params_buf),
             grid,
         );
@@ -728,7 +789,7 @@ impl DsmcEngine {
         self.move_kernel.record(
             ctx,
             &mut encoder,
-            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf],
+            &[self.cur_buf(), &self.bodies_buf, &self.raw_cell_of, &self.tallies_buf, &self.hist_buf, &self.density_buf, &self.shells_buf, &self.ballkeys_buf],
             Some(&self.params_buf),
             grid_n,
         );
@@ -917,7 +978,7 @@ impl DsmcEngine {
             let rate = match (self.config.body_model, self.config.emission_mode) {
                 // Doc §14: shell bodies emit nothing; their "emission" is
                 // scattered ambient.
-                (BodyModel::Shells { .. }, _) => 0.0,
+                (BodyModel::Shells { .. } | BodyModel::Ball, _) => 0.0,
                 (_, EmissionMode::Forced) => self.forced_emission_rate_per_step(),
                 (_, EmissionMode::Pump) => self.pump_rate_ema.get(i).copied().unwrap_or(0.0),
             };

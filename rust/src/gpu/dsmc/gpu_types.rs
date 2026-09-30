@@ -432,7 +432,20 @@ pub const TALLY_SH_TORQUE: usize = 296;
 /// Linear energy given to photons by the driven body (fixed-point).
 pub const TALLY_SH_WORK: usize = 308;
 
-pub const TALLY_LEN: usize = 312;
+// --- Doc §15: instantaneous ball ---
+/// Photons found inside a ball at step start (should stay ~0: continuous
+/// detection never lets a photon into the ball).
+pub const TALLY_BALL_OVERLAP: usize = 312;
+/// Body-0 passages by entry angle to the pole (10 deg bins, 0..8) x outcome
+/// (0 clean, 1 pp-only, 2 ball hit first, 3 ball hit after pp) x species:
+/// [(abin*4 + outcome)*2 + spec], len 72.
+pub const TALLY_PASS: usize = 313;
+/// Body-0 opposite-pole exits by entry angle bin x species, len 18.
+pub const TALLY_PASS_THROUGH: usize = 385;
+/// Body-0 exit helicity sum by outcome x species (fixed-point), len 8.
+pub const TALLY_PASS_HEL: usize = 403;
+
+pub const TALLY_LEN: usize = 412;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;
