@@ -1563,6 +1563,127 @@ means; errors ±0.006 at depths 0–1, ±0.006 at depth 2, ±0.009 at depth 3):
 - The report default stays EdgeC for continuity; Rigid / RigidInner are the
   mechanical references.
 
+### 15.9 The maze as the ball's emission law (2026-09-30)
+
+**Question:** docs/MATHIS_SPIN_PATHS.md showed on the CPU that Mathis's quark.html
+maze reproduces his 16-state table as *core emission*. With the fixed Spin-mode
+frame the emission is a one-sided lobe. The user chose (1) a **swept** frame, turned
+about the pole by the core's level-9 axial phase (the sprinkler), and (2) the
+neutron.pdf release: trapped photons funnel to the axis and leave by the
+*opposite* pole with the maze's spin.
+
+**Build:**
+- `RoughParams::maze: MazeMode {Off, Fixed, Swept}` (GpuParams `maze_mode`,
+  formerly `_pad14b`). This mode needs the Ball body model.
+- **Every ball contact is a capture.** The photon is re-emitted by
+  `maze::emit` (shader `maze_contact`):
+  - **Hemisphere:** the photon's helicity in the maze frame picks the start
+    patch: negative → north, around +x; positive → south, around −x.
+  - **Start d0:** drawn by rejection from the patch, i.e. the starts that
+    reproduce all 16 table rows with helical spin, with margin 1e-4.
+    Acceptance is about 12% per hemisphere, so 64 tries almost always succeed;
+    the fallback is the patch centre (about 4e-4 of captures).
+  - **Spin transport:** the photon's spin is carried rigidly from its arrival
+    direction to d0.
+  - **The maze:** the canonical maze runs with the body's (a, x, y, z) signs:
+    90° turns about Z, X, Y, Z, with Set contact spin.
+  - **Outcome:** escape = d·d0 ≥ 0, and escapes leave along the maze exit.
+    Trapped photons leave along (0, 0, h), the pole opposite the start
+    hemisphere.
+  - **Speed:** kept relative to the ball surface, so the emission rides the
+    moving core. Under PinnedC the speed is c instead.
+  - **Stacked levels:** inner stacked spins turn rigidly with the photon.
+    |spin| is kept at every level.
+- **Maze frame:** `orient`, times a rotation about the pole by θ₉ + ω₉·t
+  (Swept) or by 0 (Fixed).
+  - `BALLKEY_STRIDE` = 47. The meta vec4's z and w hold θ₉ at the step start
+    (mod 2π) and ω₉; [45] = `orient`; [46] = signs.
+- **Tallies:** `TALLY_MAZE` (outcome × upright, plus fallbacks),
+  `TALLY_MAZE_LAT` (emission latitude), `TALLY_MAZE_AZ` (escape azimuth in the
+  body frame). `TALLY_LEN` = 1677.
+- **Gates:**
+  - `maze::emission_law_matches_canonical_maze`: the exact 90° helpers equal
+    `run()`; the patch test agrees with `score()`; the fallbacks lie in the
+    patch; every state gives the table outcome; escapes are within 30° of the
+    equator; trapped photons leave by the opposite pole.
+  - `ball_gpu_matches_cpu` adds three maze cases (swept p, swept n, fixed n
+    under PinnedC). Max error is 1.2–1.9e-5 with 0 hit/miss disagreements. The
+    control (body z sign flipped) is off by 2–7.
+- **Report:** `CFM_C_MAZE` = off | fixed | swept. It writes
+  `ball_<class>_maze.csv`.
+
+**Results** (λ = 3, BodyFree, default seed, all 4 states per class, adopted
+neutron; contacted-exit bands at the R_D = 6 envelope, after the gas):
+
+| run | hit % | proton p / m / e | neutron p / m / e | hit helicity p / n |
+|---|---|---|---|---|
+| no maze, Rigid (§15.8), depth 2 | — | — / — / 0.548 | — / — / 0.533 | +0.026 / +0.016 |
+| maze **swept**, depth 2 | 0.20–0.26 | 0.053 / 0.276 / **0.671** | **0.214** / 0.488 / 0.298 | +0.092 / −0.001 |
+| maze fixed, depth 2 | 0.20–0.26 | 0.063 / 0.296 / 0.642 | 0.211 / 0.491 / 0.299 | +0.078 / +0.008 |
+| maze **swept**, depth 0 | 2.9–3.0 | 0.045 / 0.239 / **0.717** | **0.251** / 0.571 / 0.179 | +0.095 / +0.002 |
+
+- **At the ball:**
+  - Every proton state emits 100% within 30° of the equator. Every neutron
+    state emits 100% from the poles.
+  - **Swept vs fixed azimuth:** the swept frame fills the ring evenly (escape
+    octants 0.09–0.16). The fixed frame gives **two opposite lobes**, not one:
+    both helicities arrive, and each picks its own hemisphere and side. Which
+    quadrants they fill depends on the state.
+  - By the r = 6 envelope the latitude bands barely differ between swept and
+    fixed, because the ball's orbital motion and the gas already smear
+    azimuth.
+- **The proton/neutron electrical split is now large:**
+  - Contacted proton exits are 0.67–0.72 equatorial; neutron exits are
+    0.18–0.30 equatorial and 0.21–0.25 polar.
+  - Before, both classes were ~0.54 equatorial.
+  - What the construction fixes: proton = disc, neutron = poles, from
+    Mathis's table plus neutron.pdf's release rule, with nothing fitted.
+  - What the run adds: the split survives transport through the gas. The
+    neutron's polar jet widens a lot (100% → 21–25% polar at r = 6); the
+    proton disc widens less.
+- **The helicity split is back, mechanically.**
+  - Photons that hit carry +0.09 out for protons and about 0 for neutrons.
+  - Neutron states pair by the z sign: z = +1 gives +0.02 to +0.04, and z = −1
+    gives −0.02 to −0.04. The trapped release goes along the pole chosen by
+    the arrival helicity, and the last Set contact imprints the z sign along
+    that pole.
+- **Charge-pause flux map** (net (out − in)/(out + in) × 10³ by radius and
+  band; the noise at r = 1 is ~1.6 at the poles and ~0.6 at the equator):
+  - **Depth 2:** null, as before. The ball, radius 1/32, captures 0.25% of
+    passages. What remains is the uniform +1 to +1.7 drift toward the
+    boundary seen in every run.
+  - **Depth 0** (ball radius 1/8, 3% of passages):
+
+    | class | band | r = 1 | r = 2 | r = 4 |
+    |---|---|---|---|---|
+    | proton | poles | net intake −7.5 / −8.4 (S / N) | −4.6 / −1.7 | ≈ baseline |
+    | proton | mid | −5.2 / −2.8 | | |
+    | proton | equator | net outflow +5.4 | +2.5 | ≈ baseline |
+    | neutron | poles | net outflow +11.8 / +25.0 (S / N) | | north pole still +4.3 |
+    | neutron | mid | +2.8 / +18.3 | | |
+    | neutron | equator | net intake −12.5 | | |
+
+    - **The proton shows Mathis's recycling pattern:** intake at the poles,
+      emission at the equator. The intake side was not imposed. It is where
+      the capture profile exceeds the emission profile.
+    - **The neutron is reversed:** intake at the equator, emission at the
+      poles.
+    - The neutron's north/south asymmetry comes from the ambient gas's net
+      arrival helicity (+0.137), which picks the release pole. It is a
+      property of the gas, not of the neutron.
+  - **No clean in/out reversal (charge-pause) at a finite radius:** the
+    signals decay into the boundary drift by r ≈ 4. The emitter handles only
+    3% of the gas. A real pause probably needs the full recycling rate
+    (Mathis: ~19× the mass per second) or a second body feeding the first.
+- **Open questions:**
+  - Neutron intake: in Mathis the neutron's through-charge enters at a pole.
+    Here capture happens wherever the ball is hit (mostly equatorial). That
+    makes the neutron's equator a net sink, which may be wrong.
+  - Emission strength (the intake cross-section) is set by the ball radius,
+    i.e. by the depth.
+  - Upright fractions for protons are 0.51–0.77 by state, because arriving
+    spins aren't helical. That is secondary.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

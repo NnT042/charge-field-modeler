@@ -34,7 +34,7 @@ struct Params {
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
-    body_beta: f32, body_beta_twist: f32, grain_mode: u32, _pad14b: u32,
+    body_beta: f32, body_beta_twist: f32, grain_mode: u32, maze_mode: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -90,6 +90,9 @@ const TALLY_PASS_THROUGH: u32 = 385u; // [abin*2 + spec], body 0, len 18
 const TALLY_PASS_HEL: u32 = 403u;
 const TALLY_HIT_LAT: u32 = 412u;      // [bin], body 0, 1-degree bins, len 180
 const TALLY_EXIT_LAT: u32 = 592u;     // [spec*180 + bin], body 0, len 360
+const TALLY_MAZE: u32 = 1456u;     // [outcome], body 0, len 5 (4 = patch fallbacks)
+const TALLY_MAZE_LAT: u32 = 1461u; // [bin], body 0, 1-degree bins, len 180
+const TALLY_MAZE_AZ: u32 = 1641u;  // [bin], body 0, 10-degree bins, len 36
 const TALLY_FLUX: u32 = 952u;         // [((k*18 + lat)*2 + spec)*2 + dir], body 0, len 504     // [outcome*2 + spec], body 0, len 8
 const FLAG_PP_PASSAGE: u32 = 1u << 14u;
 const FLAG_HIT_CLEAN: u32 = 1u << 15u;    // first ball hit came before any pp collision
@@ -171,7 +174,7 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-const BALLKEY_STRIDE: u32 = 45u;
+const BALLKEY_STRIDE: u32 = 47u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
 
 fn quat_rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -205,6 +208,165 @@ fn inner_twist(b: u32, q: vec4<f32>, key: u32) -> vec3<f32> {
         sum = sum + quat_rot(q, w);
     }
     return sum;
+}
+
+// Doc §15.9 maze emission law. Mirrors maze.rs (rot90, turn, spin_path, arc,
+// in_patch, emit) and the maze branch of shell_gates::cpu_ball_step.
+const MAZE_TRIES: u32 = 64u;
+const PATCH_MARGIN: f32 = 1e-4;
+
+fn maze_axis(i: u32) -> vec3<f32> {
+    if (i == 1u) {
+        return vec3<f32>(1.0, 0.0, 0.0);
+    }
+    if (i == 2u) {
+        return vec3<f32>(0.0, 1.0, 0.0);
+    }
+    return vec3<f32>(0.0, 0.0, 1.0);
+}
+
+fn rot90(a: vec3<f32>, sg: f32, v: vec3<f32>) -> vec3<f32> {
+    return a * dot(a, v) + sg * cross(a, v);
+}
+
+fn maze_turn(sg: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    var w = v;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        w = rot90(maze_axis(i), sg[i], w);
+    }
+    return w;
+}
+
+fn maze_spin(sg: vec4<f32>, s0: vec3<f32>) -> vec3<f32> {
+    var s = s0;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let a = maze_axis(i);
+        s = rot90(a, sg[i], s);
+        let n = dot(s, a);
+        s = s + (sg[i] * abs(n) - n) * a;
+    }
+    return s;
+}
+
+fn arc_rot(a: vec3<f32>, b: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+    let c = dot(a, b);
+    if (c < -0.9999) {
+        let t = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(a.x) < 0.9);
+        let ax = normalize(cross(a, t));
+        return 2.0 * dot(ax, v) * ax - v;
+    }
+    let k = cross(a, b);
+    return v * c + cross(k, v) + k * (dot(k, v) / (1.0 + c));
+}
+
+// Mathis's table over all 16 (a, x, y, z) states: escape iff x == z,
+// upright iff y == z.
+fn in_patch(d0: vec3<f32>, h: f32) -> bool {
+    let s0 = d0 * h;
+    for (var i = 0u; i < 16u; i = i + 1u) {
+        let sg = vec4<f32>(
+            select(-1.0, 1.0, (i & 1u) != 0u),
+            select(-1.0, 1.0, (i & 2u) != 0u),
+            select(-1.0, 1.0, (i & 4u) != 0u),
+            select(-1.0, 1.0, (i & 8u) != 0u)
+        );
+        let e = dot(maze_turn(sg, d0), d0);
+        let u = dot(maze_spin(sg, s0), s0);
+        if (abs(e) < PATCH_MARGIN || abs(u) < PATCH_MARGIN || (e >= 0.0) != (sg.y == sg.w) || (u >= 0.0) != (sg.z == sg.w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// World -> maze frame (body orient, then the swept level-9 phase th).
+fn maze_local(oq: vec4<f32>, th: f32, v: vec3<f32>) -> vec3<f32> {
+    return axis_rot(vec3<f32>(0.0, 0.0, 1.0), -th, quat_rot(vec4<f32>(-oq.xyz, oq.w), v));
+}
+
+fn maze_world(oq: vec4<f32>, th: f32, v: vec3<f32>) -> vec3<f32> {
+    return quat_rot(oq, axis_rot(vec3<f32>(0.0, 0.0, 1.0), th, v));
+}
+
+// Doc §15.9: capture at the ball and re-emission from the core through the
+// maze. The photon's helicity picks the patch hemisphere, a start d0 is drawn
+// in the patch, its spin is carried rigidly from its arrival direction to
+// d0, and it runs the canonical maze with the body's signs. Escapes leave
+// along the maze exit, trapped photons out of the opposite pole. Speed is
+// kept relative to the ball surface; inner stacked levels turn rigidly.
+// Returns the emission point.
+fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32) -> vec3<f32> {
+    let base = b * BALLKEY_STRIDE;
+    let bmeta = ballkeys[base + 36u];
+    let oq = ballkeys[base + 45u];
+    let sg = ballkeys[base + 46u];
+    var th = 0.0;
+    if (params.maze_mode == 2u) {
+        th = bmeta.z + bmeta.w * t_step;
+    }
+    let dir = (*p).b.xyz;
+    let v_in = dir * (*p).d.w;
+    let dl = maze_local(oq, th, dir);
+    let wl = maze_local(oq, th, (*p).d.xyz);
+    let h = select(1.0, -1.0, dot(wl, dl) < 0.0);
+    var d0 = normalize(vec3<f32>(1.0, 0.0, 1.0)) * -h;
+    var fallback = true;
+    for (var t = 0u; t < MAZE_TRIES; t = t + 1u) {
+        let u = rand01(params.seed_hi, params.seed_lo, key, 50u + 2u * t);
+        let ph = TAU * rand01(params.seed_hi, params.seed_lo, key, 51u + 2u * t);
+        let r = sqrt(max(1.0 - u * u, 0.0));
+        let c = vec3<f32>(r * cos(ph), r * sin(ph), -h * u);
+        if (in_patch(c, h)) {
+            d0 = c;
+            fallback = false;
+            break;
+        }
+    }
+    let s0 = arc_rot(dl, d0, wl);
+    let d = maze_turn(sg, d0);
+    let s = maze_spin(sg, s0);
+    let escaped = dot(d, d0) >= 0.0;
+    let upright = dot(s, s0) >= 0.0;
+    var out_l = d;
+    if (!escaped) {
+        out_l = vec3<f32>(0.0, 0.0, h);
+    }
+    let out_w = maze_world(oq, th, out_l);
+    let k = (*p).c[3];
+    if (k > 0u) {
+        (*p).e = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).e.xyz)))), (*p).e.w);
+    }
+    if (k > 1u) {
+        (*p).f = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).f.xyz)))), (*p).f.w);
+    }
+    if (k > 2u) {
+        (*p).g = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).g.xyz)))), (*p).g.w);
+    }
+    let s_rel = length(v_in - (vcen + cross(om, xh - ch)));
+    let xe = ch + out_w * rb * (1.0 + 1e-3);
+    var v_out = vcen + cross(om, xe - ch) + out_w * s_rel;
+    if (params.speed_mode == 1u) {
+        v_out = normalize(v_out);
+    }
+    let w_out = maze_world(oq, th, s);
+    let sp = length(v_out);
+    let dn = v_out / max(sp, 1e-12);
+    (*p).b = vec4<f32>(dn, axial_helicity(p, w_out, dn));
+    (*p).d = vec4<f32>(w_out, sp);
+    if (b == 0u) {
+        atomicAdd(&tallies[TALLY_MAZE + select(2u, 0u, escaped) + select(1u, 0u, upright)], 1);
+        if (fallback) {
+            atomicAdd(&tallies[TALLY_MAZE + 4u], 1);
+        }
+        let lat = degrees(asin(clamp(dot(out_w, bodies[0].axis.xyz), -1.0, 1.0)));
+        atomicAdd(&tallies[TALLY_MAZE_LAT + fine_lat_bin(lat)], 1);
+        if (escaped) {
+            let lo = quat_rot(vec4<f32>(-oq.xyz, oq.w), out_w);
+            let az = degrees(atan2(lo.y, lo.x)) + 360.0;
+            atomicAdd(&tallies[TALLY_MAZE_AZ + min(u32(floor(az - 360.0 * floor(az / 360.0)) / 10.0), 35u)], 1);
+        }
+    }
+    return xe;
 }
 
 // Mirrors rough_sphere::moving_sphere_hit.
@@ -462,25 +624,39 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             }
             let om = mix(bk(b, si, 1u).xyz, bk(b, si + 1u, 1u).xyz, f);
             let vcen = mix(bk(b, si, 2u).xyz, bk(b, si + 1u, 2u).xyz, f);
-            let n = normalize(ch - xh);
-            var tw = vec3<f32>(0.0);
-            if (params.grain_mode == 0u) {
-                if (length(om) > 1e-9) {
-                    tw = normalize(om) * params.grain_edge;
-                }
-            } else {
-                // §15.8: the ball's rigid spin in photon spin units, plus
-                // (mode 2) the unresolved inner levels at random phases.
-                tw = om * ballkeys[b * BALLKEY_STRIDE + 36u].y;
-                if (params.grain_mode == 2u) {
-                    let q = normalize(mix(bk(b, si, 3u), bk(b, si + 1u, 3u), f));
-                    let key = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x7A157u ^ (iter * 0x9E3779B9u)));
-                    tw = tw + inner_twist(b, q, key);
-                }
-            }
             let pp_before = (ph.c[0] & FLAG_PP_PASSAGE) != 0u;
-            let dp = wall_contact_general(&ph, vcen, rb * om, tw, n);
-            if (dot(dp, dp) > 0.0) {
+            var dp = vec3<f32>(0.0);
+            var touched = false;
+            var x_next = xh;
+            if (params.maze_mode != 0u) {
+                // §15.9: capture and re-emission through the maze.
+                let v_before = ph.b.xyz * ph.d.w;
+                let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
+                x_next = maze_contact(&ph, b, xh, ch, rb, om, vcen, best_t, mkey);
+                let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                dp = -(ph.b.xyz * ph.d.w - v_before) * m;
+                touched = true;
+            } else {
+                let n = normalize(ch - xh);
+                var tw = vec3<f32>(0.0);
+                if (params.grain_mode == 0u) {
+                    if (length(om) > 1e-9) {
+                        tw = normalize(om) * params.grain_edge;
+                    }
+                } else {
+                    // §15.8: the ball's rigid spin in photon spin units, plus
+                    // (mode 2) the unresolved inner levels at random phases.
+                    tw = om * ballkeys[b * BALLKEY_STRIDE + 36u].y;
+                    if (params.grain_mode == 2u) {
+                        let q = normalize(mix(bk(b, si, 3u), bk(b, si + 1u, 3u), f));
+                        let key = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x7A157u ^ (iter * 0x9E3779B9u)));
+                        tw = tw + inner_twist(b, q, key);
+                    }
+                }
+                dp = wall_contact_general(&ph, vcen, rb * om, tw, n);
+                touched = dot(dp, dp) > 0.0;
+            }
+            if (touched) {
                 let bc = bodies[b].center.xyz;
                 let tq = cross(xh - bc, dp);
                 for (var a = 0u; a < 3u; a = a + 1u) {
@@ -496,7 +672,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 }
                 ph.c[2] = ph.c[2] + (1u << 13u);
             }
-            x = xh;
+            x = x_next;
             tc = best_t;
             ball_moved = true;
         }

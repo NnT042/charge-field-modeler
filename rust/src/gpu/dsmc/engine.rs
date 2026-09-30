@@ -120,6 +120,11 @@ pub struct Totals {
     pub exit_lat: Vec<i64>,
     /// Doc §15.6: body-0 shell crossings, gpu_types::TALLY_FLUX layout.
     pub flux: Vec<i64>,
+    /// Doc §15.9: maze outcomes (gpu_types::TALLY_MAZE layout), emission
+    /// latitude (180 bins) and escape azimuth (36 bins), body 0.
+    pub maze: [i64; 5],
+    pub maze_lat: Vec<i64>,
+    pub maze_az: Vec<i64>,
 }
 
 impl Totals {
@@ -235,6 +240,11 @@ impl Totals {
         add_vec(&mut self.hit_lat, &other.hit_lat);
         add_vec(&mut self.exit_lat, &other.exit_lat);
         add_vec(&mut self.flux, &other.flux);
+        for i in 0..5 {
+            self.maze[i] += other.maze[i];
+        }
+        add_vec(&mut self.maze_lat, &other.maze_lat);
+        add_vec(&mut self.maze_az, &other.maze_az);
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -399,6 +409,14 @@ impl Totals {
         use super::gpu_types::TALLY_FLUX;
         let flux: Vec<i64> = raw[TALLY_FLUX..TALLY_FLUX + 504].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.flux, &flux);
+        use super::gpu_types::{TALLY_MAZE, TALLY_MAZE_AZ, TALLY_MAZE_LAT};
+        for i in 0..5 {
+            self.maze[i] += raw[TALLY_MAZE + i] as i64;
+        }
+        let ml: Vec<i64> = raw[TALLY_MAZE_LAT..TALLY_MAZE_LAT + 180].iter().map(|&x| x as i64).collect();
+        let ma: Vec<i64> = raw[TALLY_MAZE_AZ..TALLY_MAZE_AZ + 36].iter().map(|&x| x as i64).collect();
+        add_vec(&mut self.maze_lat, &ml);
+        add_vec(&mut self.maze_az, &ma);
     }
 }
 
@@ -491,6 +509,7 @@ impl DsmcEngine {
             assert!(config.exchange_rule == ExchangeRule::RoughSphere, "Shells bodies use the rough-sphere photon mechanics");
             assert!(config.bodies.len() <= 4, "at most 4 bodies");
             assert!(config.body_model == BodyModel::Ball || config.rough.grain_mode == super::config::GrainMode::EdgeC, "grain modes Rigid/RigidInner need the ball model");
+            assert!(config.body_model == BodyModel::Ball || config.rough.maze == super::config::MazeMode::Off, "the maze emission law needs the ball model");
         }
         let grid = Grid::new(&config);
         let n_bodies = config.bodies.len();
@@ -713,7 +732,11 @@ impl DsmcEngine {
                 super::config::GrainMode::Rigid => 1,
                 super::config::GrainMode::RigidInner => 2,
             },
-            _pad14b: 0,
+            maze_mode: match c.rough.maze {
+                super::config::MazeMode::Off => 0,
+                super::config::MazeMode::Fixed => 1,
+                super::config::MazeMode::Swept => 2,
+            },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);
@@ -765,7 +788,11 @@ impl DsmcEngine {
                 sb.advance(self.config.dt / 8.0);
             }
             let lv = body.unresolved_levels();
-            data[b * BALLKEY_STRIDE + 36] = [lv.len() as f32, body.photon_radius() as f32, 0.0, 0.0];
+            let th9 = body.angles[0].rem_euclid(std::f64::consts::TAU);
+            data[b * BALLKEY_STRIDE + 36] = [lv.len() as f32, body.photon_radius() as f32, th9 as f32, body.rate(0) as f32];
+            let o = body.orient;
+            data[b * BALLKEY_STRIDE + 45] = [o.x as f32, o.y as f32, o.z as f32, o.w as f32];
+            data[b * BALLKEY_STRIDE + 46] = [body.signs[0] as f32, body.signs[1] as f32, body.signs[2] as f32, body.signs[3] as f32];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

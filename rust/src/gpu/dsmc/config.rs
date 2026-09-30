@@ -87,6 +87,21 @@ pub enum GrainMode {
     RigidInner,
 }
 
+/// Doc §15.9: the ball's emission law. `Off`: photons bounce off the ball
+/// (`GrainMode` contact). Otherwise every ball contact is a capture and the
+/// photon is re-emitted from the core through Mathis's maze
+/// (`crate::maze::emit`: patch start by helicity, canonical 4-level maze with
+/// the body's a, x, y, z signs, trapped photons out of the opposite pole).
+/// `Fixed`: the maze frame is the body frame (`orient`). `Swept`: the maze
+/// frame turns about the pole with the core's level-9 axial phase (the
+/// sprinkler).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MazeMode {
+    Off,
+    Fixed,
+    Swept,
+}
+
 /// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;
 /// `crate::rough_sphere::ContactLaw`).
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +143,8 @@ pub struct RoughParams {
     pub grain_edge: f64,
     /// Doc §15.8: the surface twist a photon meets on the ball.
     pub grain_mode: GrainMode,
+    /// Doc §15.9: ball contacts become maze captures (Ball body model only).
+    pub maze: MazeMode,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -135,7 +152,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, body_law: None }
     }
 }
 

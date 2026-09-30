@@ -316,3 +316,27 @@ table.
   - A full sprinkler disc needs the maze frame to sweep in azimuth, e.g.
     carried around the pole by the core's axial (level-9) rotation phase.
   - Whether it sweeps is a modelling choice to make with the user.
+
+
+### The maze inside the DSMC ball (2026-09-30, GPU_DSMC_DESIGN.md §15.9)
+
+- **User's decisions:**
+  - The **swept** maze frame: the maze turns about the pole with the core's
+    level-9 axial phase, the sprinkler.
+  - **Neutron release:** trapped photons leave through the pole opposite
+    their start hemisphere, with the maze's spin (neutron.pdf).
+- **Built on the GPU** (`MazeMode`, `maze::emit`, shader `maze_contact`) and
+  matched against the CPU mirror to 2e-5.
+- **At the ball:**
+  - Protons emit a full ring within 30° of the equator (the fixed frame would
+    give two opposite lobes). Neutrons emit only from the poles.
+- **Through the gas:**
+  - Contacted proton exits are 0.67–0.72 equatorial; neutron exits are
+    0.18–0.30 equatorial and 0.21–0.25 polar. Before, both classes were
+    ~0.54.
+  - A helicity split returns: +0.09 for protons against about 0 for
+    neutrons.
+- **Charge-pause map at depth 0:** the proton takes in at the poles and emits
+  at the equator, which is Mathis's recycling pattern with the intake side
+  emergent. The neutron is reversed. There is no in/out reversal at a finite
+  radius yet: the emitter handles only 3% of the gas.

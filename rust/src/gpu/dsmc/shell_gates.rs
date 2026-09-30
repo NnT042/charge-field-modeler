@@ -28,7 +28,7 @@ use super::config::{
 };
 use super::engine::{DsmcEngine, Totals};
 use super::gpu_types::{GpuPhoton, BALLKEY_STRIDE, FLAG_ALIVE, FLAG_SPECIES_PLUS};
-use super::config::GrainMode;
+use super::config::{GrainMode, MazeMode};
 use crate::baryon_shells::{matter_velocity, region_of, PROTON_STATES};
 use crate::gpu::context::GpuContext;
 use crate::rough_sphere::{contact_normal, level_radius, wall_contact_spinning, Ball, ContactLaw, StackRule, Stacked};
@@ -519,6 +519,14 @@ struct GrainMirror {
     mode: GrainMode,
     seed: u64,
     step: u32,
+    /// Doc §15.9 maze emission law.
+    maze: MazeMode,
+}
+
+/// Rodrigues rotation (the shader's axis_rot).
+fn axis_rot(a: DVec3, th: f64, v: DVec3) -> DVec3 {
+    let (s, c) = th.sin_cos();
+    v * c + a.cross(v) * s + a * a.dot(v) * (1.0 - c)
 }
 
 /// CPU mirror of the move kernel's ball phase for one photon (multi-hit
@@ -571,9 +579,9 @@ fn cpu_ball_step(
                 }
             }
         }
-        let Some((th, si, touching)) = best else { break };
-        let f = (th - si as f64 * h) / h;
-        let mut xh = x + v * (th - tc);
+        let Some((th_hit, si, touching)) = best else { break };
+        let f = (th_hit - si as f64 * h) / h;
+        let mut xh = x + v * (th_hit - tc);
         let ch = k(si, 0).0.lerp(k(si + 1, 0).0, f);
         if touching {
             let dd = xh - ch;
@@ -583,6 +591,38 @@ fn cpu_ball_step(
         }
         let om = k(si, 1).0.lerp(k(si + 1, 1).0, f);
         let vcen = k(si, 2).0.lerp(k(si + 1, 2).0, f);
+        if grain.maze != MazeMode::Off {
+            // Doc §15.9: capture and re-emission through the maze (mirrors
+            // the shader's maze_contact).
+            let meta = keys[36];
+            let oq = keys[45];
+            let orient = glam::DQuat::from_xyzw(oq[0] as f64, oq[1] as f64, oq[2] as f64, oq[3] as f64);
+            let sg = keys[46];
+            let signs = [sg[0] as f64, sg[1] as f64, sg[2] as f64, sg[3] as f64];
+            let th = if grain.maze == MazeMode::Swept { meta[2] as f64 + meta[3] as f64 * th_hit } else { 0.0 };
+            let local = |v: DVec3| axis_rot(DVec3::Z, -th, orient.inverse() * v);
+            let world = |v: DVec3| orient * axis_rot(DVec3::Z, th, v);
+            let v_in = st.v;
+            let dl = local(v_in.normalize());
+            let key = hash_u32(p.a[3].to_bits() ^ hash_u32(grain.step ^ 0x3A2E ^ iter.wrapping_mul(0x9E37_79B9)));
+            let e = crate::maze::emit(&signs, dl, local(st.w[st.k as usize]), |i| rand01(grain.seed, key, 50 + i) as f64);
+            for lvl in 0..st.k as usize {
+                st.w[lvl] = world(crate::maze::turn(&signs, crate::maze::arc(dl, e.d0, local(st.w[lvl]))));
+            }
+            let out_w = world(e.out);
+            let s_rel = (v_in - (vcen + om.cross(xh - ch))).length();
+            let xe = ch + out_w * rb * (1.0 + 1e-3);
+            let mut v_out = vcen + om.cross(xe - ch) + out_w * s_rel;
+            if pinned {
+                v_out = v_out.normalize();
+            }
+            st.v = v_out;
+            st.w[st.k as usize] = world(e.spin);
+            hits += 1;
+            x = xe;
+            tc = th_hit;
+            continue;
+        }
         let n = (ch - xh).normalize();
         let tw = match grain.mode {
             GrainMode::EdgeC => {
@@ -622,7 +662,7 @@ fn cpu_ball_step(
             }
         }
         x = xh;
-        tc = th;
+        tc = th_hit;
     }
     (hits, st, x + st.v * (dt - tc))
 }
@@ -639,10 +679,13 @@ fn ball_gpu_matches_cpu() {
         ("twist body law, grain 1, BodyFree, stacking", RoughParams { grain_edge: 1.0, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
         ("twist body law, RIGID grain, BodyFree, stacking", RoughParams { grain_mode: GrainMode::Rigid, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
         ("twist body law, RIGID+INNER grain (z-flip neutron, depth 2), BodyFree, stacking", RoughParams { grain_mode: GrainMode::RigidInner, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("MAZE swept, proton, BodyFree, stacking", RoughParams { maze: MazeMode::Swept, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("MAZE swept, neutron, BodyFree, stacking", RoughParams { maze: MazeMode::Swept, speed_mode: SpeedMode::BodyFree, g_max: 8.0, ..twist_rough(true, SpeedMode::PinnedC) }),
+        ("MAZE fixed, neutron, PinnedC", RoughParams { maze: MazeMode::Fixed, ..twist_rough(false, SpeedMode::PinnedC) }),
     ] {
         let n: u32 = 6000;
         let inner_case = rough.grain_mode == GrainMode::RigidInner;
-        let signs = if inner_case { crate::baryon_shells::NEUTRON_STATES[0] } else { PROTON_STATES[0] };
+        let signs = if name.contains("neutron") { crate::baryon_shells::NEUTRON_STATES[0] } else { PROTON_STATES[0] };
         let mut config = ball_config(Boundary::PeriodicBox { half_extent: 2.0 }, signs, rough, 0.0, 0.0, n + 16, 0xBA11);
         config.dt = 0.05;
         let ctx = GpuContext::new().expect("GPU");
@@ -654,7 +697,7 @@ fn ball_gpu_matches_cpu() {
             b.tier1_signs = NEUTRON_INNER_SIGNS;
         }
         let keys = engine.ball_keyframes();
-        let grain = GrainMirror { mode: rough.grain_mode, seed: 0xBA11, step: engine.step };
+        let grain = GrainMirror { mode: rough.grain_mode, seed: 0xBA11, step: engine.step, maze: rough.maze };
         let ball = engine.shell_bodies[0].ball();
         let mut rng = Lcg(0xBA11);
         let photons: Vec<GpuPhoton> = (0..n)
@@ -684,6 +727,8 @@ fn ball_gpu_matches_cpu() {
         for i in 0..8 {
             keys_ns[37 + i][3] = 0.0;
         }
+        // Maze control: flip the body's z sign (escape iff x == z flips).
+        keys_ns[46][3] = -keys_ns[46][3];
         for p in &photons {
             let q = after.iter().find(|q| q.id() == p.id()).expect("lost");
             let (nhit, st, x1) = cpu_ball_step(p, &keys[0..BALLKEY_STRIDE], 0.05, &law, pinned, &rule, rough.grain_edge, rough.stacking, grain);
@@ -924,6 +969,13 @@ fn report_c_ball_single_body() {
         "inner" => GrainMode::RigidInner,
         _ => GrainMode::EdgeC,
     };
+    // Doc §15.9: CFM_C_MAZE = off (default) | fixed | swept.
+    let maze = match env("CFM_C_MAZE", "off").as_str() {
+        "fixed" => MazeMode::Fixed,
+        "swept" => MazeMode::Swept,
+        _ => MazeMode::Off,
+    };
+
     let tier1_p = parse4("CFM_C_TIER1_P").unwrap_or([1.0; 4]);
     // Doc §15.7: the adopted neutron has z flipped in every tier (user
     // decision 2026-09-30): level 8 (the tier-2 z) opposes levels 5-7, as
@@ -939,17 +991,19 @@ fn report_c_ball_single_body() {
     // CFM_C_ONLY: "proton" or "neutron" runs one class.
     let only = env("CFM_C_ONLY", "");
     let classes: Vec<(&str, Vec<[f64; 4]>)> = classes.into_iter().filter(|(c, _)| only.is_empty() || *c == only).collect();
-    println!("   top_p {top_p} top_n {top_n} inner {inner} inner_p {inner_p:?} inner_n {inner_n:?} tier1_p {tier1_p:?} tier1_n {tier1_n:?} grain_mode {grain_mode:?}");
+    println!("   top_p {top_p} top_n {top_n} inner {inner} inner_p {inner_p:?} inner_n {inner_n:?} tier1_p {tier1_p:?} tier1_n {tier1_n:?} grain_mode {grain_mode:?} maze {maze:?}");
     for (class, states) in classes {
         let mut acc_hit = vec![0i64; 180];
         let mut acc_exit = vec![0i64; 360];
         let mut acc_flux = vec![0i64; 504];
+        let mut acc_mlat = vec![0i64; 180];
+        let mut acc_maz = vec![0i64; 36];
         for (si, signs) in states.iter().enumerate() {
             if first_only && si > 0 {
                 continue;
             }
             let started = Instant::now();
-            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, RoughParams { grain_mode, ..rough }, 1.0 / (LAMBDA * n_a), n_a, cap, seed);
+            let mut config = ball_config(Boundary::SphereEscape { r_d: 6.0 }, *signs, RoughParams { grain_mode, maze, ..rough }, 1.0 / (LAMBDA * n_a), n_a, cap, seed);
             config.h = cell_h;
             config.dt = dt;
             let mut engine = DsmcEngine::new(&ctx, config);
@@ -1039,6 +1093,35 @@ fn report_c_ball_single_body() {
                 );
             }
             println!("{line}");
+            if maze != MazeMode::Off {
+                let m = &t.maze;
+                let tot = (m[0] + m[1] + m[2] + m[3]).max(1) as f64;
+                let lat_band = |lo: usize, hi: usize| -> f64 {
+                    let s: i64 = (0..180usize).filter(|&d| (d as i32 - 90).unsigned_abs() as usize >= lo && ((d as i32 - 90).unsigned_abs() as usize) < hi).map(|d| t.maze_lat[d]).sum();
+                    s as f64 / tot
+                };
+                let az_tot = t.maze_az.iter().sum::<i64>().max(1) as f64;
+                let oct: Vec<String> = (0..8).map(|o| format!("{:.2}", (0..36).filter(|&b| (b * 10 + 5) / 45 == o).map(|b| t.maze_az[b]).sum::<i64>() as f64 / az_tot)).collect();
+                println!(
+                    "   maze: esc-up {:.3} esc-down {:.3} trap-up {:.3} trap-down {:.3} fallback {} | emission |lat| 0-30 {:.3} 30-60 {:.3} 60-89 {:.3} poles {:.3} | escape azimuth octants from +x {:?}",
+                    m[0] as f64 / tot,
+                    m[1] as f64 / tot,
+                    m[2] as f64 / tot,
+                    m[3] as f64 / tot,
+                    m[4],
+                    lat_band(0, 30),
+                    lat_band(30, 60),
+                    lat_band(60, 89),
+                    lat_band(89, 91),
+                    oct
+                );
+                for (a, b) in acc_mlat.iter_mut().zip(&t.maze_lat) {
+                    *a += *b;
+                }
+                for (a, b) in acc_maz.iter_mut().zip(&t.maze_az) {
+                    *a += *b;
+                }
+            }
             for (a, b) in acc_hit.iter_mut().zip(&t.hit_lat) {
                 *a += *b;
             }
@@ -1067,6 +1150,17 @@ fn report_c_ball_single_body() {
                 }
             }
             std::fs::write(std::path::Path::new(dir).join(format!("ball_{class}_flux.csv")), csv).expect("write flux");
+            if maze != MazeMode::Off {
+                let mut csv = String::from("degree,emission_lat\n");
+                for d in 0..180usize {
+                    csv += &format!("{},{}\n", d as i32 - 90, acc_mlat[d]);
+                }
+                csv += "azimuth_lo,escapes\n";
+                for b in 0..36usize {
+                    csv += &format!("{},{}\n", b * 10, acc_maz[b]);
+                }
+                std::fs::write(std::path::Path::new(dir).join(format!("ball_{class}_maze.csv")), csv).expect("write maze");
+            }
         }
     }
 }

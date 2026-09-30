@@ -302,6 +302,127 @@ pub fn describe(rule: &MazeRule, e: Escape, u: Upright) -> String {
     )
 }
 
+// ---- Doc §15.9: the maze as the ball's emission law ----
+
+/// The canonical rule's level axes (a, x, y, z) in the maze frame: Spin
+/// mode's rotation axes, lab-fixed.
+pub const MAZE_AXES: [DVec3; 4] = [DVec3::Z, DVec3::X, DVec3::Y, DVec3::Z];
+
+/// A start whose table outcome is decided closer than this to a threshold is
+/// rejected (f32 on the GPU).
+pub const PATCH_MARGIN: f64 = 1e-4;
+
+/// Rejection-sampling tries for the start direction before the fallback.
+pub const PATCH_TRIES: u32 = 64;
+
+/// Exact 90-degree turn of `v` about the unit axis `axis`, sense `sign`.
+pub fn rot90(axis: DVec3, sign: f64, v: DVec3) -> DVec3 {
+    axis * axis.dot(v) + sign * axis.cross(v)
+}
+
+/// The rigid part of the canonical maze (the direction's path): the four
+/// turns a, x, y, z in order.
+pub fn turn(signs: &[f64; 4], v: DVec3) -> DVec3 {
+    let mut v = v;
+    for i in 0..4 {
+        v = rot90(MAZE_AXES[i], signs[i], v);
+    }
+    v
+}
+
+/// The canonical maze's spin path (Set contact spin at each level).
+pub fn spin_path(signs: &[f64; 4], s0: DVec3) -> DVec3 {
+    let mut s = s0;
+    for i in 0..4 {
+        let a = MAZE_AXES[i];
+        s = rot90(a, signs[i], s);
+        let n = s.dot(a);
+        s += (signs[i] * n.abs() - n) * a;
+    }
+    s
+}
+
+/// Rotation taking unit `a` to unit `b` (shortest arc), applied to `v`.
+/// Antiparallel: a half turn about an axis perpendicular to `a`.
+pub fn arc(a: DVec3, b: DVec3, v: DVec3) -> DVec3 {
+    let c = a.dot(b);
+    if c < -0.9999 {
+        let t = if a.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+        let ax = a.cross(t).normalize();
+        return 2.0 * ax.dot(v) * ax - v;
+    }
+    let k = a.cross(b);
+    v * c + k.cross(v) + k * (k.dot(v) / (1.0 + c))
+}
+
+/// True if a start `d0` with helical spin `h*d0` reproduces the whole of
+/// Mathis's table under the canonical maze (with `PATCH_MARGIN`).
+pub fn in_patch(d0: DVec3, h: f64) -> bool {
+    let s0 = d0 * h;
+    for (signs, _, esc, up) in MATHIS_TABLE.iter() {
+        let e = turn(signs, d0).dot(d0);
+        let u = spin_path(signs, s0).dot(s0);
+        if e.abs() < PATCH_MARGIN || u.abs() < PATCH_MARGIN || (e >= 0.0) != *esc || (u >= 0.0) != *up {
+            return false;
+        }
+    }
+    true
+}
+
+/// Fallback start when rejection sampling finds none: the patch centre used
+/// by the regression test, mirrored to the south for h = +1.
+pub fn patch_fallback(h: f64) -> DVec3 {
+    DVec3::new(1.0, 0.0, 1.0).normalize() * -h
+}
+
+/// One maze emission in the maze frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Emission {
+    /// Start direction drawn in the patch.
+    pub d0: DVec3,
+    /// Maze exit direction (before the trapped-photon release).
+    pub d: DVec3,
+    /// Outgoing direction: `d` if it escaped, else the opposite pole.
+    pub out: DVec3,
+    /// Outgoing spin (the maze's).
+    pub spin: DVec3,
+    pub escaped: bool,
+    pub upright: bool,
+    pub fallback: bool,
+}
+
+/// The ball's emission law (doc §15.9), in the maze frame. A captured
+/// photon arriving along `dl` with outer spin `wl` is re-emitted from the
+/// core: its helicity picks the patch hemisphere (h < 0: north, h >= 0:
+/// south), a start d0 is drawn in the patch by rejection (`draw(i)` gives
+/// uniform [0, 1) numbers, indices 0..2*PATCH_TRIES), its spin is carried
+/// from dl to d0 rigidly, and it runs the canonical maze. Escaped photons
+/// leave along the maze exit; trapped ones funnel to the axis and leave by
+/// the opposite pole (neutron.pdf), with the maze's spin.
+pub fn emit(signs: &[f64; 4], dl: DVec3, wl: DVec3, mut draw: impl FnMut(u32) -> f64) -> Emission {
+    let h = if wl.dot(dl) < 0.0 { -1.0 } else { 1.0 };
+    let mut d0 = patch_fallback(h);
+    let mut fallback = true;
+    for t in 0..PATCH_TRIES {
+        let u = draw(2 * t);
+        let ph = std::f64::consts::TAU * draw(2 * t + 1);
+        let r = (1.0 - u * u).max(0.0).sqrt();
+        let c = DVec3::new(r * ph.cos(), r * ph.sin(), -h * u);
+        if in_patch(c, h) {
+            d0 = c;
+            fallback = false;
+            break;
+        }
+    }
+    let s0 = arc(dl, d0, wl);
+    let d = turn(signs, d0);
+    let spin = spin_path(signs, s0);
+    let escaped = d.dot(d0) >= 0.0;
+    let upright = spin.dot(s0) >= 0.0;
+    let out = if escaped { d } else { DVec3::new(0.0, 0.0, h) };
+    Emission { d0, d, out, spin, escaped, upright, fallback }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,6 +766,102 @@ mod tests {
                 lat_sum / n as f64,
                 f(north),
                 az_hist.iter().map(|&x| format!("{:.2}", f(x))).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Doc §15.9: the exact-turn emission helpers agree with `run()`, the
+    /// patch test agrees with `score()`, both fallback centres are in the
+    /// patch, and emission from the patch reproduces the table for every
+    /// state (helical arrivals), with every escape within 30 degrees of the
+    /// equator and every trapped photon sent out of the opposite pole.
+    #[test]
+    fn emission_law_matches_canonical_maze() {
+        let base = MazeRule {
+            angle: std::f64::consts::FRAC_PI_2,
+            axes: MAZE_AXES,
+            carried: false,
+            outer_first: false,
+            d0: DVec3::X,
+            s0: DVec3::X,
+            spin: SpinRule::Set,
+        };
+        let mut seed = 0x51u64;
+        let mut f = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut agree = 0;
+        let mut inside = 0;
+        for _ in 0..4000 {
+            let z = 2.0 * f() - 1.0;
+            let ph = std::f64::consts::TAU * f();
+            let r = (1.0 - z * z).sqrt();
+            let d0 = DVec3::new(r * ph.cos(), r * ph.sin(), z);
+            let h = if f() < 0.5 { -1.0 } else { 1.0 };
+            let rule = MazeRule { d0, s0: d0 * h, ..base };
+            for (signs, _, _, _) in MATHIS_TABLE.iter() {
+                let (d, s) = run(&rule, signs);
+                assert!((d - turn(signs, d0)).length() < 1e-12);
+                assert!((s - spin_path(signs, d0 * h)).length() < 1e-12);
+            }
+            let perfect = score(&rule, Escape::NotReversed, Upright::NotReversed).0 == 16;
+            if perfect == in_patch(d0, h) {
+                agree += 1;
+            }
+            inside += in_patch(d0, h) as usize;
+        }
+        assert!(agree >= 3995, "patch test vs score: {agree}/4000");
+        assert!(inside > 40, "patch too small to sample: {inside}/4000");
+        for h in [-1.0, 1.0] {
+            assert!(in_patch(patch_fallback(h), h), "fallback h {h}");
+        }
+        for (signs, _, esc, up) in MATHIS_TABLE.iter() {
+            for h in [-1.0, 1.0] {
+                for _ in 0..50 {
+                    let e = emit(signs, DVec3::X, DVec3::X * h, |_| f());
+                    assert_eq!(e.escaped, *esc);
+                    assert_eq!(e.upright, *up);
+                    if e.escaped {
+                        assert!(e.out.z.abs() <= 0.5 + 1e-9, "escape latitude {}", e.out.z.asin().to_degrees());
+                    } else {
+                        assert!((e.out - DVec3::new(0.0, 0.0, h)).length() < 1e-12);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Report (doc §15.9): patch acceptance per hemisphere and the tries
+    /// needed, from uniform hemisphere draws.
+    #[test]
+    #[ignore]
+    fn report_patch_sampling() {
+        let mut seed = 0x77u64;
+        let mut f = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for h in [-1.0, 1.0] {
+            let n = 200_000;
+            let mut acc = 0;
+            let mut sum = DVec3::ZERO;
+            for _ in 0..n {
+                let u = f();
+                let ph = std::f64::consts::TAU * f();
+                let r = (1.0 - u * u).sqrt();
+                let c = DVec3::new(r * ph.cos(), r * ph.sin(), -h * u);
+                if in_patch(c, h) {
+                    acc += 1;
+                    sum += c;
+                }
+            }
+            let p = acc as f64 / n as f64;
+            println!(
+                "h {h:+}: acceptance {:.4} | P(fallback after {PATCH_TRIES} tries) {:.2e} | mean start dir {:?}",
+                p,
+                (1.0 - p).powi(PATCH_TRIES as i32),
+                sum / acc as f64
             );
         }
     }

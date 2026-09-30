@@ -275,7 +275,8 @@ pub struct GpuParams {
     pub body_beta_twist: f32,
     /// Doc §15.8: 0 EdgeC, 1 Rigid, 2 RigidInner.
     pub grain_mode: u32,
-    pub _pad14b: u32,
+    /// Doc §15.9: 0 off, 1 fixed maze frame, 2 swept (level-9 phase).
+    pub maze_mode: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -463,13 +464,26 @@ pub const TALLY_EXIT_LAT: usize = 592;
 pub const TALLY_FLUX: usize = 952;
 pub const FLUX_RADII: [f64; 7] = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
 
-pub const TALLY_LEN: usize = 1456;
+/// Doc §15.9 maze emission, body 0: [esc-upright, esc-upside-down,
+/// trapped-upright, trapped-upside-down, patch fallbacks], len 5.
+pub const TALLY_MAZE: usize = 1456;
+/// Doc §15.9: body-0 emission latitude (outgoing direction vs the pole),
+/// 1-degree bins, len 180.
+pub const TALLY_MAZE_LAT: usize = 1461;
+/// Doc §15.9: body-0 escape azimuth in the body frame (`orient`, from +x),
+/// 10-degree bins, len 36.
+pub const TALLY_MAZE_AZ: usize = 1641;
+
+pub const TALLY_LEN: usize = 1677;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
 /// then (unresolved count m, photon radius, 0, 0), then 8 x (axis, signed rate
-/// in photon units) for levels 1..8 (the first m are used).
-pub const BALLKEY_STRIDE: usize = 45;
+/// in photon units) for levels 1..8 (the first m are used). The meta vec4's
+/// z, w hold the level-9 phase at the step start (mod 2 pi) and its rate
+/// (doc §15.9 swept maze). Then the body `orient` quaternion and the body's
+/// (a, x, y, z) signs.
+pub const BALLKEY_STRIDE: usize = 47;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;
