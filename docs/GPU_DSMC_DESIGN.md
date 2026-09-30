@@ -1684,6 +1684,69 @@ neutron; contacted-exit bands at the R_D = 6 envelope, after the gas):
   - Upright fractions for protons are 0.51–0.77 by state, because arriving
     spins aren't helical. That is secondary.
 
+### 15.10 Two maze bodies side by side (2026-09-30)
+
+**Question:** do two §15.9 maze bodies feed each other, and does a charge-pause
+form between them?
+
+**Build:**
+- **Emitter tag:** photon flag bits 17–19 hold 1 + the body whose maze last
+  emitted the photon (0 = never captured).
+- **`TALLY_FEED`** [capturing body × tag] counts every capture by who emitted
+  the photon last.
+- **`TALLY_LINE`** counts crossings of planes perpendicular to the body-0 →
+  body-1 axis, every 0.25 from u = −2, inside radius 0.5 of the axis. It
+  splits them by tag class (never captured / body 0 / body 1) and direction.
+  `TALLY_LEN` = 1943.
+- **Gate:** `two_body_feed_bookkeeping`. The feed sums equal the contacts per
+  body, both bodies capture, and traffic crosses the mid-plane both ways.
+- **Report:** `report_two_bodies` runs the isolated baselines, then pairs
+  pp / pn / nn, side by side (separation along x, in each other's equatorial
+  plane) or axial (along the pole). Env: `CFM_2_PAIRS`, `CFM_2_GEOMS`,
+  `CFM_2_SEP`, plus the usual `CFM_C_*`.
+- **Setup:** swept maze, BodyFree, depth 0, λ = 3, first sign state per class,
+  adopted neutron.
+
+**Results** (share of each body's captures that its neighbour emitted last;
+separation 2.5 / 2.05, body envelopes of radius 1):
+
+| pair | side by side | axial |
+|---|---|---|
+| p – p | 0.002 & 0.002 / 0.002 & 0.002 | 0.001 & 0.000 / 0.000 & 0.000 |
+| p – n (p, n) | 0.000, 0.002 / 0.000, 0.003 | **0.004**, 0.000 / **0.005**, 0.000 |
+| n – n (lower/left, upper/right) | 0.000 & 0.000 / 0.001 & 0.000 | **0.004** & 0.001 / **0.006** & 0.002 |
+
+- **The feeding sorts by geometry the way Mathis's nucleus needs:**
+  - A proton's equatorial ring feeds a side neighbour (p–p side; the neutron
+    in p–n side) and never an axial one.
+  - A neutron's polar jets feed an axial neighbour and never a side one. In
+    p–n axial, the neutron's jet pours into the proton's pole, which is the
+    proton's net-intake region (§15.9).
+  - In p–n side, net flow along the line runs from the proton into the
+    neutron's equator (the neutron's net intake region), +16 to +29 × 10⁻³.
+  - Nothing here is fitted; it follows from the §15.9 emission law.
+- **But the coupling is about 100× too weak to matter:**
+  - The neighbour supplies ≤ 0.6% of captures.
+  - Capture rates stay at 0.98–1.015 × isolated.
+  - Gas density along the line stays at 0.95–0.99 n_a, with no pile-up in the
+    gap.
+  - The tag-decomposed line flux shows each body's own emission pattern
+    unchanged by its neighbour: the streams pass through each other at λ = 3.
+  - There is no charge-pause: the net flow between the bodies is just the sum
+    of the two emission patterns.
+- **Why:** each ball captures ~3% of the photons crossing its envelope. Only
+  ~4–5% of the gas near a body has ever been re-emitted (the "share tagged"
+  column). In Mathis's picture the near field of a nucleon is mostly its own
+  recycled charge, so the intake has to capture most of what passes through,
+  not ~3%.
+- **Unexplained:** in n–n axial the lower body is fed ~3× more than the upper
+  one (about 90 vs 30 captures), even though the release-pole bias
+  (+0.137 arrival helicity → north) should favour the upper body. The counts
+  are small.
+- **Next lever:** the intake cross-section / emitter strength (open since
+  §15.9). Until a body recycles most of the charge crossing it, neighbours
+  cannot feed each other enough for a charge-pause or binding.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

@@ -97,6 +97,15 @@ const TALLY_FLUX: u32 = 952u;         // [((k*18 + lat)*2 + spec)*2 + dir], body
 const FLAG_PP_PASSAGE: u32 = 1u << 14u;
 const FLAG_HIT_CLEAN: u32 = 1u << 15u;    // first ball hit came before any pp collision
 const FLAG_HIT_AFTER_PP: u32 = 1u << 16u; // first ball hit came after a pp collision
+// Doc §15.10: bits 17-19 = 1 + the body whose maze last emitted the photon
+// (0 = never captured).
+const FLAG_EMIT_SHIFT: u32 = 17u;
+const FLAG_EMIT_MASK: u32 = 7u << 17u;
+const TALLY_FEED: u32 = 1677u; // [capturing body*5 + emitter tag], len 20
+const TALLY_LINE: u32 = 1697u; // [(plane*3 + tag class)*2 + dir], len 246
+const LINE_U0: f32 = 2.0;
+const LINE_DU: f32 = 0.25;
+const LINE_N: i32 = 41;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -632,7 +641,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 // §15.9: capture and re-emission through the maze.
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
+                atomicAdd(&tallies[TALLY_FEED + b * 5u + ((ph.c[0] >> FLAG_EMIT_SHIFT) & 7u)], 1);
                 x_next = maze_contact(&ph, b, xh, ch, rb, om, vcen, best_t, mkey);
+                ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
                 let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
                 dp = -(ph.b.xyz * ph.d.w - v_before) * m;
                 touched = true;
@@ -799,6 +810,34 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             if ((s0 < r) != (s1 < r)) {
                 let dir = select(1u, 0u, s1 > s0);
                 atomicAdd(&tallies[TALLY_FLUX + ((k * 18u + lb) * 2u + spec) * 2u + dir], 1);
+            }
+        }
+    }
+
+    // Doc §15.10 two-body line flux: crossings of the planes perpendicular to
+    // the body-0 -> body-1 axis at u = -LINE_U0 + j*LINE_DU (u from body 0's
+    // centre), inside a cylinder of radius 0.5 about the axis, by the
+    // photon's emitter tag (0 never captured, 1 body 0, 2 body 1) and
+    // direction (0 toward body 1).
+    if (params.body_model == 2u && params.n_bodies > 1u) {
+        let c0 = bodies[0].center.xyz;
+        let e = normalize(bodies[1].center.xyz - c0);
+        let a0 = ph.a.xyz - c0;
+        let a1 = pos - c0;
+        let u0 = dot(a0, e);
+        let u1 = dot(a1, e);
+        if (u0 != u1) {
+            let jlo = max(i32(ceil((min(u0, u1) + LINE_U0) / LINE_DU)), 0);
+            let jhi = min(i32(floor((max(u0, u1) + LINE_U0) / LINE_DU)), LINE_N - 1);
+            let tc = min((ph.c[0] >> FLAG_EMIT_SHIFT) & 7u, 2u);
+            let dir = select(1u, 0u, u1 > u0);
+            for (var j = jlo; j <= jhi; j = j + 1) {
+                let up = f32(j) * LINE_DU - LINE_U0;
+                let xc = mix(a0, a1, (up - u0) / (u1 - u0));
+                let perp = xc - up * e;
+                if (dot(perp, perp) <= 0.25) {
+                    atomicAdd(&tallies[TALLY_LINE + (u32(j) * 3u + tc) * 2u + dir], 1);
+                }
             }
         }
     }

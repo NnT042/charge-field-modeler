@@ -1207,3 +1207,172 @@ fn permeable_body_does_not_distort_gas_collision_rate() {
         assert!((rate / expect - 1.0).abs() < 0.03, "{model:?}: gas collision rate distorted");
     }
 }
+
+/// Doc §15.10 settings shared by the two-body gate and report: the §15.9
+/// maze ball (swept, BodyFree), bodies at `centers`, pole along +Z.
+fn two_body_config(centers: &[DVec3], classes: &[&str], n_a: f64, lambda: f64, cap: u32, seed: u64, dt: f64) -> DsmcConfig {
+    let rough = RoughParams {
+        beta: -1.0,
+        beta_twist: 0.0,
+        twist_loss_to_normal: true,
+        grain_edge: 1.0,
+        body_law: Some((-1.0, 0.0, true)),
+        maze: MazeMode::Swept,
+        speed_mode: SpeedMode::BodyFree,
+        g_max: 12.0,
+        ..twist_rough(true, SpeedMode::PinnedC)
+    };
+    let mut c = ball_config(Boundary::SphereEscape { r_d: 6.0 }, PROTON_STATES[0], rough, 1.0 / (lambda * n_a), n_a, cap, seed);
+    c.dt = dt;
+    c.bodies = centers
+        .iter()
+        .zip(classes)
+        .map(|(ctr, cl)| BodyConfig {
+            center: *ctr,
+            class: if *cl == "neutron" { GpuClass::Neutron } else { GpuClass::Proton },
+            orient: GpuOrient::PoleOn,
+            through_lane_rho: 0.0,
+        })
+        .collect();
+    c.shell_signs = classes.iter().map(|cl| if *cl == "neutron" { crate::baryon_shells::NEUTRON_STATES[0] } else { PROTON_STATES[0] }).collect();
+    c
+}
+
+/// Doc §15.10 bookkeeping gate: with two maze bodies, every capture is
+/// tallied once by emitter tag (feed sums == contacts per body), both bodies
+/// capture, and the line flux sees traffic both ways between them.
+#[test]
+fn two_body_feed_bookkeeping() {
+    let ctx = GpuContext::new().expect("GPU");
+    let centers = [DVec3::new(-1.25, 0.0, 0.0), DVec3::new(1.25, 0.0, 0.0)];
+    let mut engine = DsmcEngine::new(&ctx, two_body_config(&centers, &["proton", "neutron"], 2000.0, 3.0, 2_000_000, 0x2B0D, 0.05));
+    let rep = engine.run_steady(&ctx, 60, 120, 60);
+    let t = &rep.totals;
+    for b in 0..2 {
+        let fed: i64 = t.feed[b].iter().sum();
+        println!("body {b}: contacts {} feed {:?}", t.sh_contacts[b], t.feed[b]);
+        assert_eq!(fed, t.sh_contacts[b], "body {b}: feed tally != contacts");
+        assert!(t.sh_contacts[b] > 100, "body {b}: too few captures");
+    }
+    use super::gpu_types::{LINE_DU, LINE_U0};
+    let j_mid = ((0.0 + 1.25 + LINE_U0) / LINE_DU).round() as usize + 0;
+    let (fwd, back): (i64, i64) = (0..3).map(|tc| (t.line[(j_mid * 3 + tc) * 2], t.line[(j_mid * 3 + tc) * 2 + 1])).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+    println!("mid-plane crossings: toward body 1 {fwd}, toward body 0 {back}");
+    assert!(fwd > 100 && back > 100, "line flux sees no traffic");
+    // A photon emitted by body 1 crossing the mid-plane toward body 1 must
+    // have been sent back (tag class 2, dir 0) less often than it leaves
+    // body 1 toward body 0 (tag class 2, dir 1).
+    assert!(t.line[(j_mid * 3 + 2) * 2 + 1] > 0);
+}
+
+/// Report (doc §15.10): two maze bodies side by side (separation along x,
+/// in each other's equatorial plane) or stacked (along the pole). Per body:
+/// captures per step vs the isolated body, what fed them (never captured /
+/// itself / the neighbour), contacted-exit bands; along the line between
+/// them: net photon flow and gas density.
+/// Env: CFM_2_PAIRS ("pp,pn,nn"), CFM_2_GEOMS ("side,axial"), CFM_2_SEP
+/// (2.5), CFM_C_DEPTH (0), CFM_C_NA (4000), CFM_C_LAMBDA (3), CFM_C_WARMUP
+/// (300), CFM_C_AVG (1200), CFM_C_SEED, CFM_C_CAP (9M).
+#[test]
+#[ignore]
+fn report_two_bodies() {
+    use super::gpu_types::{LINE_DU, LINE_N, LINE_U0};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let pairs = env("CFM_2_PAIRS", "pp,pn,nn");
+    let geoms = env("CFM_2_GEOMS", "side,axial");
+    let sep: f64 = env("CFM_2_SEP", "2.5").parse().unwrap();
+    let depth: usize = env("CFM_C_DEPTH", "0").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "4000").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
+    let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
+    let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
+    let dt = 0.05;
+    println!("=== two maze bodies (swept, BodyFree), sep {sep}, depth {depth}, lambda {lambda}, n_a {n_a}, warmup {warmup}, avg {avg} ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let setup = |engine: &mut DsmcEngine, classes: &[&str]| {
+        for (b, cl) in engine.shell_bodies.iter_mut().zip(classes) {
+            b.depth = depth;
+            if *cl == "neutron" {
+                b.inner_signs = NEUTRON_INNER_SIGNS;
+                b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+    };
+    let bands = |t: &Totals, b: usize| -> String {
+        let n = t.sh_exits[b].max(1) as f64;
+        format!("{:.3}/{:.3}/{:.3}", t.sh_exit_band[b][0] as f64 / n, t.sh_exit_band[b][1] as f64 / n, t.sh_exit_band[b][2] as f64 / n)
+    };
+    // Isolated baselines.
+    let mut iso = std::collections::HashMap::new();
+    for cl in ["proton", "neutron"] {
+        let mut engine = DsmcEngine::new(&ctx, two_body_config(&[DVec3::ZERO], &[cl], n_a, lambda, cap, seed, dt));
+        setup(&mut engine, &[cl]);
+        let rep = engine.run_steady(&ctx, warmup, avg, 200);
+        let t = &rep.totals;
+        let rate = t.sh_contacts[0] as f64 / avg as f64;
+        println!("isolated {cl:<7}: captures/step {rate:.2} | contacted-exit p/m/e {} | steady {}", bands(t, 0), rep.steady_ok);
+        iso.insert(cl, rate);
+    }
+    for pair in pairs.split(',') {
+        let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect();
+        for geom in geoms.split(',') {
+            let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
+            let centers = [-e * sep / 2.0, e * sep / 2.0];
+            let mut engine = DsmcEngine::new(&ctx, two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt));
+            setup(&mut engine, &classes);
+            let rep = engine.run_steady(&ctx, warmup, avg, 200);
+            let t = &rep.totals;
+            println!("--- {pair} {geom} (body 0 = {} at {:?}, body 1 = {} at {:?}), steady {} ---", classes[0], centers[0], classes[1], centers[1], rep.steady_ok);
+            for b in 0..2 {
+                let c = t.sh_contacts[b] as f64;
+                let f = &t.feed[b];
+                let (own, nb) = (f[1 + b], f[1 + (1 - b)]);
+                println!(
+                    "   body {b} {:<7}: captures/step {:.2} (x{:.3} isolated) | fed by: never-captured {:.3} itself {:.3} neighbour {:.3} | contacted-exit p/m/e {}",
+                    classes[b],
+                    c / avg as f64,
+                    c / avg as f64 / iso[classes[b]],
+                    f[0] as f64 / c.max(1.0),
+                    own as f64 / c.max(1.0),
+                    nb as f64 / c.max(1.0),
+                    bands(t, b)
+                );
+            }
+            // Line profile between the bodies (u from body 0's centre).
+            let dm = crate::gpu::dsmc::DensityMap::new(&engine.grid, engine.free_volume_cpu().to_vec(), rep.density_raw.clone(), avg);
+            let mut rows = Vec::new();
+            for j in 0..LINE_N {
+                let u = j as f64 * LINE_DU - LINE_U0;
+                if u < -1.5 - 1e-9 || u > sep + 1.5 + 1e-9 {
+                    continue;
+                }
+                let at = |tc: usize, d: usize| t.line[(j * 3 + tc) * 2 + d];
+                let tot: i64 = (0..3).map(|tc| at(tc, 0) + at(tc, 1)).sum();
+                let net = |tc: usize| (at(tc, 0) - at(tc, 1)) as f64 / tot.max(1) as f64 * 1e3;
+                let net_all = (0..3).map(|tc| at(tc, 0) - at(tc, 1)).sum::<i64>() as f64 / tot.max(1) as f64 * 1e3;
+                let share = |tc: usize| (at(tc, 0) + at(tc, 1)) as f64 / tot.max(1) as f64;
+                let p = centers[0] + e * u;
+                let mut dens = 0.0;
+                let mut rng = Lcg(0x11E + j as u64);
+                for _ in 0..200 {
+                    let q = rng.unit();
+                    dens += dm.density_at_both_species(p + (q - e * q.dot(e)) * 0.4, 0);
+                }
+                rows.push(format!(
+                    "     u {u:+5.2}: n/n_a {:.3} | net flow toward body 1 x1e3: all {net_all:+6.1} (noise {:.1}) | tag body0 {:+6.1} body1 {:+6.1} | share tagged b0 {:.3} b1 {:.3}",
+                    dens / 200.0 / n_a,
+                    1e3 / (tot.max(1) as f64).sqrt(),
+                    net(1),
+                    net(2),
+                    share(1),
+                    share(2)
+                ));
+            }
+            for r in rows {
+                println!("{r}");
+            }
+        }
+    }
+}

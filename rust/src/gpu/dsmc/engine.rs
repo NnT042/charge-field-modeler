@@ -125,6 +125,10 @@ pub struct Totals {
     pub maze: [i64; 5],
     pub maze_lat: Vec<i64>,
     pub maze_az: Vec<i64>,
+    /// Doc §15.10: captures [body][emitter tag] and the two-body line flux
+    /// (gpu_types::TALLY_LINE layout).
+    pub feed: [[i64; 5]; 4],
+    pub line: Vec<i64>,
 }
 
 impl Totals {
@@ -245,6 +249,12 @@ impl Totals {
         }
         add_vec(&mut self.maze_lat, &other.maze_lat);
         add_vec(&mut self.maze_az, &other.maze_az);
+        for b in 0..4 {
+            for t in 0..5 {
+                self.feed[b][t] += other.feed[b][t];
+            }
+        }
+        add_vec(&mut self.line, &other.line);
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -417,6 +427,14 @@ impl Totals {
         let ma: Vec<i64> = raw[TALLY_MAZE_AZ..TALLY_MAZE_AZ + 36].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.maze_lat, &ml);
         add_vec(&mut self.maze_az, &ma);
+        use super::gpu_types::{LINE_N, TALLY_FEED, TALLY_LINE};
+        for b in 0..4 {
+            for t in 0..5 {
+                self.feed[b][t] += raw[TALLY_FEED + b * 5 + t] as i64;
+            }
+        }
+        let ln: Vec<i64> = raw[TALLY_LINE..TALLY_LINE + LINE_N * 6].iter().map(|&x| x as i64).collect();
+        add_vec(&mut self.line, &ln);
     }
 }
 

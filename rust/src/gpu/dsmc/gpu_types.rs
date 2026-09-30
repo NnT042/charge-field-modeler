@@ -474,7 +474,19 @@ pub const TALLY_MAZE_LAT: usize = 1461;
 /// 10-degree bins, len 36.
 pub const TALLY_MAZE_AZ: usize = 1641;
 
-pub const TALLY_LEN: usize = 1677;
+/// Doc §15.10: ball captures by capturing body and emitter tag (0 = never
+/// captured before, 1 + b = last emitted by body b's maze): [b*5 + tag], len 20.
+pub const TALLY_FEED: usize = 1677;
+/// Doc §15.10 two-body line flux: planes perpendicular to the body-0 ->
+/// body-1 axis at u = -LINE_U0 + j*LINE_DU from body 0, inside radius 0.5:
+/// [(j*3 + tag class)*2 + dir], tag class 0 never captured / 1 body 0 /
+/// 2 body 1, dir 0 = toward body 1. len LINE_N*6.
+pub const TALLY_LINE: usize = 1697;
+pub const LINE_U0: f64 = 2.0;
+pub const LINE_DU: f64 = 0.25;
+pub const LINE_N: usize = 41;
+
+pub const TALLY_LEN: usize = 1943;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
