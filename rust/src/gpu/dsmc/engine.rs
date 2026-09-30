@@ -118,6 +118,8 @@ pub struct Totals {
     pub hit_lat: Vec<i64>,
     /// Doc §15.3: body-0 contacted-exit latitude, [spec][180 bins] flattened.
     pub exit_lat: Vec<i64>,
+    /// Doc §15.6: body-0 shell crossings, gpu_types::TALLY_FLUX layout.
+    pub flux: Vec<i64>,
 }
 
 impl Totals {
@@ -232,6 +234,7 @@ impl Totals {
         }
         add_vec(&mut self.hit_lat, &other.hit_lat);
         add_vec(&mut self.exit_lat, &other.exit_lat);
+        add_vec(&mut self.flux, &other.flux);
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -393,6 +396,9 @@ impl Totals {
         let exit: Vec<i64> = raw[TALLY_EXIT_LAT..TALLY_EXIT_LAT + 360].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.hit_lat, &hit);
         add_vec(&mut self.exit_lat, &exit);
+        use super::gpu_types::TALLY_FLUX;
+        let flux: Vec<i64> = raw[TALLY_FLUX..TALLY_FLUX + 504].iter().map(|&x| x as i64).collect();
+        add_vec(&mut self.flux, &flux);
     }
 }
 

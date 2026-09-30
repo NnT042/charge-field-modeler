@@ -1377,6 +1377,86 @@ state of each class, λ = 3 → 1 → 0.3 (photon-photon mean free path, body ra
   collisions at λ = 0.3; neutron 3). Negligible bias, but the runaway lives near the
   faster proton ball. Escape speed is unchanged (1.000 ± 0.050 p, ± 0.037 n).
 
+### 15.6 Neutron-model alternatives, all states; charge-pause map (2026-09-30)
+
+**Question (user):** which neutron are we using? The new engine uses Mathis's QCD
+sign states with all four baryon levels at c. Old Spin mode ran the neutron with
+z = 0 (torpid); the old recycling engine used z = ±0.05c. None was fully
+satisfying, so each variant was run through the same test.
+
+**Report additions:**
+- `CFM_C_TOP_P` / `CFM_C_TOP_N`: level-12 edge speed per class.
+- `CFM_C_INNER`: sign of levels 8–5.
+- `CFM_C_INNER_P` / `CFM_C_INNER_N`: per-class "s8,s7,s6,s5".
+- `CFM_C_ONLY`: run one class. `CFM_C_SIGNS` accepts ';'-separated states.
+- Ball-centre mean speed per state.
+- `TALLY_FLUX` (952, len 504) and `FLUX_RADII`: shell crossings by radius ×
+  latitude × species × direction; the CSV is `ball_<class>_flux.csv`.
+
+**All at λ = 3, BodyFree, all 4 states per class.** Depth 1 at avg 2400, depth 2 at
+avg 4800.
+
+| model | depth | ball speed by state | hits n/p (state-summed) | contacted-exit eq, p / n (state mean) | ball-hit helicity by state |
+|---|---|---|---|---|---|
+| N1: all levels at c, Mathis signs | 1 | p 2.21/1.82/1.93/2.22, n 1.62/2.21/1.89/2.22 | **0.99** | 0.550 / 0.530 | p +.06/+.15/+.14/+.06, n +.07/+.04/+.06/+.03 |
+| N2: neutron z torpid (0) | 1 | n 1.43/1.95/1.65/1.95 | 0.90 | – / 0.515 | n +.14/+.07/+.11/+.06 |
+| N3: neutron z 0.05c | 1 | n 1.42/1.95/1.65/1.95 | 0.88 | – / 0.517 | n ≈ N2 |
+| N4: BOTH tops at 0.05c | 1 | identical sets | 1.00 | 0.515 / 0.517 | identical |
+| N5: inner levels −1 | 1 | p/n speeds permuted vs N1 | 0.99 | 0.547 / 0.530 | permuted |
+| N6: user's "z flipped in every tier" neutron (level 8 = −1) | 1 | = N5 neutron | – | – / 0.530 | n +.02/+.07/+.03/+.05 |
+| N6 | 2 | p 2.53/1.99/2.17/2.41, n 2.47/1.97/2.47/2.11 | 0.99 | 0.546 / 0.541 | p +.14/+.05/+.14/+.16, **n −.10/−.08/−.09/+.01** |
+| control 1: PROTON with the tier-2 z flip | 2 | 2.07/2.45/2.52/2.13 | – | 0.545 / – | **+.03/−.08/−.08/−.07** |
+| control 2: neutron, no flip | 2 | 1.90/2.44/2.14/2.46 | – | – / 0.535 | +.16/+.14/+.01/+.14 |
+
+**The §15.4 "neutron hit 15–19% less" is retracted: it was a single-state
+artifact.**
+- Hits track the ball's mean speed, which depends on each state's outer signs
+  *relative to the inner +1 levels*, not on the class.
+- Summed over its 4 states, each class spans the same speeds (1.6–2.2c), and
+  n/p = 0.99.
+- Flipping the inner sign (N5) permutes which states are fast.
+
+**What survives every state and both inner signs: the neutron's contacted exits are
+~2 points less equatorial** (0.530 vs 0.547–0.550 at depth 1; 0.5–1 point at
+depth 2).
+
+**Torpid or sub-c top (N2/N3):**
+- It lowers the disc for whichever particle has it (0.515).
+- If both classes have it (N4), p and n are identical, because Mathis's p and n
+  states differ only in z relative to a, x, y.
+- The old "neutron = no outer spin" difference was therefore a
+  spun-top-vs-torpid-top comparison, not a sign-pattern effect.
+- magmom.pdf ("the proton must be spinning faster than the neutron") would support
+  a slower neutron top, but nothing yet fixes how much slower.
+
+**User's N6 ("z flipped in every tier"):**
+- At depth 2 (levels 8 and 7 moving), the neutron's ball-hit photons come out with
+  *reversed* helicity against the net-positive ambient field (−0.08 to −0.10 in 3 of
+  4 states, errors ±0.012), while the proton's are +0.05 to +0.16.
+- Controls:
+  - A proton given the same tier-2 z flip also reverses (3 of 4 states).
+  - A neutron without it does not.
+- So the reversal comes from the inner tier's z-vs-rest arrangement. Under the
+  user's definition, where neutron-ness propagates to every tier, it becomes a
+  clean p/n magnetic split with the sign neutron.pdf needs ("returns with reversed
+  spin").
+- Level 4 (tier-1 z) sits inside the rigid ball at every depth we can run, so its
+  flip is untested.
+- **Caveat:** the output helicity is set by the twist grip against the ball's
+  surface spin, whose direction comes from the §14.8 grain-spin rule (grains carry
+  the ball's net Ω at edge c). That rule is an open assumption.
+
+**Charge-pause map (λ = 3, depth 1): null.**
+- Net radial flux per latitude band is ≤1e-3 of crossings and within 1–2σ at every
+  radius 0.5–5.
+- There is no polar-in / equatorial-out cell. The only consistent signal is a
+  uniform slight inflow near the outer boundary, from how the ambient gas is
+  injected there.
+- The ball touches <1% of the photons that pass through the envelope, too little to
+  drive a circulation.
+- A charge-pause needs the recycling (emission) side, or a much stronger
+  interaction.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

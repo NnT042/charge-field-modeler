@@ -455,7 +455,14 @@ pub const TALLY_HIT_LAT: usize = 412;
 /// [spec*180 + bin], len 360.
 pub const TALLY_EXIT_LAT: usize = 592;
 
-pub const TALLY_LEN: usize = 952;
+/// Doc §15.6 charge-pause map: body-0 radial shell crossings. Shell radii
+/// `FLUX_RADII` x 18 signed-latitude bins (10 deg, bin = floor((lat + 90) /
+/// 10)) x species x direction (0 outward, 1 inward):
+/// [((k*18 + lat_bin)*2 + spec)*2 + dir], len 7*18*2*2 = 504.
+pub const TALLY_FLUX: usize = 952;
+pub const FLUX_RADII: [f64; 7] = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
+
+pub const TALLY_LEN: usize = 1456;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

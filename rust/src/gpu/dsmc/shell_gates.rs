@@ -822,17 +822,46 @@ fn report_c_ball_single_body() {
     // CFM_C_SIGNS: "a,x,y,z" runs one custom sign/speed state instead of the
     // 8 standard states (e.g. "-1,-1,-1,0" = the Spin-mode neutron preset,
     // whose z level was torpid).
-    let custom: Option<[f64; 4]> = std::env::var("CFM_C_SIGNS").ok().map(|v| {
-        let x: Vec<f64> = v.split(',').map(|t| t.trim().parse().unwrap()).collect();
-        [x[0], x[1], x[2], x[3]]
+    // Several custom states separated by ';'.
+    let custom: Option<Vec<[f64; 4]>> = std::env::var("CFM_C_SIGNS").ok().map(|v| {
+        v.split(';')
+            .map(|st| {
+                let x: Vec<f64> = st.split(',').map(|t| t.trim().parse().unwrap()).collect();
+                [x[0], x[1], x[2], x[3]]
+            })
+            .collect()
     });
-    let classes: Vec<(&str, Vec<[f64; 4]>)> = match custom {
-        Some(c) => vec![("custom", vec![c])],
-        None => vec![("proton", PROTON_STATES.to_vec()), ("neutron", NEUTRON_STATES.to_vec())],
+    // Doc §15.6 neutron-model alternatives: CFM_C_TOP_P / CFM_C_TOP_N scale
+    // the level-12 (z) edge speed of the proton / neutron states (1 = c,
+    // 0 = torpid); CFM_C_INNER is the sign of levels 8-5 (Spin-mode presets:
+    // +1).
+    let top_p: f64 = env("CFM_C_TOP_P", "1").parse().unwrap();
+    let top_n: f64 = env("CFM_C_TOP_N", "1").parse().unwrap();
+    let inner: f64 = env("CFM_C_INNER", "1").parse().unwrap();
+    // CFM_C_INNER_P / CFM_C_INNER_N: per-class signs of levels 8,7,6,5
+    // ("s8,s7,s6,s5"), overriding CFM_C_INNER. E.g. the user's "z flipped in
+    // every tier" neutron: CFM_C_INNER_N="-1,1,1,1" (level 8 = the tier-2 z).
+    let parse4 = |k: &str| -> Option<[f64; 4]> {
+        std::env::var(k).ok().map(|v| {
+            let x: Vec<f64> = v.split(',').map(|t| t.trim().parse().unwrap()).collect();
+            [x[0], x[1], x[2], x[3]]
+        })
     };
+    let inner_p = parse4("CFM_C_INNER_P").unwrap_or([inner; 4]);
+    let inner_n = parse4("CFM_C_INNER_N").unwrap_or([inner; 4]);
+    let scale_top = |states: &[[f64; 4]], t: f64| -> Vec<[f64; 4]> { states.iter().map(|s| [s[0], s[1], s[2], s[3] * t]).collect() };
+    let classes: Vec<(&str, Vec<[f64; 4]>)> = match custom {
+        Some(c) => vec![("custom", c)],
+        None => vec![("proton", scale_top(&PROTON_STATES, top_p)), ("neutron", scale_top(&NEUTRON_STATES, top_n))],
+    };
+    // CFM_C_ONLY: "proton" or "neutron" runs one class.
+    let only = env("CFM_C_ONLY", "");
+    let classes: Vec<(&str, Vec<[f64; 4]>)> = classes.into_iter().filter(|(c, _)| only.is_empty() || *c == only).collect();
+    println!("   top_p {top_p} top_n {top_n} inner {inner} inner_p {inner_p:?} inner_n {inner_n:?}");
     for (class, states) in classes {
         let mut acc_hit = vec![0i64; 180];
         let mut acc_exit = vec![0i64; 360];
+        let mut acc_flux = vec![0i64; 504];
         for (si, signs) in states.iter().enumerate() {
             if first_only && si > 0 {
                 continue;
@@ -844,7 +873,18 @@ fn report_c_ball_single_body() {
             let mut engine = DsmcEngine::new(&ctx, config);
             for b in engine.shell_bodies.iter_mut() {
                 b.depth = depth;
+                b.inner_signs = if class == "neutron" { inner_n } else if class == "proton" { inner_p } else { [inner; 4] };
             }
+            // Time-averaged ball-centre speed (CPU, long incommensurate run).
+            let ball_speed = {
+                let mut sb = engine.shell_bodies[0].clone();
+                let mut acc = 0.0;
+                for _ in 0..20_000 {
+                    sb.advance(0.0137);
+                    acc += sb.ball().velocity.length();
+                }
+                acc / 20_000.0
+            };
             let rep = engine.run_steady(&ctx, warmup, avg, 200);
             let t = &rep.totals;
             // Local gas density vs the nominal ambient: live photons per volume
@@ -877,7 +917,7 @@ fn report_c_ball_single_body() {
             let band = |b: usize| t.sh_exit_band[0][b] as f64 / exits;
             let hel = |o: usize| (t.pass_hel[o][0] + t.pass_hel[o][1]) / ((0..9).map(|a| t.pass[a][o][0] + t.pass[a][o][1]).sum::<i64>().max(1) as f64);
             println!(
-                "{class:<7} {st} | passages {passages} hits {} (hit% {:.2}) push-outs {} | esc speed {:.3}±{:.3} ovfl {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
+                "{class:<7} {st} | ball v {ball_speed:.2} | passages {passages} hits {} (hit% {:.2}) push-outs {} | esc speed {:.3}±{:.3} ovfl {} | contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | hel clean/pp/hit/pp-hit {:+.3}/{:+.3}/{:+.3}/{:+.3} | Tz/hit {:+.4} | steady {} ({:.0}s)",
                 t.sh_contacts[0],
                 100.0 * t.sh_exits[0] as f64 / passages.max(1) as f64,
                 t.ball_overlap,
@@ -922,6 +962,9 @@ fn report_c_ball_single_body() {
             for (a, b) in acc_exit.iter_mut().zip(&t.exit_lat) {
                 *a += *b;
             }
+            for (a, b) in acc_flux.iter_mut().zip(&t.flux) {
+                *a += *b;
+            }
         }
         if let Some(dir) = &hist_dir {
             let mut csv = String::from("degree,hits,exits_photon,exits_antiphoton
@@ -933,6 +976,14 @@ fn report_c_ball_single_body() {
             let path = std::path::Path::new(dir).join(format!("ball_{class}_lat.csv"));
             std::fs::write(&path, csv).expect("write histogram");
             println!("   wrote {}", path.display());
+            let mut csv = String::from("radius,lat_lo,photon_out,photon_in,antiphoton_out,antiphoton_in\n");
+            for (k, r) in crate::gpu::dsmc::gpu_types::FLUX_RADII.iter().enumerate() {
+                for lb in 0..18usize {
+                    let at = |sp: usize, d: usize| acc_flux[((k * 18 + lb) * 2 + sp) * 2 + d];
+                    csv += &format!("{r},{},{},{},{},{}\n", lb as i32 * 10 - 90, at(0, 0), at(0, 1), at(1, 0), at(1, 1));
+                }
+            }
+            std::fs::write(std::path::Path::new(dir).join(format!("ball_{class}_flux.csv")), csv).expect("write flux");
         }
     }
 }

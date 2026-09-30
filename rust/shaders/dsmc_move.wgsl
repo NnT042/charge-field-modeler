@@ -89,7 +89,8 @@ const TALLY_PASS: u32 = 313u;         // [(abin*4 + outcome)*2 + spec], body 0, 
 const TALLY_PASS_THROUGH: u32 = 385u; // [abin*2 + spec], body 0, len 18
 const TALLY_PASS_HEL: u32 = 403u;
 const TALLY_HIT_LAT: u32 = 412u;      // [bin], body 0, 1-degree bins, len 180
-const TALLY_EXIT_LAT: u32 = 592u;     // [spec*180 + bin], body 0, len 360     // [outcome*2 + spec], body 0, len 8
+const TALLY_EXIT_LAT: u32 = 592u;     // [spec*180 + bin], body 0, len 360
+const TALLY_FLUX: u32 = 952u;         // [((k*18 + lat)*2 + spec)*2 + dir], body 0, len 504     // [outcome*2 + spec], body 0, len 8
 const FLAG_PP_PASSAGE: u32 = 1u << 14u;
 const FLAG_HIT_CLEAN: u32 = 1u << 15u;    // first ball hit came before any pp collision
 const FLAG_HIT_AFTER_PP: u32 = 1u << 16u; // first ball hit came after a pp collision
@@ -561,6 +562,24 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
     } else if (!ball_moved) {
         pos = pos + dir * remaining;
+    }
+
+    // Doc §15.6 charge-pause map: count this step's crossings of the body-0
+    // shells r = 0.5 .. 5 (gpu_types FLUX_RADII), by the latitude at the end
+    // of the step (a step is 0.05 long, small next to the shell spacing).
+    if (params.body_model == 2u && params.n_bodies > 0u) {
+        let c0 = bodies[0].center.xyz;
+        let s0 = length(ph.a.xyz - c0);
+        let s1 = length(pos - c0);
+        let lb = u32(clamp(i32(floor((body_lat_deg(0u, pos) + 90.0) / 10.0)), 0, 17));
+        let radii = array<f32, 7>(0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0);
+        for (var k = 0u; k < 7u; k = k + 1u) {
+            let r = radii[k];
+            if ((s0 < r) != (s1 < r)) {
+                let dir = select(1u, 0u, s1 > s0);
+                atomicAdd(&tallies[TALLY_FLUX + ((k * 18u + lb) * 2u + spec) * 2u + dir], 1);
+            }
+        }
     }
 
     // Doc §14/§15 passage bookkeeping after the move.
