@@ -744,6 +744,11 @@ fn ball_static_conserves_energy() {
     }
 }
 
+/// Doc §15.7: signs of levels 8, 7, 6, 5 for the adopted neutron ("z flipped
+/// in every tier"; the proton keeps all +1). Level 4 (tier-1 z) is inside the
+/// rigid ball at every depth, so its flip is not represented.
+const NEUTRON_INNER_SIGNS: [f64; 4] = [-1.0, 1.0, 1.0, 1.0];
+
 /// Doc §15 first physics run: the instantaneous base ball, all 4 proton and 4
 /// neutron sign states, in the 2:1 ambient field. It prints the user's
 /// pole-to-pole table: passages through the envelope by entry angle to the
@@ -848,7 +853,11 @@ fn report_c_ball_single_body() {
         })
     };
     let inner_p = parse4("CFM_C_INNER_P").unwrap_or([inner; 4]);
-    let inner_n = parse4("CFM_C_INNER_N").unwrap_or([inner; 4]);
+    // Doc §15.7: the adopted neutron has z flipped in every tier (user
+    // decision 2026-09-30): level 8 (the tier-2 z) opposes levels 5-7, as
+    // level 12 opposes 9-11 in the Mathis states. Override with
+    // CFM_C_INNER_N="1,1,1,1" for the outer-only neutron.
+    let inner_n = parse4("CFM_C_INNER_N").unwrap_or(if std::env::var("CFM_C_INNER").is_ok() { [inner; 4] } else { NEUTRON_INNER_SIGNS });
     let scale_top = |states: &[[f64; 4]], t: f64| -> Vec<[f64; 4]> { states.iter().map(|s| [s[0], s[1], s[2], s[3] * t]).collect() };
     let classes: Vec<(&str, Vec<[f64; 4]>)> = match custom {
         Some(c) => vec![("custom", c)],

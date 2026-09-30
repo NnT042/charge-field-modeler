@@ -1457,6 +1457,41 @@ depth 2).
 - A charge-pause needs the recycling (emission) side, or a much stronger
   interaction.
 
+### 15.7 Adopted neutron: z flipped in every tier; confirmation (2026-09-30)
+
+**User decision:** adopt the "z flipped in every tier" neutron. In the ball report
+the neutron's levels 8, 7, 6, 5 default to (−1, +1, +1, +1) (`NEUTRON_INNER_SIGNS`)
+on top of the Mathis outer states. The proton keeps all +1. The outer-only neutron
+is `CFM_C_INNER_N="1,1,1,1"`. Level 4 is not represented (inside the ball).
+
+**Ball-hit helicity by state** (λ = 3, BodyFree, all 4 states per class; ±0.012 at
+depth 2, ±0.018 at depth 3):
+
+| run | proton | neutron | class means p / n |
+|---|---|---|---|
+| depth 2, seed 0xC0C0 (§15.6) | +.14 / +.05 / +.14 / +.16 | −.10 / −.08 / −.09 / +.01 | +0.12 / −0.07 |
+| depth 2, seed 1 | +.13 / +.05 / +.14 / +.17 | −.09 / −.08 / −.11 / .00 | +0.12 / −0.07 |
+| depth 2, seed 2 | +.16 / +.07 / +.13 / +.15 | −.09 / −.10 / −.11 / +.03 | +0.13 / −0.07 |
+| depth 3 (dt 0.025, 16000 steps) | +.17 / +.10 / +.15 / +.17 | +.02 / +.08 / +.05 / +.12 | +0.15 / +0.07 |
+
+- **Depth 2 is reproducible across 3 seeds.** The adopted neutron reverses the
+  helicity of the photons it touches in 3 of 4 states (−0.08 to −0.11); the
+  +a−x−y+z state stays at ~0 in every seed.
+- **At depth 3 the reversal weakens to a halving.** Resolving level 6 (X spin,
+  rate 64, +1 for both classes) makes the fastest resolved level common to p and n.
+  The neutron's ball-hit helicity is still about half the proton's in every state,
+  so the p/n split survives, but not as a sign reversal.
+- **The depth trend tracks the §14.8 grain-spin rule.** The surface twist a photon
+  meets is the direction of the ball's summed Ω, which the fastest resolved levels
+  dominate. The magnitude, and even the sign, of the magnetic split therefore
+  depends on how the ball's surface twist is modelled. **Deciding that rule
+  mechanically is now the key open question** (see the options in the session
+  notes).
+- **The contacted-exit equatorial split fades with depth:** ~1 point at depth 2
+  (0.542 vs 0.533–0.535, both seeds), ~0 at depth 3 (0.545 vs 0.543).
+- Hits, ball speeds and torque per hit: no class-level difference beyond the state
+  spread.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
