@@ -286,3 +286,33 @@ levels by this rule (turns + contact spin) instead of bouncing:
 
 That is option 3 ("scoop and release") with the rule now fixed by Mathis's own
 table.
+
+### Maze follow-ups: arrivals, the start patch, exit directions (2026-09-30)
+
+- **Isotropic arrivals (`report_maze_isotropic`).** Applying the rule to each
+  photon's own arrival direction and helical spin erases the classification. All
+  16 states give the same statistics (about 0.27–0.31 escape-upright and
+  0.34–0.39 trapped-upside-down, for protons and neutrons alike).
+  - The maze is a property of **emission from the core**, not of arbitrary
+    arrivals. Where a photon hits the ball shouldn't matter: it is captured and
+    re-emitted from the core through the maze.
+- **Start patch (`report_maze_start_map`).** The table is reproduced for a
+  *region* of start directions, not one beam.
+  - With spin s0 = −d0, it is a northern wedge around +x (about ±5° of azimuth
+    at 10° latitude, widening to about ±45° near the pole). With s0 = +d0 it is
+    the mirror wedge in the south around −x.
+  - Helicity picks the hemisphere. **Latitude 0 never works**, so the
+    equatorial "sprinkler" of Mathis's one-plane sketch fails in 3-D.
+- **Exit directions (`report_maze_exit_directions`, 44 patch starts).** Every
+  final direction, for every class, lies **within 30° of the equator** (mean
+  latitude 0).
+  - Protons (escape) leave on the +x side; neutrons (trapped) are turned back
+    toward −x.
+  - This matches aurora.pdf ("all the outgoing charge would be emitted below
+    30°" for a fast spinner like the proton), unfitted.
+- **Open design question for the GPU version.** The patch and exits are fixed
+  relative to the x-level axis. With lab-fixed axes (Spin-mode compose), the
+  emission is a +x *lobe* of the disc, not a full disc.
+  - A full sprinkler disc needs the maze frame to sweep in azimuth, e.g.
+    carried around the pole by the core's axial (level-9) rotation phase.
+  - Whether it sweeps is a modelling choice to make with the user.

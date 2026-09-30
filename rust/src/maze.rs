@@ -508,6 +508,147 @@ mod tests {
         }
     }
 
+    /// Report: the canonical rule applied to photons arriving from every
+    /// direction (isotropic d_in, helical spin +-d_in), per sign state: the
+    /// fractions (escape upright / escape upside-down / trapped upright /
+    /// trapped upside-down), escape = not turned back relative to d_in,
+    /// upright = spin not reversed relative to s_in. Does each class still
+    /// sort photons the way the table says, on average?
+    #[test]
+    #[ignore]
+    fn report_maze_isotropic() {
+        let base = MazeRule {
+            angle: std::f64::consts::FRAC_PI_2,
+            axes: [DVec3::Z, DVec3::X, DVec3::Y, DVec3::Z],
+            carried: false,
+            outer_first: false,
+            d0: DVec3::X,
+            s0: DVec3::X,
+            spin: SpinRule::Set,
+        };
+        let n = 20_000;
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut f = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut dirs = Vec::with_capacity(n);
+        for _ in 0..n {
+            let z = 2.0 * f() - 1.0;
+            let ph = std::f64::consts::TAU * f();
+            let r = (1.0 - z * z).sqrt();
+            dirs.push((DVec3::new(r * ph.cos(), r * ph.sin(), z), if f() < 0.5 { 1.0 } else { -1.0 }));
+        }
+        for spin in [SpinRule::Set, SpinRule::Flip] {
+            println!("=== {spin:?} ===");
+            for (signs, class, _, _) in MATHIS_TABLE.iter() {
+                let mut c = [0usize; 4];
+                for (d, h) in &dirs {
+                    let rule = MazeRule { d0: *d, s0: *d * *h, spin, ..base };
+                    let (df, sf) = run(&rule, signs);
+                    let esc = df.dot(*d) >= 0.0;
+                    let up = sf.dot(rule.s0) >= 0.0;
+                    c[(!esc as usize) * 2 + (!up as usize)] += 1;
+                }
+                let fr = |i: usize| c[i] as f64 / n as f64;
+                println!("  {class:<12} {:?}: esc-up {:.3} esc-down {:.3} trap-up {:.3} trap-down {:.3}", signs, fr(0), fr(1), fr(2), fr(3));
+            }
+        }
+    }
+
+    /// Report: map of start directions d0 (latitude from the equator of the
+    /// pole Z, azimuth from the x axis) for which the canonical rule
+    /// reproduces the table, with the spin helical (s0 = -d0 and +d0).
+    #[test]
+    #[ignore]
+    fn report_maze_start_map() {
+        for spin in [SpinRule::Set, SpinRule::Flip] {
+            for h in [-1.0, 1.0] {
+                println!("=== {spin:?}, s0 = {h:+} d0: states right out of 16, rows = latitude -80..80 by 10, cols = azimuth 0..350 by 10 ===");
+                for li in -8..=8 {
+                    let lat = (li as f64 * 10.0).to_radians();
+                    let mut row = format!("{:+4} ", li * 10);
+                    for ai in 0..36 {
+                        let az = (ai as f64 * 10.0).to_radians();
+                        let d0 = DVec3::new(lat.cos() * az.cos(), lat.cos() * az.sin(), lat.sin());
+                        let rule = MazeRule {
+                            angle: std::f64::consts::FRAC_PI_2,
+                            axes: [DVec3::Z, DVec3::X, DVec3::Y, DVec3::Z],
+                            carried: false,
+                            outer_first: false,
+                            d0,
+                            s0: d0 * h,
+                            spin,
+                        };
+                        let (b, _) = score(&rule, Escape::NotReversed, Upright::NotReversed);
+                        row += if b == 16 { "#" } else if b >= 14 { "+" } else if b >= 12 { "." } else { " " };
+                    }
+                    println!("{row}");
+                }
+            }
+        }
+    }
+
+    /// Report: for starts inside the patch that reproduces the table
+    /// (s0 = -d0, northern wedge around +x), the final direction of the
+    /// emission per class: latitude histogram (|lat| bands 0-30 / 30-60 /
+    /// 60-90), mean latitude, and the fraction ending in each hemisphere.
+    #[test]
+    #[ignore]
+    fn report_maze_exit_directions() {
+        let mut starts = Vec::new();
+        for li in 1..=8 {
+            for ai in -18..18 {
+                let lat = (li as f64 * 10.0).to_radians();
+                let az = (ai as f64 * 10.0).to_radians();
+                let d0 = DVec3::new(lat.cos() * az.cos(), lat.cos() * az.sin(), lat.sin());
+                let rule = MazeRule {
+                    angle: std::f64::consts::FRAC_PI_2,
+                    axes: [DVec3::Z, DVec3::X, DVec3::Y, DVec3::Z],
+                    carried: false,
+                    outer_first: false,
+                    d0,
+                    s0: -d0,
+                    spin: SpinRule::Set,
+                };
+                if score(&rule, Escape::NotReversed, Upright::NotReversed).0 == 16 {
+                    starts.push(rule);
+                }
+            }
+        }
+        println!("=== {} start directions in the patch ===", starts.len());
+        for class in ["proton", "neutron", "anti-proton", "anti-neutron"] {
+            let mut bands = [0usize; 3];
+            let (mut lat_sum, mut n, mut north) = (0.0, 0usize, 0usize);
+            let mut az_hist = [0usize; 8];
+            for rule in &starts {
+                for (signs, c, _, _) in MATHIS_TABLE.iter() {
+                    if *c != class {
+                        continue;
+                    }
+                    let (d, _) = run(rule, signs);
+                    let lat = d.z.clamp(-1.0, 1.0).asin().to_degrees();
+                    bands[((lat.abs() / 30.0) as usize).min(2)] += 1;
+                    lat_sum += lat;
+                    north += (lat > 0.0) as usize;
+                    let az = d.y.atan2(d.x).to_degrees().rem_euclid(360.0);
+                    az_hist[((az / 45.0) as usize).min(7)] += 1;
+                    n += 1;
+                }
+            }
+            let f = |x: usize| x as f64 / n as f64;
+            println!(
+                "  {class:<12} |lat| 0-30 {:.2} 30-60 {:.2} 60-90 {:.2} | mean lat {:+.1} | north {:.2} | azimuth octants from +x {:?}",
+                f(bands[0]),
+                f(bands[1]),
+                f(bands[2]),
+                lat_sum / n as f64,
+                f(north),
+                az_hist.iter().map(|&x| format!("{:.2}", f(x))).collect::<Vec<_>>()
+            );
+        }
+    }
+
     /// Report: which 3-D turn rules reproduce Mathis's table.
     #[test]
     #[ignore]
