@@ -486,7 +486,16 @@ pub const LINE_U0: f64 = 2.0;
 pub const LINE_DU: f64 = 0.25;
 pub const LINE_N: usize = 41;
 
-pub const TALLY_LEN: usize = 1943;
+/// Doc §15.11 holding tank: [b*2 + (0 taken in, 1 released)], len 8.
+pub const TALLY_HOLD: usize = 1943;
+/// Doc §15.11: body-0 capture latitude (entry point on the envelope, or
+/// the ball contact point), [(0 never captured before / 1 recaptured)*180 +
+/// bin], len 360.
+pub const TALLY_CAPT_LAT: usize = 1951;
+/// Doc §15.11: envelope captures per body, len 4.
+pub const TALLY_ENV_CAPT: usize = 2311;
+
+pub const TALLY_LEN: usize = 2315;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
@@ -495,7 +504,9 @@ pub const TALLY_LEN: usize = 1943;
 /// z, w hold the level-9 phase at the step start (mod 2 pi) and its rate
 /// (doc §15.9 swept maze). Then the body `orient` quaternion and the body's
 /// (a, x, y, z) signs.
-pub const BALLKEY_STRIDE: usize = 47;
+/// Doc §15.11: [47] = (intake open 1/0, hold steps, intake parameter,
+/// intake mode 0 ball / 1 envelope / 2 polar).
+pub const BALLKEY_STRIDE: usize = 48;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

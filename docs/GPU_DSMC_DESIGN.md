@@ -1747,6 +1747,107 @@ separation 2.5 / 2.05, body envelopes of radius 1):
   §15.9). Until a body recycles most of the charge crossing it, neighbours
   cannot feed each other enough for a charge-pause or binding.
 
+### 15.11 Intake scaffolding and the first emergent recycling loop (2026-09-30)
+
+**User direction:** the end goal is MATHIS_SPIN_PATHS §D option 2, intake that
+*emerges* from the field. Mathis: the equatorial emission drives incoming charge
+to the poles, with feedback up to a stable maximum. Options 1 (a capture rule) and
+3 (a holding tank) are scaffolding. They are allowed as steps because simulating
+10¹¹ real photons is not. First test: can a body emit hard enough to start the
+loop?
+
+**Build:**
+- `RoughParams::intake: Intake {Ball, Envelope{p}, Polar{aperture}}`.
+  - A photon entering a maze body's envelope (radius 1) is taken in with
+    probability p anywhere (Envelope), or when it enters within `aperture` of
+    the axis (Polar).
+  - It is funnelled to the core and leaves through the maze. Ball contacts
+    still capture as in §15.9.
+- **Holding tank:** `hold_time`, `hold_time_neutron`, `hold_cap`.
+  - Captured photons are flagged held (flag bit 20; c[1] = release step) and
+    ride the core, taking no collisions (collide skips pairs with a held
+    photon).
+  - At the release step they leave through the maze.
+  - The engine tracks the count per body (`DsmcEngine::held`) and closes the
+    intake while it is at the cap. The cap is soft: it lags one step.
+- `MazeMode::Isotropic`: control that re-emits in a random direction, spin
+  carried rigidly.
+- Keyframe [47] per body = (intake open, hold steps, intake parameter,
+  intake mode); `BALLKEY_STRIDE` = 48.
+- Tallies:
+  - `TALLY_HOLD` [b × in/out];
+  - `TALLY_CAPT_LAT` (body-0 intake latitude, by never-captured / recaptured);
+  - `TALLY_ENV_CAPT`;
+  - `TALLY_LEN` = 2315.
+- **Gate `intake_tank_bookkeeping`:**
+  - p = 1 leaves no clean passages;
+  - tank in − out = host count = photons flagged held;
+  - a cap turns photons away;
+  - the isotropic control emits 0.502 within 30° of the equator (0.5 expected);
+  - the maze emits 1.000 there.
+  - Default behaviour is unchanged: all earlier gates are bit-identical.
+- **Reports:** `report_intake` (`CFM_I_RUNS` = "intake:emission:hold;...",
+  `CFM_I_CLASS`) and `report_two_bodies` + `CFM_2_INTAKE`.
+
+**Results** (depth 0, BodyFree, n_a = 4000, first sign state):
+- **Emitter strength:** with envelope p = 1 a proton recycles 609 photons per
+  step at λ = 3. Ball-only recycles 18.3 and polar aperture 1/3 recycles 54.
+- **The option-2 test.** With intake equally likely everywhere on the
+  envelope, where does the *never-captured* intake arrive? No field gives
+  |lat| 0–30 / 30–60 / 60–90 = 0.500 / 0.366 / 0.134. Ratios to that
+  expectation:
+
+  | λ | proton maze polar / equatorial | isotropic control | maze ÷ control, polar | recaptured share |
+  |---|---|---|---|---|
+  | 3 | 1.100 / 0.949 | 1.043 / 0.980 | **1.05** | 3% |
+  | 1 | 1.213 / 0.891 | 1.057 / 0.973 | **1.15** | 9% |
+  | 0.3 | 1.456 / 0.783 | 1.092 / 0.955 | **1.33** | 27% |
+  | 0.3, neutron | 0.705 / 1.161 | 1.072 / 0.972 | **0.66** | 22% |
+
+  - **The proton's disc pushes its own intake toward the poles**, and the push
+    grows with gas density: it is collisional, as in Mathis's "drives off
+    ambient photons that are incoming, by direct bombardment" (season.pdf).
+    Nothing in the rule prefers the poles.
+  - **The neutron's polar jets do the reverse:** its intake moves to the
+    equator. The mechanism is general (intake moves away from wherever a body
+    emits). With our neutron release rule, that contradicts Mathis's
+    pole-to-pole neutron, which takes in at a pole. This is a tension to
+    resolve, not a confirmation.
+  - The ~4–9% polar excess in the isotropic control is an unexplained
+    baseline, common to both runs, so compare maze against control rather
+    than against 0.134.
+  - Emission shields intake: captures fall with density (609 → 458 per step
+    from λ = 3 to 0.3). The isotropic control falls the same way, so this is
+    not maze-specific.
+- **Two bodies at λ = 1, envelope p = 1, separation 2.5.** Share of captures
+  fed by the neighbour:
+
+  | pair | side by side | axial |
+  |---|---|---|
+  | p – p | 0.096 / 0.098 | 0.042 / 0.050 |
+  | p – n (p, n) | 0.051, 0.097 | **0.116**, 0.050 |
+  | n – n | 0.050 / 0.050 | **0.111 / 0.169** |
+
+  - This is up 20–30× from §15.10 (≤ 0.006).
+  - The geometry sorting survives: the disc feeds a side neighbour, and the
+    jets feed an axial one.
+  - In p–n axial the neutron's jet crosses the gap into the proton with net
+    flow −0.4 to −0.6 (neutron-tagged), a one-way axial handoff. In
+    symmetric pairs the two emission streams meet head-on in the gap (e.g.
+    p–p side at the midpoint: +0.35 / −0.33, net ≈ 0).
+  - Capture totals stay 0.93–1.05 × isolated: fed charge replaces fresh
+    charge rather than adding to it.
+- **Status of the loop:**
+  - Emission now shapes intake, which is the first half of Mathis's loop,
+    and emerges.
+  - The intake *amount* is still set by the scaffold (p = 1 at the envelope).
+- **Next steps toward option 2:**
+  - Lower p (or tie capture to the local incoming flux) and see whether the
+    focusing still steers what gets in.
+  - Test whether a self-limiting maximum appears (Mathis's "stabilizes").
+  - Resolve the neutron intake tension.
+  - The tank is built but untested for physics.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

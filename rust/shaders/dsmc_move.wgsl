@@ -106,6 +106,11 @@ const TALLY_LINE: u32 = 1697u; // [(plane*3 + tag class)*2 + dir], len 246
 const LINE_U0: f32 = 2.0;
 const LINE_DU: f32 = 0.25;
 const LINE_N: i32 = 41;
+// Doc §15.11 intake and holding tank.
+const FLAG_HELD: u32 = 1u << 20u;  // held in a body's tank; c[1] = release step, c[2] & 7 = body + 1
+const TALLY_HOLD: u32 = 1943u;     // [b*2 + (0 in, 1 out)], len 8
+const TALLY_CAPT_LAT: u32 = 1951u; // [(tag != 0)*180 + bin], body 0, len 360
+const TALLY_ENV_CAPT: u32 = 2311u; // [b], len 4
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -183,7 +188,7 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-const BALLKEY_STRIDE: u32 = 47u;
+const BALLKEY_STRIDE: u32 = 48u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
 
 fn quat_rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -320,7 +325,17 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     let h = select(1.0, -1.0, dot(wl, dl) < 0.0);
     var d0 = normalize(vec3<f32>(1.0, 0.0, 1.0)) * -h;
     var fallback = true;
-    for (var t = 0u; t < MAZE_TRIES; t = t + 1u) {
+    // §15.11 control (mode 3): isotropic re-emission, no maze. Treated as a
+    // maze whose start is the exit (d = d0, spin carried rigidly).
+    let iso = params.maze_mode == 3u;
+    if (iso) {
+        let zz = 2.0 * rand01(params.seed_hi, params.seed_lo, key, 200u) - 1.0;
+        let pz = TAU * rand01(params.seed_hi, params.seed_lo, key, 201u);
+        let rz = sqrt(max(1.0 - zz * zz, 0.0));
+        d0 = vec3<f32>(rz * cos(pz), rz * sin(pz), zz);
+        fallback = false;
+    }
+    for (var t = 0u; t < select(MAZE_TRIES, 0u, iso); t = t + 1u) {
         let u = rand01(params.seed_hi, params.seed_lo, key, 50u + 2u * t);
         let ph = TAU * rand01(params.seed_hi, params.seed_lo, key, 51u + 2u * t);
         let r = sqrt(max(1.0 - u * u, 0.0));
@@ -332,8 +347,12 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
         }
     }
     let s0 = arc_rot(dl, d0, wl);
-    let d = maze_turn(sg, d0);
-    let s = maze_spin(sg, s0);
+    var d = maze_turn(sg, d0);
+    var s = maze_spin(sg, s0);
+    if (iso) {
+        d = d0;
+        s = s0;
+    }
     let escaped = dot(d, d0) >= 0.0;
     let upright = dot(s, s0) >= 0.0;
     var out_l = d;
@@ -343,13 +362,19 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     let out_w = maze_world(oq, th, out_l);
     let k = (*p).c[3];
     if (k > 0u) {
-        (*p).e = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).e.xyz)))), (*p).e.w);
+        var q = arc_rot(dl, d0, maze_local(oq, th, (*p).e.xyz));
+        if (!iso) { q = maze_turn(sg, q); }
+        (*p).e = vec4<f32>(maze_world(oq, th, q), (*p).e.w);
     }
     if (k > 1u) {
-        (*p).f = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).f.xyz)))), (*p).f.w);
+        var q = arc_rot(dl, d0, maze_local(oq, th, (*p).f.xyz));
+        if (!iso) { q = maze_turn(sg, q); }
+        (*p).f = vec4<f32>(maze_world(oq, th, q), (*p).f.w);
     }
     if (k > 2u) {
-        (*p).g = vec4<f32>(maze_world(oq, th, maze_turn(sg, arc_rot(dl, d0, maze_local(oq, th, (*p).g.xyz)))), (*p).g.w);
+        var q = arc_rot(dl, d0, maze_local(oq, th, (*p).g.xyz));
+        if (!iso) { q = maze_turn(sg, q); }
+        (*p).g = vec4<f32>(maze_world(oq, th, q), (*p).g.w);
     }
     let s_rel = length(v_in - (vcen + cross(om, xh - ch)));
     let xe = ch + out_w * rb * (1.0 + 1e-3);
@@ -376,6 +401,42 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
         }
     }
     return xe;
+}
+
+// Doc §15.11: body b takes the photon in at xh (ball contact point, or the
+// core surface on its arrival side for an envelope capture). Tallies who
+// emitted it last and where it was taken in; then either parks it in the
+// tank (FLAG_HELD, released at step c[1]; returns the end-of-step core
+// centre) or re-emits it at once through maze_contact (returns the emission
+// point). `held` reports which.
+fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, held: ptr<function, bool>) -> vec3<f32> {
+    let tag = ((*p).c[0] >> FLAG_EMIT_SHIFT) & 7u;
+    atomicAdd(&tallies[TALLY_FEED + b * 5u + tag], 1);
+    if (b == 0u) {
+        atomicAdd(&tallies[TALLY_CAPT_LAT + select(0u, 180u, tag != 0u) + fine_lat_bin(body_lat_deg(0u, xh))], 1);
+    }
+    let hold_steps = u32(ballkeys[b * BALLKEY_STRIDE + 47u].y);
+    if (hold_steps > 0u) {
+        (*p).c[0] = (*p).c[0] | FLAG_HELD;
+        (*p).c[1] = params.step + hold_steps;
+        (*p).c[2] = ((*p).c[2] & ~7u) | (b + 1u);
+        atomicAdd(&tallies[TALLY_HOLD + b * 2u], 1);
+        *held = true;
+        return bk(b, 8u, 0u).xyz;
+    }
+    *held = false;
+    let xe = maze_contact(p, b, xh, ch, rb, om, vcen, t_step, key);
+    (*p).c[0] = ((*p).c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+    return xe;
+}
+
+fn cell_index(pos: vec3<f32>) -> u32 {
+    let gd = vec3<i32>(i32(params.grid_dim_x), i32(params.grid_dim_y), i32(params.grid_dim_z));
+    let rel = (pos - vec3<f32>(params.grid_min_x, params.grid_min_y, params.grid_min_z)) / params.cell_h;
+    let cx = clamp(i32(floor(rel.x)), 0, gd.x - 1);
+    let cy = clamp(i32(floor(rel.y)), 0, gd.y - 1);
+    let cz = clamp(i32(floor(rel.z)), 0, gd.z - 1);
+    return u32(cx) + u32(cy) * params.grid_dim_x + u32(cz) * params.grid_dim_x * params.grid_dim_y;
 }
 
 // Mirrors rough_sphere::moving_sphere_hit.
@@ -496,6 +557,30 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if ((ph.c[0] & FLAG_ALIVE) == 0u) {
         cell_of[idx] = params.num_cells;
         return;
+    }
+
+    // Doc §15.11 holding tank: a held photon rides the core until its
+    // release step, then leaves through the maze at the step start and
+    // moves on normally.
+    if ((ph.c[0] & FLAG_HELD) != 0u) {
+        let hb = (ph.c[2] & 7u) - 1u;
+        if (params.step >= ph.c[1]) {
+            let ch0 = bk(hb, 0u, 0u).xyz;
+            let rb0 = bk(hb, 0u, 0u).w;
+            let rkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x4E1Eu));
+            ph.c[0] = ph.c[0] & ~FLAG_HELD;
+            ph.c[1] = 0u;
+            let xe = maze_contact(&ph, hb, ch0 - ph.b.xyz * rb0, ch0, rb0, bk(hb, 0u, 1u).xyz, bk(hb, 0u, 2u).xyz, 0.0, rkey);
+            ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((hb + 1u) << FLAG_EMIT_SHIFT);
+            ph.a = vec4<f32>(xe, ph.a.w);
+            atomicAdd(&tallies[TALLY_HOLD + hb * 2u + 1u], 1);
+        } else {
+            let xc = bk(hb, 8u, 0u).xyz;
+            ph.a = vec4<f32>(xc, ph.a.w);
+            photons[idx] = ph;
+            cell_of[idx] = cell_index(xc);
+            return;
+        }
     }
 
     // Doc §14 shells: body-grain contact at the start of the step, before
@@ -637,15 +722,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             var dp = vec3<f32>(0.0);
             var touched = false;
             var x_next = xh;
-            if (params.maze_mode != 0u) {
-                // §15.9: capture and re-emission through the maze.
+            var now_held = false;
+            if (params.maze_mode != 0u && ballkeys[b * BALLKEY_STRIDE + 47u].x > 0.5) {
+                // §15.9/§15.11: capture, then the tank or the maze.
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
-                atomicAdd(&tallies[TALLY_FEED + b * 5u + ((ph.c[0] >> FLAG_EMIT_SHIFT) & 7u)], 1);
-                x_next = maze_contact(&ph, b, xh, ch, rb, om, vcen, best_t, mkey);
-                ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+                x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held);
                 let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
-                dp = -(ph.b.xyz * ph.d.w - v_before) * m;
+                if (now_held) {
+                    dp = v_before * m;
+                } else {
+                    dp = -(ph.b.xyz * ph.d.w - v_before) * m;
+                }
                 touched = true;
             } else {
                 let n = normalize(ch - xh);
@@ -686,9 +774,19 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             x = x_next;
             tc = best_t;
             ball_moved = true;
+            if (now_held) {
+                tc = params.dt;
+                break;
+            }
         }
         if (ball_moved) {
             pos = x + (ph.b.xyz * ph.d.w) * (params.dt - tc);
+        }
+        if ((ph.c[0] & FLAG_HELD) != 0u) {
+            ph.a = vec4<f32>(pos, ph.a.w);
+            photons[idx] = ph;
+            cell_of[idx] = cell_index(pos);
+            return;
         }
     }
 
@@ -900,6 +998,57 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             }
             ph.c[2] = packed;
             ph.c[0] = ph.c[0] & ~(FLAG_PP_PASSAGE | FLAG_HIT_CLEAN | FLAG_HIT_AFTER_PP);
+            // Doc §15.11: envelope intake. A photon entering body b's
+            // envelope is taken in (envelope mode: with probability p
+            // anywhere; polar mode: within `aperture` of the axis) and
+            // funnelled to the core.
+            if (params.body_model == 2u && params.maze_mode != 0u && now_inside != 0u && prev_inside == 0u) {
+                let b = now_inside - 1u;
+                let ik = ballkeys[b * BALLKEY_STRIDE + 47u];
+                var take = false;
+                let ekey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0xE17Eu));
+                if (ik.x > 0.5 && ik.w > 0.5 && ik.w < 1.5) {
+                    take = rand01(params.seed_hi, params.seed_lo, ekey, 0u) < ik.z;
+                } else if (ik.x > 0.5 && ik.w > 1.5) {
+                    let rel = pos - bodies[b].center.xyz;
+                    let ax = bodies[b].axis.xyz;
+                    let perp = rel - dot(rel, ax) * ax;
+                    take = dot(perp, perp) <= ik.z * ik.z;
+                }
+                if (take) {
+                    let lat_in = body_lat_deg(b, pos);
+                    let ch8 = bk(b, 8u, 0u).xyz;
+                    let rb8 = bk(b, 8u, 0u).w;
+                    var eheld = false;
+                    let v_before = ph.b.xyz * ph.d.w;
+                    // Tally the capture at the envelope entry latitude.
+                    let xh8 = ch8 - ph.b.xyz * rb8;
+                    let tag = (ph.c[0] >> FLAG_EMIT_SHIFT) & 7u;
+                    if (b == 0u) {
+                        atomicAdd(&tallies[TALLY_CAPT_LAT + select(0u, 180u, tag != 0u) + fine_lat_bin(lat_in)], 1);
+                        atomicAdd(&tallies[TALLY_HIT_LAT + fine_lat_bin(lat_in)], 1);
+                    }
+                    atomicAdd(&tallies[TALLY_FEED + b * 5u + tag], 1);
+                    atomicAdd(&tallies[TALLY_ENV_CAPT + b], 1);
+                    atomicAdd(&tallies[TALLY_SH_CONTACTS + b], 1);
+                    let hold_steps = u32(ik.y);
+                    if (hold_steps > 0u) {
+                        ph.c[0] = ph.c[0] | FLAG_HELD;
+                        ph.c[1] = params.step + hold_steps;
+                        atomicAdd(&tallies[TALLY_HOLD + b * 2u], 1);
+                        pos = ch8;
+                    } else {
+                        pos = maze_contact(&ph, b, xh8, ch8, rb8, bk(b, 8u, 1u).xyz, bk(b, 8u, 2u).xyz, params.dt, ekey);
+                        ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+                    }
+                    let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                    let dp = -(select(ph.b.xyz * ph.d.w, vec3<f32>(0.0), (ph.c[0] & FLAG_HELD) != 0u) - v_before) * m;
+                    for (var a = 0u; a < 3u; a = a + 1u) {
+                        atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dp[a] * TALLY_SCALE));
+                    }
+                    ph.c[2] = ph.c[2] + (1u << 13u);
+                }
+            }
         }
     }
 
@@ -995,12 +1144,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     atomicAdd(&tallies[65], i32(dir.z * TALLY_SCALE));
     atomicAdd(&tallies[66], i32(dir.z * dir.z * TALLY_SCALE));
 
-    let gd = vec3<i32>(i32(params.grid_dim_x), i32(params.grid_dim_y), i32(params.grid_dim_z));
-    let rel = (pos - vec3<f32>(params.grid_min_x, params.grid_min_y, params.grid_min_z)) / params.cell_h;
-    let cx = clamp(i32(floor(rel.x)), 0, gd.x - 1);
-    let cy = clamp(i32(floor(rel.y)), 0, gd.y - 1);
-    let cz = clamp(i32(floor(rel.z)), 0, gd.z - 1);
-    let cell_idx = u32(cx) + u32(cy) * params.grid_dim_x + u32(cz) * params.grid_dim_x * params.grid_dim_y;
+    let cell_idx = cell_index(pos);
     cell_of[idx] = cell_idx;
 
     // Density map (doc §8): time-averaged counts by kind x species, u32

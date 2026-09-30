@@ -100,6 +100,23 @@ pub enum MazeMode {
     Off,
     Fixed,
     Swept,
+    /// Doc §15.11 control: re-emit in a uniformly random direction from the
+    /// core (spin carried rigidly), no maze.
+    Isotropic,
+}
+
+/// Doc §15.11: where a maze body takes photons in (scaffolding toward the
+/// emergent intake of MATHIS_SPIN_PATHS §D, option 2). `Ball`: only photons
+/// that hit the core ball (§15.9). `Envelope { p }`: additionally, a photon
+/// crossing into the body envelope (radius 1) is captured with probability
+/// p anywhere on it, so any polar focus of the captures must come from the
+/// field, not the rule. `Polar { aperture }`: captured only when it enters
+/// within `aperture` (fraction of the radius) of the spin axis.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Intake {
+    Ball,
+    Envelope { p: f64 },
+    Polar { aperture: f64 },
 }
 
 /// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;
@@ -145,6 +162,15 @@ pub struct RoughParams {
     pub grain_mode: GrainMode,
     /// Doc §15.9: ball contacts become maze captures (Ball body model only).
     pub maze: MazeMode,
+    /// Doc §15.11: intake rule and holding tank. Captured photons are held
+    /// at the core for `hold_time` (x `hold_time_neutron` for neutrons;
+    /// 0 = re-emitted at once), excluded from collisions, then released
+    /// through the maze. While a body holds `hold_cap` photons (0 = no cap)
+    /// it takes no more in (they pass or bounce as without the maze).
+    pub intake: Intake,
+    pub hold_time: f64,
+    pub hold_time_neutron: f64,
+    pub hold_cap: u32,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -152,7 +178,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, body_law: None }
     }
 }
 

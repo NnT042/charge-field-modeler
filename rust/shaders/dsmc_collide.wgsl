@@ -389,6 +389,10 @@ fn main(
         let slot_b = sh_slots[j];
         var pa = photons[slot_a];
         var pb = photons[slot_b];
+        // Doc §15.11: photons held in a body's tank take no collisions.
+        if (((pa.c[0] | pb.c[0]) & (1u << 20u)) != 0u) {
+            continue;
+        }
         let da = pa.b.xyz;
         let db = pb.b.xyz;
         // E1 (doc §11d): pre-collision stiffness level/mass (m = 2^k). Read

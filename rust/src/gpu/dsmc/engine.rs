@@ -129,6 +129,11 @@ pub struct Totals {
     /// (gpu_types::TALLY_LINE layout).
     pub feed: [[i64; 5]; 4],
     pub line: Vec<i64>,
+    /// Doc §15.11: tank in/out per body, capture latitude (body 0, by
+    /// never-captured / recaptured), envelope captures per body.
+    pub hold: [[i64; 2]; 4],
+    pub capt_lat: Vec<i64>,
+    pub env_capt: [i64; 4],
 }
 
 impl Totals {
@@ -255,6 +260,12 @@ impl Totals {
             }
         }
         add_vec(&mut self.line, &other.line);
+        for b in 0..4 {
+            self.hold[b][0] += other.hold[b][0];
+            self.hold[b][1] += other.hold[b][1];
+            self.env_capt[b] += other.env_capt[b];
+        }
+        add_vec(&mut self.capt_lat, &other.capt_lat);
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -435,6 +446,14 @@ impl Totals {
         }
         let ln: Vec<i64> = raw[TALLY_LINE..TALLY_LINE + LINE_N * 6].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.line, &ln);
+        use super::gpu_types::{TALLY_CAPT_LAT, TALLY_ENV_CAPT, TALLY_HOLD};
+        for b in 0..4 {
+            self.hold[b][0] += raw[TALLY_HOLD + b * 2] as i64;
+            self.hold[b][1] += raw[TALLY_HOLD + b * 2 + 1] as i64;
+            self.env_capt[b] += raw[TALLY_ENV_CAPT + b] as i64;
+        }
+        let cl: Vec<i64> = raw[TALLY_CAPT_LAT..TALLY_CAPT_LAT + 360].iter().map(|&x| x as i64).collect();
+        add_vec(&mut self.capt_lat, &cl);
     }
 }
 
@@ -489,6 +508,8 @@ pub struct DsmcEngine {
     /// Doc §14: per-body shell kinematics (empty unless BodyModel::Shells)
     /// and the GPU copy of their frames (8 vec4 per body).
     pub shell_bodies: Vec<crate::baryon_shells::ShellBody>,
+    /// Doc §15.11: photons currently held in each body's tank.
+    pub held: Vec<i64>,
     shells_buf: wgpu::Buffer,
     ballkeys_buf: wgpu::Buffer,
 
@@ -639,6 +660,7 @@ impl DsmcEngine {
             params_buf,
             gather_params_buf,
             sorter,
+            held: vec![0; n_bodies.max(1)],
             shell_bodies,
             shells_buf,
             ballkeys_buf,
@@ -754,6 +776,7 @@ impl DsmcEngine {
                 super::config::MazeMode::Off => 0,
                 super::config::MazeMode::Fixed => 1,
                 super::config::MazeMode::Swept => 2,
+                super::config::MazeMode::Isotropic => 3,
             },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
@@ -811,6 +834,16 @@ impl DsmcEngine {
             let o = body.orient;
             data[b * BALLKEY_STRIDE + 45] = [o.x as f32, o.y as f32, o.z as f32, o.w as f32];
             data[b * BALLKEY_STRIDE + 46] = [body.signs[0] as f32, body.signs[1] as f32, body.signs[2] as f32, body.signs[3] as f32];
+            let r = &self.config.rough;
+            let neutron = self.config.bodies.get(b).map(|c| c.class == super::config::GpuClass::Neutron).unwrap_or(false);
+            let hold = r.hold_time * if neutron { r.hold_time_neutron } else { 1.0 };
+            let open = r.hold_cap == 0 || self.held.get(b).copied().unwrap_or(0) < r.hold_cap as i64;
+            let (mode, par) = match r.intake {
+                super::config::Intake::Ball => (0.0, 0.0),
+                super::config::Intake::Envelope { p } => (1.0, p),
+                super::config::Intake::Polar { aperture } => (2.0, aperture),
+            };
+            data[b * BALLKEY_STRIDE + 47] = [if open { 1.0 } else { 0.0 }, (hold / self.config.dt).round() as f32, par as f32, mode];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }
@@ -966,6 +999,11 @@ impl DsmcEngine {
 
     fn readback_tallies(&mut self, ctx: &GpuContext, totals: &mut Totals, sample_count: u32) {
         let raw: Vec<i32> = ctx.read_buffer(&self.tallies_buf, TALLY_LEN);
+        // Doc §15.11: photons held in each body's tank (for the intake cap).
+        for b in 0..self.held.len() {
+            use super::gpu_types::TALLY_HOLD;
+            self.held[b] += raw[TALLY_HOLD + b * 2] as i64 - raw[TALLY_HOLD + b * 2 + 1] as i64;
+        }
 
         // Pump mode (doc §3.3): each body's next emission rate is an EMA of
         // its OWN absorption over PUMP_EMA_STEPS steps, bootstrapped from

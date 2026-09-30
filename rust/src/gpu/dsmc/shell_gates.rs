@@ -1289,7 +1289,21 @@ fn report_two_bodies() {
     let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
     let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
     let dt = 0.05;
-    println!("=== two maze bodies (swept, BodyFree), sep {sep}, depth {depth}, lambda {lambda}, n_a {n_a}, warmup {warmup}, avg {avg} ===");
+    // Doc §15.11: CFM_2_INTAKE = ball (default) | env<p> | polar<a>.
+    let intake_s = env("CFM_2_INTAKE", "ball");
+    let intake = if let Some(p) = intake_s.strip_prefix("env") {
+        super::config::Intake::Envelope { p: p.parse().unwrap() }
+    } else if let Some(a) = intake_s.strip_prefix("polar") {
+        super::config::Intake::Polar { aperture: a.parse().unwrap() }
+    } else {
+        super::config::Intake::Ball
+    };
+    let two_body_config = |c: &[DVec3], cl: &[&str], n_a: f64, lambda: f64, cap: u32, seed: u64, dt: f64| -> DsmcConfig {
+        let mut cfg = two_body_config(c, cl, n_a, lambda, cap, seed, dt);
+        cfg.rough.intake = intake;
+        cfg
+    };
+    println!("=== two maze bodies (swept, BodyFree), intake {intake:?}, sep {sep}, depth {depth}, lambda {lambda}, n_a {n_a}, warmup {warmup}, avg {avg} ===");
     let ctx = GpuContext::new().expect("GPU");
     let setup = |engine: &mut DsmcEngine, classes: &[&str]| {
         for (b, cl) in engine.shell_bodies.iter_mut().zip(classes) {
@@ -1374,5 +1388,166 @@ fn report_two_bodies() {
                 println!("{r}");
             }
         }
+    }
+}
+
+/// Doc §15.11 bookkeeping gate for envelope intake and the holding tank:
+/// with p = 1 every photon entering the envelope is taken in (no clean
+/// passages); held photons are neither lost nor collided (tank in - out ==
+/// the host count == photons flagged held); a cap holds the tank near it;
+/// the isotropic control emits isotropically.
+#[test]
+fn intake_tank_bookkeeping() {
+    use super::config::Intake;
+    let ctx = GpuContext::new().expect("GPU");
+    for (name, maze, cap) in [("swept, tank 0.5, no cap", MazeMode::Swept, 0u32), ("swept, tank 0.5, cap 40", MazeMode::Swept, 40), ("isotropic, tank 0.5", MazeMode::Isotropic, 0)] {
+        let mut config = two_body_config(&[DVec3::ZERO], &["proton"], 2000.0, 3.0, 2_000_000, 0x1A7E, 0.05);
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, hold_time: 0.5, hold_cap: cap, maze, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        let mut t = Totals::default();
+        let mut max_held = 0i64;
+        for _ in 0..240 {
+            let st = engine.step_flux(&ctx);
+            max_held = max_held.max(engine.held[0]);
+            t.add(&st);
+        }
+        let flagged = engine.read_photons(&ctx).iter().filter(|q| q.c[0] & FLAG_ALIVE != 0 && q.c[0] & (1 << 20) != 0).count() as i64;
+        let (tin, tout) = (t.hold[0][0], t.hold[0][1]);
+        let em = &t.maze_lat;
+        let tot: i64 = em.iter().sum();
+        let eq: i64 = (60..120).map(|d| em[d]).sum();
+        println!(
+            "[{name}] env captures {} ball contacts {} clean passages {} | tank in {tin} out {tout} host held {} flagged {flagged} max held {max_held} | emission |lat|<30 {:.3}",
+            t.env_capt[0],
+            t.sh_contacts[0] - t.env_capt[0],
+            t.sh_clean[0],
+            engine.held[0],
+            eq as f64 / tot.max(1) as f64
+        );
+        assert!(t.env_capt[0] > 1000, "{name}: too few captures");
+        if cap == 0 {
+            assert_eq!(t.sh_clean[0], 0, "{name}: a photon crossed the envelope without being taken in");
+        }
+        assert_eq!(tin - tout, engine.held[0], "{name}: tank tally != host count");
+        assert_eq!(flagged, engine.held[0], "{name}: held photons lost or leaked");
+        // The cap is soft: the host closes the intake one step after the
+        // count passes it, so a step's intake (a few hundred here) can land
+        // on top.
+        if cap > 0 {
+            let per_step = 250;
+            assert!(max_held <= cap as i64 + 3 * per_step, "{name}: cap not respected ({max_held})");
+            assert!(t.sh_clean[0] > 0, "{name}: a full tank should turn photons away");
+        }
+        let f = eq as f64 / tot.max(1) as f64;
+        if maze == MazeMode::Isotropic {
+            assert!((f - 0.5).abs() < 0.04, "{name}: isotropic emission not isotropic ({f})");
+        } else {
+            assert!(f > 0.99, "{name}: maze emission left the disc ({f})");
+        }
+    }
+}
+
+/// Report (doc §15.11): one body with envelope / polar / ball intake, tank,
+/// maze or isotropic emission. The option-2 test: with intake equally likely
+/// everywhere on the envelope, does the latitude of the never-captured
+/// photons' intake focus toward the poles when the body emits a disc,
+/// compared with the isotropic-emission control and the no-field
+/// expectation? Env: CFM_I_RUNS = ';'-separated "intake:emission:hold",
+/// intake = ball | env<p> | polar<a>, emission = swept | iso; CFM_I_CLASS
+/// (proton), CFM_C_LAMBDA (3), CFM_C_NA (4000), CFM_C_DEPTH (0),
+/// CFM_C_WARMUP (300), CFM_C_AVG (1200), CFM_C_SEED, CFM_C_CAP.
+#[test]
+#[ignore]
+fn report_intake() {
+    use super::config::Intake;
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let runs = env("CFM_I_RUNS", "env1:swept:0;env1:iso:0");
+    let class = env("CFM_I_CLASS", "proton");
+    let lambda: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "4000").parse().unwrap();
+    let depth: usize = env("CFM_C_DEPTH", "0").parse().unwrap();
+    let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
+    let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
+    let dt = 0.05;
+    println!("=== intake report: {class}, lambda {lambda}, n_a {n_a}, depth {depth}, warmup {warmup}, avg {avg} ===");
+    println!("   (no-field expectation for intake latitude on a sphere, isotropic arrivals: |lat| 0-30 0.500, 30-60 0.366, 60-90 0.134)");
+    let ctx = GpuContext::new().expect("GPU");
+    for run in runs.split(';') {
+        let f: Vec<&str> = run.split(':').collect();
+        let intake = if let Some(p) = f[0].strip_prefix("env") {
+            Intake::Envelope { p: p.parse().unwrap() }
+        } else if let Some(a) = f[0].strip_prefix("polar") {
+            Intake::Polar { aperture: a.parse().unwrap() }
+        } else {
+            Intake::Ball
+        };
+        let maze = if f[1] == "iso" { MazeMode::Isotropic } else { MazeMode::Swept };
+        let hold: f64 = f.get(2).map(|h| h.parse().unwrap()).unwrap_or(0.0);
+        let mut config = two_body_config(&[DVec3::ZERO], &[class.as_str()], n_a, lambda, cap, seed, dt);
+        config.rough = RoughParams { intake, maze, hold_time: hold, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for b in engine.shell_bodies.iter_mut() {
+            b.depth = depth;
+            if class == "neutron" {
+                b.inner_signs = NEUTRON_INNER_SIGNS;
+                b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+        let rep = engine.run_steady(&ctx, warmup, avg, 200);
+        let t = &rep.totals;
+        let caps = t.feed[0].iter().sum::<i64>();
+        let bands = |lo: usize| -> [f64; 3] {
+            let h = &t.capt_lat[lo..lo + 180];
+            let tot = h.iter().sum::<i64>().max(1) as f64;
+            let b = |a: i32, z: i32| (0..180usize).filter(|&d| { let l = (d as i32 - 90).abs(); l >= a && l < z }).map(|d| h[d]).sum::<i64>() as f64 / tot;
+            [b(0, 30), b(30, 60), b(60, 91)]
+        };
+        let fresh = bands(0);
+        let re = bands(180);
+        let exits = t.sh_exits[0].max(1) as f64;
+        println!(
+            "--- {run}: captures/step {:.1} (fresh {:.3}, recaptured {:.3}) | held {} | steady {} ---",
+            caps as f64 / avg as f64,
+            t.feed[0][0] as f64 / caps.max(1) as f64,
+            1.0 - t.feed[0][0] as f64 / caps.max(1) as f64,
+            engine.held[0],
+            rep.steady_ok
+        );
+        println!(
+            "   intake latitude, fresh: 0-30 {:.3} 30-60 {:.3} 60-90 {:.3} (polar/expect {:.3}, equatorial/expect {:.3}) | recaptured: {:.3}/{:.3}/{:.3}",
+            fresh[0], fresh[1], fresh[2], fresh[2] / 0.134, fresh[0] / 0.5, re[0], re[1], re[2]
+        );
+        println!(
+            "   contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | pp collisions/step {:.0} | maze esc-up/esc-down/trap-up/trap-down {:?}",
+            t.sh_exit_band[0][0] as f64 / exits,
+            t.sh_exit_band[0][1] as f64 / exits,
+            t.sh_exit_band[0][2] as f64 / exits,
+            t.collisions as f64 / avg as f64,
+            &t.maze[0..4]
+        );
+        // Net radial flow by band at r = 1.5, 2, 3 (x1e3, pol / mid / eq).
+        let mut line = String::from("   net radial flow x1e3 (pol/mid/eq):");
+        for (k, r) in crate::gpu::dsmc::gpu_types::FLUX_RADII.iter().enumerate() {
+            if ![1.5, 2.0, 3.0, 5.0].contains(r) {
+                continue;
+            }
+            line += &format!(" r={r}:");
+            for (lo, hi) in [(60, 90), (30, 60), (0, 30)] {
+                let (mut o, mut i) = (0i64, 0i64);
+                for lb in 0..18usize {
+                    let a = (lb as i32 * 10 - 90 + 5).abs();
+                    if a >= lo && a < hi {
+                        for sp in 0..2 {
+                            o += t.flux[((k * 18 + lb) * 2 + sp) * 2];
+                            i += t.flux[((k * 18 + lb) * 2 + sp) * 2 + 1];
+                        }
+                    }
+                }
+                line += &format!(" {:+.1}", 1e3 * (o - i) as f64 / (o + i).max(1) as f64);
+            }
+        }
+        println!("{line}");
     }
 }
