@@ -2028,6 +2028,31 @@ crowded cells around a strong emitter serialized every step.
 - **Limit:** a cell still pairs only its first MAX_CELL = 2048 photons. The
   workgroup memory limit is 16 KiB; overflow is still tallied.
 
+#### 15.13b λ = 0.1 with parallel rounds (2026-10-01)
+
+Single proton, envelope p = 1, h = 0.1, n_a = 8000; disc vs isotropic control:
+
+| λ | recaptured share, disc / control | recycles per photon, disc / control | captures/step, disc / control | fresh polar steering |
+|---|---|---|---|---|
+| 0.3 | 0.298 / 0.266 | 1.42 / 1.36 | 951 / 877 | 1.28 |
+| 0.15 | 0.533 / 0.440 | 2.14 / 1.79 | 957 / 776 | 1.34 |
+| 0.1 | **0.627 / 0.546** | **2.68 / 2.20** | **938 / 747** | **1.39** |
+
+- **Every measure of the loop keeps strengthening with density:**
+  - photons recycle more often;
+  - the disc out-recycles isotropic emission by more;
+  - the disc's self-recapture lifts total intake 26% over the control;
+  - polar steering rises.
+- **Over the whole sweep** (λ = 3 → 0.1), the disc's escaping share 1 − r
+  fell from 0.97 to 0.37. Between λ = 0.3 and 0.1 it scales roughly as
+  λ^0.58.
+- **Extrapolation** (not measured): r ≈ 0.9, i.e. 10 recycles per photon, a
+  near field dominated by the body's own charge, would need λ ≈ 0.01. That
+  is 10× denser than now, with cells ≤ λ: beyond a uniform grid over
+  R_D = 6 on this GPU.
+- **Next engineering step:** a nested or near-body-refined grid (or a smaller
+  domain with a matched outer boundary) to reach λ ~ 0.01–0.03 near the body.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
