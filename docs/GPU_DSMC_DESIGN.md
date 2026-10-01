@@ -2198,6 +2198,60 @@ share there (no field: 0.067 each), and net inflow per capture at r = 1.5.
 - The stability rule is therefore a capacity limit: overload pushes the
   extra nucleon out.
 
+### 15.16 First forces between a proton and a neutron (2026-10-01)
+
+**User direction:** don't force a maximum recycling rate. Intake is set by
+the ambient, and Mathis's nuclei hold or fail by each baryon's channel
+*capacity* (overload pushes the extra nucleon out, §15.15). So the next goal
+is a nucleus that holds on its own forces.
+
+**Report `report_pair_force`:** two maze bodies, envelope p = 1, EjectC.
+- The force on a body is the momentum its contacts and captures deliver
+  per unit time: absorption plus emission recoil (pause.html: charge
+  momentum is radially out from its emitter).
+- `CFM_F_RD` fixes the domain. `CFM_F_SOLO=1` reruns each body alone at its
+  pair position, so interaction = pair − solo.
+- Run: λ = 0.1, h = 0.1, n_a = 8000, dt = 0.02, R_D = 4.5, φ = 2/3. The
+  first p–n axial runs used a domain that grew with separation; the solo
+  baseline replaced them.
+
+**Self-forces of isolated bodies (the problem):**
+- The neutron pushes itself toward its south pole at **0.64 photon-momenta
+  per capture**. Its through-channel takes in at the south and emits 80% out
+  of the north (§15.15). The maze ejects at c relative to a ball moving at
+  ~2c, so photons leave faster than they arrive and momentum out exceeds
+  momentum in. It is a rocket.
+- The proton's self-force is 0.04 per capture, also southward.
+- In a balanced field (φ = 0.5) the neutron's emission is N/S symmetric, yet
+  its self-force is still +0.09 per capture. Part of it comes from the
+  body's own unexplained N/S asymmetry (§15.15).
+- A free nucleon accelerating itself in a uniform field is not something
+  Mathis describes. This needs a decision before bodies are allowed to
+  move.
+
+**Interaction, p (−z) and n (+z), axial** (force per unit time toward the
+other body; noise about ±50):
+
+| sep | proton toward n | neutron toward p | closing rate (sum) |
+|---|---|---|---|
+| 2.0 (envelopes touching) | +532 | −2057 | **−1525** |
+| 3.0 | +413 | +656 | **+1068** |
+| 4.0 | +117 | +1597 | **+1713** |
+
+- **The proton is attracted to the neutron at every separation,** decaying
+  with distance. The neutron is attracted at 3–4 and repelled at contact.
+  Together that is a closing force at range and a separating one at contact:
+  a bound pair with a standoff somewhere between separations 2 and 3. It
+  emerges from the photon traffic alone.
+- **Not Newtonian:** the forces on the two bodies are unequal (an open field,
+  cc.pdf). So the pair as a whole drifts as well as binding.
+- **Caveats:**
+  - one seed, one density;
+  - the interaction is a 5–15% difference of large self-forces;
+  - the neutron's interaction has not yet started to fall off at separation
+    4 (the domain can't go further);
+  - envelopes overlapping below separation 2 are untested.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

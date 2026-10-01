@@ -1882,6 +1882,14 @@ fn report_pair_force() {
     for &sep in &seps {
         let centers = [-e * sep / 2.0, e * sep / 2.0];
         let (t, time) = run(&centers, &classes, rd(sep / 2.0));
+        // CFM_F_SOLO=1: also run each body alone at its own pair position in
+        // the same domain and report the interaction = pair - solo (removes
+        // the self-force and its domain-position dependence).
+        let solo: Vec<Option<(DVec3, f64)>> = if env("CFM_F_SOLO", "0") == "1" {
+            (0..2).map(|b| { let (ts, tm) = run(&centers[b..b + 1], &classes[b..b + 1], rd(sep / 2.0)); Some(fmt(&ts, 0, tm)) }).collect()
+        } else {
+            vec![None, None]
+        };
         let mut line = format!("sep {sep:.2}:");
         for b in 0..2 {
             let (f, caps) = fmt(&t, b, time);
@@ -1893,6 +1901,10 @@ fn report_pair_force() {
                 toward / caps,
                 (f - e * f.dot(e)).length()
             );
+            if let Some((fs, cs)) = solo[b] {
+                let ts = if b == 0 { fs.dot(e) } else { -fs.dot(e) };
+                line += &format!(" [solo here: toward {ts:+.1}, captures {cs:.0}; INTERACTION toward other {:+.1} ({:+.4} per solo capture)]", toward - ts, (toward - ts) / cs);
+            }
         }
         println!("{line}");
     }
