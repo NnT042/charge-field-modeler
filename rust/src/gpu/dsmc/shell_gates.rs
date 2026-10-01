@@ -1982,7 +1982,9 @@ fn report_pair_force() {
 /// (1e6, momentum-per-velocity in photon units: the calibration knob),
 /// CFM_D_DAMP (0), CFM_D_FIXT (250 time units with the pair held),
 /// CFM_D_CALWARMT (250) + CFM_D_CALT (150) for each self-force,
-/// CFM_D_STEPS (5000), CFM_D_LOG (100),
+/// CFM_D_STEPS (5000), CFM_D_LOG (100), CFM_D_CONTACT (2: hard contact
+/// at envelope touching; 0 = none), CFM_D_LAYOUT / CFM_D_ORIENTS /
+/// CFM_D_SEPS (stacks, §15.18),
 /// CFM_C_LAMBDA (0.1), CFM_C_NA (8000), CFM_C_H (0.1), CFM_C_DT (lambda/5),
 /// CFM_I_PHI (2/3), CFM_F_RD (4.5), CFM_C_SEED.
 #[test]
@@ -2012,6 +2014,10 @@ fn report_deuteron() {
     // non-Newtonian forces is reported, not integrated), which keeps both
     // bodies where the centre-calibrated self-force applies.
     let fix_com = env("CFM_D_FIXCOM", "1") == "1";
+    // CFM_D_CONTACT (doc §15.18): bodies are hard spheres of this centre
+    // distance (2 = envelopes touching; 0 = off, they pass through each
+    // other). Overlap is resolved by an elastic, equal-mass contact.
+    let contact: f64 = env("CFM_D_CONTACT", "2").parse().unwrap();
     let lambda: f64 = env("CFM_C_LAMBDA", "0.1").parse().unwrap();
     let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
     let h: f64 = env("CFM_C_H", "0.1").parse().unwrap();
@@ -2023,9 +2029,12 @@ fn report_deuteron() {
     let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
     println!("=== deuteron: {pair} {geom}, sep0 {sep0}, mass {mass:e}, damp {damp}, fixed centre {fix_com}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d} ===");
     let ctx = GpuContext::new().expect("GPU");
-    let make = |centers: &[DVec3], cls: &[&str]| -> DsmcEngine {
+    let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
+        for (bc, o) in config.bodies.iter_mut().zip(ors) {
+            bc.orient = *o;
+        }
         config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
@@ -2043,9 +2052,22 @@ fn report_deuteron() {
     // 1. Self-force per class, body alone at the domain centre.
     let mut f_self = std::collections::HashMap::new();
     let mut uniq = classes.clone();
+    uniq.sort();
     uniq.dedup();
-    for cl in uniq {
-        let mut engine = make(&[DVec3::ZERO], &[cl]);
+    // CFM_D_FSELF="neutron:x,y,z;proton:x,y,z" reuses settled self-forces
+    // measured earlier in the same field and domain (skips calibration).
+    for item in env("CFM_D_FSELF", "").split(';').filter(|q| !q.is_empty()) {
+        let (cl, f) = item.split_once(':').unwrap();
+        let c: Vec<f64> = f.split(',').map(|q| q.parse().unwrap()).collect();
+        let key = *uniq.iter().find(|u| **u == cl).expect("CFM_D_FSELF class not in the stack");
+        println!("self-force {key:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time (given)", c[0], c[1], c[2]);
+        f_self.insert(key, DVec3::new(c[0], c[1], c[2]));
+    }
+    for cl in uniq.clone() {
+        if f_self.contains_key(cl) {
+            continue;
+        }
+        let mut engine = make(&[DVec3::ZERO], &[cl], &[GpuOrient::PoleOn]);
         for _ in 0..cal_warm {
             engine.step_flux(&ctx);
         }
@@ -2057,65 +2079,151 @@ fn report_deuteron() {
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         f_self.insert(cl, f);
     }
-    // 2. The pair, held while the field settles, then free.
-    let mut x = [-e * sep0 / 2.0, e * sep0 / 2.0];
-    let mut v = [DVec3::ZERO; 2];
-    let mut engine = make(&x, &classes);
+    // 2. The stack, held while the field settles, then free. Bodies sit on
+    // the axis e in CFM_F_PAIR order with gaps CFM_D_SEPS (default all
+    // CFM_D_SEP0), centred on the domain.
+    // CFM_D_ORIENTS: one letter per body, u = pole up (+z, default),
+    // d = pole down (-z). CFM_D_LAYOUT=alpha (doc §15.18, deut.pdf's He
+    // sandwich): CFM_F_PAIR must be "pnnp"; protons on the axis at z = +-a
+    // meeting pole to pole (top one upside down), neutrons side by side at
+    // x = -+b, antiparallel (each sits under/over its own proton, as in the
+    // free deuteron). CFM_D_A, CFM_D_B (2.16 each: p-n distance 3.05).
+    let n = classes.len();
+    assert!(n >= 2 && n <= 4, "2-4 bodies");
+    let layout = env("CFM_D_LAYOUT", "chain");
+    let (mut x, ors): (Vec<DVec3>, Vec<GpuOrient>) = if layout == "alpha" {
+        assert_eq!(pair, "pnnp", "alpha layout needs CFM_F_PAIR=pnnp");
+        let a: f64 = env("CFM_D_A", "2.16").parse().unwrap();
+        let b: f64 = env("CFM_D_B", "2.16").parse().unwrap();
+        (
+            vec![DVec3::new(0.0, 0.0, -a), DVec3::new(b, 0.0, 0.0), DVec3::new(-b, 0.0, 0.0), DVec3::new(0.0, 0.0, a)],
+            vec![GpuOrient::PoleOn, GpuOrient::PoleOn, GpuOrient::PoleDown, GpuOrient::PoleDown],
+        )
+    } else {
+        let gaps: Vec<f64> = env("CFM_D_SEPS", "").split(',').filter(|g| !g.is_empty()).map(|g| g.parse().unwrap()).collect();
+        let gaps: Vec<f64> = if gaps.is_empty() { vec![sep0; n - 1] } else { gaps };
+        assert_eq!(gaps.len(), n - 1);
+        let mut u = vec![0.0f64; n];
+        for k in 1..n {
+            u[k] = u[k - 1] + gaps[k - 1];
+        }
+        let mid = (u[0] + u[n - 1]) / 2.0;
+        let os: Vec<GpuOrient> = env("CFM_D_ORIENTS", &"u".repeat(n)).chars().map(|c| if c == 'd' { GpuOrient::PoleDown } else { GpuOrient::PoleOn }).collect();
+        (u.iter().map(|&q| e * (q - mid)).collect(), os)
+    };
+    let axial_only = axial_only && layout != "alpha";
+    // Each body's self-force is its class's (calibrated pole up), turned
+    // by the same rotation that orients the body.
+    let f_body: Vec<DVec3> = (0..n).map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, ors[b].spin_axis()) * f_self[classes[b]]).collect();
+    println!("layout {layout}: orients {ors:?}, start {:?}", x.iter().map(|p| (p.x, p.y, p.z)).collect::<Vec<_>>());
+    let mut v = vec![DVec3::ZERO; n];
+    let mut engine = make(&x, &classes, &ors);
     for _ in 0..fix {
         engine.step_flux(&ctx);
     }
-    let mut win = [DVec3::ZERO; 2];
-    let mut caps = [0i64; 2];
-    let mut seps = Vec::new();
+    let mut win = vec![DVec3::ZERO; n];
+    let mut caps = vec![0i64; n];
+    let mut n_contacts = 0u64;
+    let pairs_ij: Vec<(usize, usize)> = (0..n).flat_map(|i| (i + 1..n).map(move |k| (i, k))).collect();
+    let n_g = if layout == "alpha" { pairs_ij.len() } else { n - 1 };
+    let mut gap_hist: Vec<Vec<f64>> = vec![Vec::new(); n_g];
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
-        for b in 0..2 {
+        for b in 0..n {
             let dp = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]);
-            let mut j = dp - f_self[classes[b]] * dt;
+            let mut j = dp - f_body[b] * dt;
             if axial_only {
                 j = e * j.dot(e);
             }
             win[b] += j;
             caps[b] += t.feed[b].iter().sum::<i64>();
-            v[b] += j / mass - v[b] * damp * dt;
+            let vb = v[b];
+            v[b] = vb + j / mass - vb * damp * dt;
             x[b] += v[b] * dt;
         }
+        if contact > 0.0 {
+            let mut contacts_now = 0;
+            for i in 0..n {
+                for k in i + 1..n {
+                    let d = x[k] - x[i];
+                    let r = d.length();
+                    if r < contact && r > 1e-9 {
+                        let nrm = d / r;
+                        let push = (contact - r) / 2.0;
+                        x[i] -= nrm * push;
+                        x[k] += nrm * push;
+                        let vn = (v[k] - v[i]).dot(nrm);
+                        if vn < 0.0 {
+                            v[i] += nrm * vn;
+                            v[k] -= nrm * vn;
+                        }
+                        contacts_now += 1;
+                    }
+                }
+            }
+            n_contacts += contacts_now;
+        }
         if fix_com {
-            let com = (x[0] + x[1]) / 2.0;
-            let vcom = (v[0] + v[1]) / 2.0;
-            for b in 0..2 {
+            let com = x.iter().sum::<DVec3>() / n as f64;
+            let vcom = v.iter().sum::<DVec3>() / n as f64;
+            for b in 0..n {
                 x[b] -= com;
                 v[b] -= vcom;
             }
         }
         engine.set_body_centers(&ctx, &x);
-        let sep = (x[1] - x[0]).dot(e);
-        seps.push(sep);
+        let g: Vec<f64> = if layout == "alpha" {
+            pairs_ij.iter().map(|&(i, k)| (x[k] - x[i]).length()).collect()
+        } else {
+            (0..n - 1).map(|k| (x[k + 1] - x[k]).dot(e)).collect()
+        };
+        for k in 0..g.len() {
+            gap_hist[k].push(g[k]);
+        }
         if s % log == 0 {
             let tw = log as f64 * dt;
-            let toward = |b: usize| if b == 0 { win[b].dot(e) } else { -win[b].dot(e) } / tw;
-            println!(
-                "t {:7.2}: sep {sep:.4} | v_rel {:+.5} | interaction toward other: {} {:+.0}, {} {:+.0} | captures/time {:.0}, {:.0} | lateral {:.3}",
-                s as f64 * dt,
-                (v[1] - v[0]).dot(e),
-                classes[0],
-                toward(0),
-                classes[1],
-                toward(1),
-                caps[0] as f64 / tw,
-                caps[1] as f64 / tw,
-                (x[0] - e * x[0].dot(e)).length().max((x[1] - e * x[1].dot(e)).length())
-            );
-            win = [DVec3::ZERO; 2];
-            caps = [0; 2];
+            let mut line = format!("t {:7.2}: gaps", s as f64 * dt);
+            for k in 0..g.len() {
+                line += &format!(" {:.4}", g[k]);
+            }
+            if layout == "alpha" {
+                line += " | interaction (x,z):";
+                for b in 0..n {
+                    line += &format!(" {} ({:+.0},{:+.0})", &classes[b][..1], win[b].x / tw, win[b].z / tw);
+                }
+                line += " | max lateral y";
+                line += &format!(" {:.3}", x.iter().map(|p| p.y.abs()).fold(0.0, f64::max));
+            } else {
+                line += " | gap rates";
+                for k in 0..n - 1 {
+                    line += &format!(" {:+.5}", (v[k + 1] - v[k]).dot(e));
+                }
+                line += " | interaction along +e:";
+                for b in 0..n {
+                    line += &format!(" {} {:+.0}", &classes[b][..1], win[b].dot(e) / tw);
+                }
+            }
+            line += &format!(" | contact steps {n_contacts}");
+            line += " | captures/time";
+            for b in 0..n {
+                line += &format!(" {:.0}", caps[b] as f64 / tw);
+            }
+            println!("{line}");
+            win = vec![DVec3::ZERO; n];
+            caps = vec![0; n];
         }
-        if sep < 0.5 || x.iter().any(|p| p.length() > r_d - 1.2) {
-            println!("stopped at t {:.2}: sep {sep:.3}, centres {:?} {:?}", s as f64 * dt, x[0], x[1]);
+        if (contact == 0.0 && g.iter().any(|&q| q < 0.5)) || x.iter().any(|p| p.length() > r_d - 1.2) {
+            println!("stopped at t {:.2}: gaps {:?}, centres {:?}", s as f64 * dt, g, x.iter().map(|p| p.dot(e)).collect::<Vec<_>>());
             break;
         }
     }
-    let (mn, mx) = seps.iter().fold((f64::MAX, f64::MIN), |(a, b), &q| (a.min(q), b.max(q)));
-    let tail = &seps[seps.len() * 3 / 4..];
-    println!("separation range {mn:.3} .. {mx:.3}; last quarter mean {:.3}; drift of the pair centre {:+.3}", tail.iter().sum::<f64>() / tail.len() as f64, ((x[0] + x[1]) / 2.0).dot(e));
+    for k in 0..n_g {
+        let (i, j) = if layout == "alpha" { pairs_ij[k] } else { (k, k + 1) };
+        let h = &gap_hist[k];
+        let (mn, mx) = h.iter().fold((f64::MAX, f64::MIN), |(a, b), &q| (a.min(q), b.max(q)));
+        let tail = &h[h.len() * 3 / 4..];
+        println!("distance {i}-{j} ({}-{}): range {mn:.3} .. {mx:.3}; last quarter mean {:.3}", classes[i], classes[j], tail.iter().sum::<f64>() / tail.len().max(1) as f64);
+    }
+    println!("drift of the stack centre {:+.3}", (x.iter().sum::<DVec3>() / n as f64).dot(e));
 }
 

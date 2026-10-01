@@ -230,6 +230,9 @@ pub enum BodyModel {
 pub enum GpuOrient {
     PoleOn,
     EdgeOn,
+    /// Doc §15.18: pole-on but upside down (spin axis -z), e.g. the lower
+    /// deuteron of Mathis's He sandwich (deut.pdf).
+    PoleDown,
 }
 
 impl GpuOrient {
@@ -237,6 +240,7 @@ impl GpuOrient {
         match self {
             GpuOrient::PoleOn => DVec3::Z,
             GpuOrient::EdgeOn => DVec3::X,
+            GpuOrient::PoleDown => -DVec3::Z,
         }
     }
 }
