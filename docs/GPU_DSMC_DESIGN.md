@@ -2147,6 +2147,57 @@ n_a = 8000 at λ = 0.1, else h = 0.05 with n_a = 32000). Recaptured share:
   0.008 at h = λ would need ~16× the photons per unit volume: past this GPU
   without variable photon weights near the body.
 
+### 15.15 The neutron at density: an emergent south-to-north through-channel (2026-10-01)
+
+**Setup:** as §15.14 (EjectC, envelope p = 1, dt = λ/5, h = 0.05,
+n_a = 32000, R_D = 2). `report_intake` now also prints a north / south
+split: body emission share above +60° / below −60° latitude, fresh intake
+share there (no field: 0.067 each), and net inflow per capture at r = 1.5.
+`CFM_I_PHI` sets the ambient photon fraction (default 2/3, Earth-like).
+
+**Lumped poles (as in §15.11):**
+- The neutron recaptures far less than the proton or its control: 0.35 /
+  0.37 at λ = 0.05 / 0.03, against the proton's 0.55 / 0.64 and the control's
+  0.65 / 0.75. Its recapture barely rises with density.
+- Fresh polar intake is 0.89–0.94× the no-field share, with a net *outflow*
+  over the poles together. This is the §15.11 "tension".
+
+**Split by pole, the tension goes away.** The neutron is a one-way channel:
+
+| ambient photon fraction | emission N / S | fresh intake N / S | net inflow per capture N / S |
+|---|---|---|---|
+| 0.5 (balanced) | 0.509 / 0.491 | 0.048 / 0.068 | −0.008 / +0.001 |
+| 2/3 | **0.797 / 0.203** | 0.042 / 0.073 | **−0.059 / +0.037** |
+| 1.0 | 0.898 / 0.102 | 0.040 / 0.077 | −0.081 / +0.051 |
+
+- **In at the south pole, out at the north,** with a strength that rises with
+  the field's photon excess and vanishes in a balanced field. That is
+  neutron.pdf: photons enter the south pole, rattle through, and exit the
+  opposite pole; antiphotons do the reverse; in a balanced field the neutron
+  looks neutral.
+  - Nothing here was fitted. The exit pole comes from the maze's trapped-photon
+    rule (exit along the helicity pole, §15.9) acting on the species mix.
+  - Lumping both poles together averaged an inflow pole with an outflow pole.
+- **The proton also has a N/S asymmetry,** but it does not depend on field
+  balance: fresh intake 0.082 / 0.110 (φ = 2/3) vs 0.083 / 0.111 (φ = 0.5);
+  net inflow +0.007 / +0.042. So it comes from the body's own kinematics
+  (the swept frame and level-9..12 motion), not from the field. The neutron
+  shows the same intake skew at φ = 0.5 with no net flow. Unexplained; worth
+  a look before reading south-dominance into it.
+- **Caveat:** the neutron's polar jets crowd the core cells. There were
+  1900–5000 MAX_CELL overflow warnings per run (that cell's collisions use
+  only its first 2048 photons). The proton runs had none.
+
+**Mathis on capacity** (for the next step, nucleus assembly):
+- deut.pdf: the neutron's channel strength is at most 0.685 of the proton's
+  (magnetic moment). Tritium's two neutrons give 1.37 through one proton, more
+  than it can channel, so one is "kicked out of the channel eventually".
+- water2.pdf: too much axial charge "blows the stacked alphas apart".
+- uf4.pdf: an alpha's hole limits the charge through it to two protons' worth.
+- drude.pdf: "Alphas have a maximum amount of charge they can recycle".
+- The stability rule is therefore a capacity limit: overload pushes the
+  extra nucleon out.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

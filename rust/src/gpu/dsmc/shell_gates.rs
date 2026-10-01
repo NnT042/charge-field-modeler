@@ -1523,6 +1523,10 @@ fn report_intake() {
         // CFM_C_H: DSMC cell size (0.25); keep it at or below lambda.
         config.h = env("CFM_C_H", "0.25").parse().unwrap();
         config.boundary = Boundary::SphereEscape { r_d };
+        // CFM_I_PHI: photon (vs antiphoton) fraction of the ambient (2/3).
+        if let Ok(phi) = std::env::var("CFM_I_PHI") {
+            config.photon_fraction = phi.parse().unwrap();
+        }
         let mut engine = DsmcEngine::new(&ctx, config);
         for b in engine.shell_bodies.iter_mut() {
             b.depth = depth;
@@ -1651,6 +1655,31 @@ fn report_intake() {
             circ += &format!(" r={r}: {:.3} / {:.3}", -band(60, 90) as f64 / caps.max(1) as f64, band(0, 30) as f64 / caps.max(1) as f64);
         }
         println!("{circ}");
+        // Doc §15.15: north / south split (signed latitude > 60 / < -60):
+        // where the body emits, where fresh intake arrives, and the net
+        // flow per capture at r = 1.5 (+ = inward).
+        let em = &t.maze_lat;
+        let em_tot = em.iter().sum::<i64>().max(1) as f64;
+        let em_n = (150..180).map(|d| em[d]).sum::<i64>() as f64 / em_tot;
+        let em_s = (0..30).map(|d| em[d]).sum::<i64>() as f64 / em_tot;
+        let fr = &t.capt_lat[0..180];
+        let fr_tot = fr.iter().sum::<i64>().max(1) as f64;
+        let fr_n = (150..180).map(|d| fr[d]).sum::<i64>() as f64 / fr_tot;
+        let fr_s = (0..30).map(|d| fr[d]).sum::<i64>() as f64 / fr_tot;
+        let k15 = crate::gpu::dsmc::gpu_types::FLUX_RADII.iter().position(|&r| r == 1.5).unwrap();
+        let net_in = |lbs: std::ops::Range<usize>| -> f64 {
+            let mut net = 0i64;
+            for lb in lbs {
+                for sp in 0..2 {
+                    net += t.flux[((k15 * 18 + lb) * 2 + sp) * 2 + 1] - t.flux[((k15 * 18 + lb) * 2 + sp) * 2];
+                }
+            }
+            net as f64 / caps.max(1) as f64
+        };
+        println!(
+            "   north/south: emission {:.3} / {:.3} | fresh intake {:.3} / {:.3} (no field 0.067 each) | net inflow per capture at r=1.5 {:+.3} / {:+.3}",
+            em_n, em_s, fr_n, fr_s, net_in(15..18), net_in(0..3)
+        );
     }
 }
 
@@ -1777,3 +1806,95 @@ fn dense_cells_parallel_collision_rate() {
     assert!(t.par_cells as u32 > 60 * steps, "dense path not taken ({})", t.par_cells);
     assert!((rate / expect - 1.0).abs() < 0.03, "dense-cell collision rate distorted");
 }
+
+/// Report (doc §15.15): the force between two maze bodies vs separation.
+/// Envelope intake p = 1, EjectC. The force on each body is the momentum
+/// delivered by its contacts and captures (absorption + emission recoil,
+/// pause.html), per unit time, projected on the line from body 0 to body 1.
+/// "toward" > 0 means the body is pushed toward the other one. Isolated
+/// baselines first (a lone body should feel ~0). Env: CFM_F_PAIR (pn),
+/// CFM_F_GEOM (axial | side), CFM_F_SEPS ("2,2.5,3,4"), CFM_C_LAMBDA (0.05),
+/// CFM_C_NA (32000), CFM_C_H (0.05), CFM_C_DT (lambda/5), CFM_I_PHI (2/3),
+/// CFM_F_MARGIN (domain radius beyond the bodies, 2), CFM_C_WARMUP (1500),
+/// CFM_C_AVG (3000), CFM_C_SEED.
+#[test]
+#[ignore]
+fn report_pair_force() {
+    use super::config::{Intake, MazeSpeed};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let pair = env("CFM_F_PAIR", "pn");
+    let geom = env("CFM_F_GEOM", "axial");
+    let seps: Vec<f64> = env("CFM_F_SEPS", "2,2.5,3,4").split(',').filter(|x| !x.is_empty()).map(|x| x.parse().unwrap()).collect();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.05").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "32000").parse().unwrap();
+    let h: f64 = env("CFM_C_H", "0.05").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", &format!("{}", lambda / 5.0)).parse().unwrap();
+    let phi: f64 = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let margin: f64 = env("CFM_F_MARGIN", "2").parse().unwrap();
+    // CFM_F_RD: fixed escape radius for every run (0 = sep/2 + 1 + margin),
+    // so the isolated self-force can be subtracted at the same domain.
+    let rd_fixed: f64 = env("CFM_F_RD", "0").parse().unwrap();
+    let rd = |half: f64| if rd_fixed > 0.0 { rd_fixed } else { half + 1.0 + margin };
+    let warmup: u32 = env("CFM_C_WARMUP", "1500").parse().unwrap();
+    let avg: u32 = env("CFM_C_AVG", "3000").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect();
+    let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
+    println!("=== pair force: {pair} {geom}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, warmup {warmup}, avg {avg} ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let run = |centers: &[DVec3], cls: &[&str], r_d: f64| -> (Totals, f64) {
+        // Buffer: 1.6x the ambient count, under the 2 GiB binding limit.
+        let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
+        let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
+        config.h = h;
+        config.photon_fraction = phi;
+        config.boundary = Boundary::SphereEscape { r_d };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for (b, cl) in engine.shell_bodies.iter_mut().zip(cls) {
+            b.depth = 0;
+            if *cl == "neutron" {
+                b.inner_signs = NEUTRON_INNER_SIGNS;
+                b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+        for _ in 0..warmup {
+            engine.step_flux(&ctx);
+        }
+        let mut t = Totals::default();
+        for _ in 0..avg {
+            t.add(&engine.step_flux(&ctx));
+        }
+        (t, avg as f64 * dt)
+    };
+    let fmt = |t: &Totals, b: usize, time: f64| -> (DVec3, f64) {
+        let f = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]) / time;
+        let caps = t.feed[b].iter().sum::<i64>() as f64 / time;
+        (f, caps)
+    };
+    let mut uniq = classes.clone();
+    uniq.dedup();
+    for cl in uniq {
+        let (t, time) = run(&[DVec3::ZERO], &[cl], rd(0.0));
+        let (f, caps) = fmt(&t, 0, time);
+        println!("isolated {cl:<7}: captures/time {caps:.0} | force/time ({:+.1}, {:+.1}, {:+.1}) = ({:+.4}, {:+.4}, {:+.4}) per capture", f.x, f.y, f.z, f.x / caps, f.y / caps, f.z / caps);
+    }
+    for &sep in &seps {
+        let centers = [-e * sep / 2.0, e * sep / 2.0];
+        let (t, time) = run(&centers, &classes, rd(sep / 2.0));
+        let mut line = format!("sep {sep:.2}:");
+        for b in 0..2 {
+            let (f, caps) = fmt(&t, b, time);
+            let toward = if b == 0 { f.dot(e) } else { -f.dot(e) };
+            let fed_nb = t.feed[b][1 + (1 - b)] as f64 / t.feed[b].iter().sum::<i64>().max(1) as f64;
+            line += &format!(
+                " | body {b} {}: captures/time {caps:.0}, toward other {toward:+.1} ({:+.4} per capture), sideways {:.1}, fed by other {fed_nb:.3}",
+                classes[b],
+                toward / caps,
+                (f - e * f.dot(e)).length()
+            );
+        }
+        println!("{line}");
+    }
+}
+
