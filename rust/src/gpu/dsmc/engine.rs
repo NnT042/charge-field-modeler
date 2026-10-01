@@ -781,7 +781,7 @@ impl DsmcEngine {
                 super::config::MazeMode::Fixed => 1,
                 super::config::MazeMode::Swept => 2,
                 super::config::MazeMode::Isotropic => 3,
-            },
+            } | if c.rough.maze_speed == super::config::MazeSpeed::EjectC { 256 } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);

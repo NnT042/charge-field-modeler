@@ -275,7 +275,8 @@ pub struct GpuParams {
     pub body_beta_twist: f32,
     /// Doc §15.8: 0 EdgeC, 1 Rigid, 2 RigidInner.
     pub grain_mode: u32,
-    /// Doc §15.9: 0 off, 1 fixed maze frame, 2 swept (level-9 phase).
+    /// Doc §15.9: 0 off, 1 fixed maze frame, 2 swept (level-9 phase),
+    /// 3 isotropic; bit 8 = MazeSpeed::EjectC (doc §15.14).
     pub maze_mode: u32,
 }
 

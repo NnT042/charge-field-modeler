@@ -1447,6 +1447,33 @@ fn intake_tank_bookkeeping() {
     }
 }
 
+/// Doc §15.14 gate: under MazeSpeed::EjectC every maze emission leaves at
+/// c relative to the ball surface, so no photon can outrun the fastest
+/// surface point by more than c (the ball's centre speed is ~2c, its spin
+/// adds at most ~|w| r_b); under Relative, repeated recaptures in a dense
+/// field random-walk speeds upward (Fermi-style) past that bound.
+#[test]
+fn maze_eject_c_bounds_speed() {
+    use super::config::{Intake, MazeSpeed};
+    let ctx = GpuContext::new().expect("GPU");
+    let mut max_by = Vec::new();
+    for speed in [MazeSpeed::EjectC, MazeSpeed::Relative] {
+        let mut config = two_body_config(&[DVec3::ZERO], &["proton"], 2000.0, 0.1, 2_000_000, 0xE7EC, 0.02);
+        config.boundary = Boundary::SphereEscape { r_d: 2.0 };
+        config.h = 0.1;
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: speed, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for _ in 0..1500 {
+            engine.step_flux(&ctx);
+        }
+        let mx = engine.read_photons(&ctx).iter().filter(|q| q.c[0] & FLAG_ALIVE != 0).map(|q| q.d[3]).fold(0.0f32, f32::max);
+        println!("{speed:?}: max photon speed {mx:.2}");
+        max_by.push(mx);
+    }
+    assert!(max_by[0] < 4.0, "EjectC: a photon outran surface + c ({})", max_by[0]);
+    assert!(max_by[1] > max_by[0], "Relative should heat past EjectC ({} vs {})", max_by[1], max_by[0]);
+}
+
 /// Report (doc §15.11): one body with envelope / polar / ball intake, tank,
 /// maze or isotropic emission. The option-2 test: with intake equally likely
 /// everywhere on the envelope, does the latitude of the never-captured
@@ -1470,8 +1497,12 @@ fn report_intake() {
     let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
     let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
     let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
-    let dt = 0.05;
-    println!("=== intake report: {class}, lambda {lambda}, n_a {n_a}, depth {depth}, warmup {warmup}, avg {avg} ===");
+    // CFM_C_DT (0.05; keep below lambda), CFM_C_RD (escape radius, 6),
+    // CFM_C_BLOCK (steps per printed block of the recaptured share, 0 = off).
+    let dt: f64 = env("CFM_C_DT", "0.05").parse().unwrap();
+    let r_d: f64 = env("CFM_C_RD", "6").parse().unwrap();
+    let block: u32 = env("CFM_C_BLOCK", "0").parse().unwrap();
+    println!("=== intake report: {class}, dt {dt}, r_d {r_d}, lambda {lambda}, n_a {n_a}, depth {depth}, warmup {warmup}, avg {avg} ===");
     println!("   (no-field expectation for intake latitude on a sphere, isotropic arrivals: |lat| 0-30 0.500, 30-60 0.366, 60-90 0.134)");
     let ctx = GpuContext::new().expect("GPU");
     for run in runs.split(';') {
@@ -1486,9 +1517,12 @@ fn report_intake() {
         let maze = if f[1] == "iso" { MazeMode::Isotropic } else { MazeMode::Swept };
         let hold: f64 = f.get(2).map(|h| h.parse().unwrap()).unwrap_or(0.0);
         let mut config = two_body_config(&[DVec3::ZERO], &[class.as_str()], n_a, lambda, cap, seed, dt);
-        config.rough = RoughParams { intake, maze, hold_time: hold, ..config.rough };
+        // CFM_I_SPEED: ejectc (default) | rel (doc §15.14).
+        let maze_speed = if env("CFM_I_SPEED", "ejectc") == "ejectc" { super::config::MazeSpeed::EjectC } else { super::config::MazeSpeed::Relative };
+        config.rough = RoughParams { intake, maze, maze_speed, hold_time: hold, ..config.rough };
         // CFM_C_H: DSMC cell size (0.25); keep it at or below lambda.
         config.h = env("CFM_C_H", "0.25").parse().unwrap();
+        config.boundary = Boundary::SphereEscape { r_d };
         let mut engine = DsmcEngine::new(&ctx, config);
         for b in engine.shell_bodies.iter_mut() {
             b.depth = depth;
@@ -1497,8 +1531,49 @@ fn report_intake() {
                 b.tier1_signs = NEUTRON_INNER_SIGNS;
             }
         }
-        let rep = engine.run_steady(&ctx, warmup, avg, 200);
-        let t = &rep.totals;
+        let t0 = std::time::Instant::now();
+        for _ in 0..warmup {
+            engine.step_flux(&ctx);
+        }
+        let mut t = Totals::default();
+        let mut bt = Totals::default();
+        let mut trace = String::new();
+        for s in 0..avg {
+            let st = engine.step_flux(&ctx);
+            t.add(&st);
+            bt.add(&st);
+            if block > 0 && (s + 1) % block == 0 {
+                let c = bt.feed[0].iter().sum::<i64>().max(1) as f64;
+                trace += &format!(" {:.3}", 1.0 - bt.feed[0][0] as f64 / c);
+                bt = Totals::default();
+            }
+        }
+        if block > 0 {
+            println!("   recaptured share by block of {block} steps:{trace}");
+        }
+        struct Rep { steady_ok: &'static str }
+        let rep = Rep { steady_ok: "n/a" };
+        println!("   wall {:.0} s, live {}", t0.elapsed().as_secs_f64(), engine.n_live);
+        {
+            // Speed census of the live free photons at the end (doc §15.14).
+            let ph = engine.read_photons(&ctx);
+            let mut sp: Vec<f64> = ph.iter().filter(|q| q.c[0] & FLAG_ALIVE != 0 && q.c[0] & (1 << 20) == 0).map(|q| q.d[3] as f64).collect();
+            sp.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = sp.len().max(1) as f64;
+            let near: Vec<f64> = ph.iter().filter(|q| q.c[0] & FLAG_ALIVE != 0 && q.c[0] & (1 << 20) == 0 && DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64).length() < 2.0).map(|q| q.d[3] as f64).collect();
+            println!(
+                "   speeds: mean {:.3} median {:.3} p99 {:.2} max {:.1} | >2c {:.4} >4c {:.5} | mean within r<2: {:.3} ({} photons)",
+                sp.iter().sum::<f64>() / n,
+                sp[sp.len() / 2],
+                sp[(sp.len() * 99) / 100],
+                sp.last().copied().unwrap_or(0.0),
+                sp.iter().filter(|&&s| s > 2.0).count() as f64 / n,
+                sp.iter().filter(|&&s| s > 4.0).count() as f64 / n,
+                near.iter().sum::<f64>() / near.len().max(1) as f64,
+                near.len()
+            );
+        }
+        let t = &t;
         let caps = t.feed[0].iter().sum::<i64>();
         let bands = |lo: usize| -> [f64; 3] {
             let h = &t.capt_lat[lo..lo + 180];
@@ -1554,6 +1629,28 @@ fn report_intake() {
             }
         }
         println!("{line}");
+        // Doc §15.14: the circulation in absolute terms, net crossings per
+        // capture (polar in, equatorial out) at r = 1.5 and 2.
+        let mut circ = String::from("   net flow per capture (pol in / eq out):");
+        for (k, r) in crate::gpu::dsmc::gpu_types::FLUX_RADII.iter().enumerate() {
+            if ![1.5, 2.0].contains(r) {
+                continue;
+            }
+            let band = |lo: i32, hi: i32| -> i64 {
+                let mut net = 0i64;
+                for lb in 0..18usize {
+                    let a = (lb as i32 * 10 - 90 + 5).abs();
+                    if a >= lo && a < hi {
+                        for sp in 0..2 {
+                            net += t.flux[((k * 18 + lb) * 2 + sp) * 2] - t.flux[((k * 18 + lb) * 2 + sp) * 2 + 1];
+                        }
+                    }
+                }
+                net
+            };
+            circ += &format!(" r={r}: {:.3} / {:.3}", -band(60, 90) as f64 / caps.max(1) as f64, band(0, 30) as f64 / caps.max(1) as f64);
+        }
+        println!("{circ}");
     }
 }
 

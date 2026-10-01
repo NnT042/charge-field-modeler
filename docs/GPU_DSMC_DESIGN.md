@@ -1983,6 +1983,9 @@ Finer cells (h = 0.1) and n_a = 8000 (`CFM_C_H` added to `report_intake`).
 | 0.3 | 951 / 877 | 0.298 / 0.266 | 1.42 | 1.28 |
 | 0.15 | **957 / 776** | **0.533 / 0.440** | **2.14** | 1.34 |
 
+- **Retracted in §15.14:** the disc-beats-control ordering below was an
+  artifact of dt = 0.05 ≥ λ/2. With dt ≤ λ/5 the isotropic control
+  recaptures *more* than the disc at every λ.
 - **The disc now holds its charge better than isotropic emission.**
   - At λ = 0.15 the disc body recycles each photon 2.1 times on average,
     against 1.8 for the control.
@@ -2030,6 +2033,10 @@ crowded cells around a strong emitter serialized every step.
 
 #### 15.13b λ = 0.1 with parallel rounds (2026-10-01)
 
+**Superseded by §15.14:** these runs used dt = 0.05 (half a free path per
+step) and R_D = 6, and hid g_max overflow warnings; the converged numbers
+are lower and the disc/control ordering reverses.
+
 Single proton, envelope p = 1, h = 0.1, n_a = 8000; disc vs isotropic control:
 
 | λ | recaptured share, disc / control | recycles per photon, disc / control | captures/step, disc / control | fresh polar steering |
@@ -2052,6 +2059,93 @@ Single proton, envelope p = 1, h = 0.1, n_a = 8000; disc vs isotropic control:
   R_D = 6 on this GPU.
 - **Next engineering step:** a nested or near-body-refined grid (or a smaller
   domain with a matched outer boundary) to reach λ ~ 0.01–0.03 near the body.
+
+### 15.14 Converged dense field: recapture rises, the disc circulates rather than confines (2026-10-01)
+
+**Goal (user):** a much denser near-body field. First the λ = 0.1 result was
+checked for convergence; it was not converged, and fixing that changed the
+picture.
+
+**Numerics found and fixed:**
+- **Time step.** dt must be ≤ λ/5. At λ = 0.1 (R_D = 3) the recaptured share
+  was 0.567 / 0.488 / 0.483 at dt = 0.05 / 0.02 / 0.01. A step of half a
+  free path inflated recapture.
+- **Cell size.** h ≈ λ is enough: 0.527 / 0.500 / 0.496 at h = 0.2 / 0.1 /
+  0.05 (λ = 0.1, n_a raised to keep ≥ 4 photons per cell).
+- **Drift.** None: the recaptured share is flat from the first few free-path
+  times on (block traces, `CFM_C_BLOCK`).
+- **Domain radius.** The escape boundary at R_D lets photons out that an
+  unbounded dense field would return. Diffusion theory gives escape
+  E(R_D) = E_∞ · R_D / (R_D − a). Fitted on R_D = 2 and 3 at λ = 0.1, it
+  predicted 0.549 at R_D = 4.5; measured 0.548. All infinite-field numbers
+  below come from that two-radius fit; a rises toward the envelope radius 1
+  as λ falls (0.74 → 0.92), as theory says it should.
+- **Fermi heating.** With the §15.9 law the maze keeps the photon's speed
+  relative to the ball surface and adds the surface velocity. The ball moves
+  at ~2c, so each recapture random-walks the speed upward. In a dense field
+  photons recycle many times: tails reach 13–18c, 1–3% are above 4c, and the
+  NTC bound g_max overflows thousands of times per run, biasing collision
+  rates. Earlier report filters had hidden these warnings.
+  - New `RoughParams::maze_speed: MazeSpeed {Relative, EjectC}`. `EjectC`
+    ejects at c relative to the ball surface (charge3.html: "The speed of
+    light is the speed at which it is ejected by the baryon"). The lab speed
+    is then bounded by |V_surface| + c ≈ 3.8.
+  - Encoded as bit 8 of `GpuParams::maze_mode`. The default stays `Relative`,
+    so all earlier gates are bit-identical. `report_intake` now defaults to
+    `EjectC` (`CFM_I_SPEED` = ejectc | rel).
+  - **Gate `maze_eject_c_bounds_speed`:** λ = 0.1, 1500 steps. EjectC max
+    speed 3.81; Relative 10.7.
+- **Report knobs:** `CFM_C_DT`, `CFM_C_RD`, `CFM_C_BLOCK`, `CFM_I_SPEED`,
+  plus a speed census and the circulation line (net crossings per capture,
+  polar in / equatorial out).
+
+**Sweep** (single proton, envelope p = 1, EjectC, dt = λ/5; h = 0.1 with
+n_a = 8000 at λ = 0.1, else h = 0.05 with n_a = 32000). Recaptured share:
+
+| λ | disc, R_D 2 / 3 | disc, unbounded field | recycles per photon | control, R_D 2 / 3 | control, unbounded |
+|---|---|---|---|---|---|
+| 0.1 | 0.403 / 0.500 | 0.62 | 2.7 | 0.482 / 0.564 | 0.67 |
+| 0.05 | 0.545 / 0.636 | 0.74 | 3.8 | 0.646 / 0.714 | 0.79 |
+| 0.03 | 0.641 / 0.720 | 0.81 | 5.1 | 0.755 / – | – |
+| 0.02 | 0.710 / 0.774 | **0.84** | **6.4** | 0.825 / – | – |
+
+| λ | fresh polar steering (disc; control ≈ 1.02–1.06) | net flow at r = 1.5 per capture, polar in / equatorial out (control) |
+|---|---|---|
+| 0.1 | 1.37 | 0.057 / 0.115 (0.001 / 0.022) |
+| 0.05 | 1.48–1.52 | 0.050–0.056 / 0.097–0.114 (0.003 / 0.019) |
+| 0.03 | 1.59–1.64 | 0.047–0.049 / 0.079–0.106 (0.005 / 0.012) |
+| 0.02 | **1.68–1.70** | 0.041–0.043 / 0.079–0.086 (0.002 / 0.015) |
+
+**Results:**
+- **Recapture keeps rising with density.** The unbounded-field escape share
+  is E_∞ ≈ 1.3 λ^0.54. A near field that is 90% the body's own charge
+  (r = 0.9, 10 recycles per photon) extrapolates to λ ≈ 0.008.
+- **The disc does not confine its charge better than isotropic emission. It
+  confines it worse,** by 0.05–0.11 in r at every λ. §15.13's ordering was the
+  coarse-dt artifact.
+- **What the disc does instead is circulate.** It drives a net flow inward
+  at the poles and outward at the equator, about 5% and 8–11% of its intake
+  at r = 1.5. The isotropic control has essentially none. That equatorial
+  outflow carries the disc's own photons away, which is why it recaptures
+  less. This is the shape of Mathis's charge-field loop (in at the poles,
+  out at the equator), it emerges, and it holds per capture as density
+  rises.
+- **Steering strengthens with density** without saturating: fresh intake
+  arrives 1.37 → 1.70× the no-field polar share as λ goes 0.1 → 0.02. The
+  control stays at 1.02–1.06.
+- **Intake is set by the ambient field.** Captures per unit ambient density
+  per unit time stay flat (≈ 20k → 17.5k per n_a = 8000 from λ 0.1 to 0.02).
+  A net-zero recycler cannot raise its own intake. In the diffusive limit
+  its near field is not denser than ambient, only more of it is its own
+  charge. No runaway, and no self-limiting maximum yet; a maximum would need
+  intake that is not net-zero (hold, or emission ≠ capture).
+- **Relative vs EjectC** (λ = 0.03, R_D = 2): Relative recaptures more (0.753
+  vs 0.641) but steers less (1.35 vs 1.59) and circulates a third as much
+  (0.014 / 0.028). It also runs with 6269 g_max overflow warnings, so its
+  numbers are biased.
+- **Cost.** λ = 0.02 at R_D = 3 is 2.6M photons, 18k steps, 30 min. λ ≈
+  0.008 at h = λ would need ~16× the photons per unit volume: past this GPU
+  without variable photon weights near the body.
 
 ## 12. Out of scope for this step
 

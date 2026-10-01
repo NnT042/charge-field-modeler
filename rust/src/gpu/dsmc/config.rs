@@ -105,6 +105,19 @@ pub enum MazeMode {
     Isotropic,
 }
 
+/// Doc §15.14: the speed a maze body re-emits at. `Relative`: the photon
+/// keeps its incoming speed relative to the ball surface and the surface
+/// velocity is added (§15.9; repeated recaptures by a ball moving at ~2c
+/// random-walk the speed upward, Fermi-style). `EjectC`: the baryon ejects
+/// at c relative to its own surface (charge3.html: "The speed of light is
+/// the speed at which it is ejected by the baryon"), so the lab speed is
+/// |V_surface + c n| whatever the photon arrived with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MazeSpeed {
+    Relative,
+    EjectC,
+}
+
 /// Doc §15.11: where a maze body takes photons in (scaffolding toward the
 /// emergent intake of MATHIS_SPIN_PATHS §D, option 2). `Ball`: only photons
 /// that hit the core ball (§15.9). `Envelope { p }`: additionally, a photon
@@ -162,6 +175,7 @@ pub struct RoughParams {
     pub grain_mode: GrainMode,
     /// Doc §15.9: ball contacts become maze captures (Ball body model only).
     pub maze: MazeMode,
+    pub maze_speed: MazeSpeed,
     /// Doc §15.11: intake rule and holding tank. Captured photons are held
     /// at the core for `hold_time` (x `hold_time_neutron` for neutrons;
     /// 0 = re-emitted at once), excluded from collisions, then released
@@ -178,7 +192,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, body_law: None }
     }
 }
 

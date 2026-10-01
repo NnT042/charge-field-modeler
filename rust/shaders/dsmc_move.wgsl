@@ -316,7 +316,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     let oq = ballkeys[base + 45u];
     let sg = ballkeys[base + 46u];
     var th = 0.0;
-    if (params.maze_mode == 2u) {
+    if ((params.maze_mode & 255u) == 2u) {
         th = bmeta.z + bmeta.w * t_step;
     }
     let dir = (*p).b.xyz;
@@ -328,7 +328,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     var fallback = true;
     // §15.11 control (mode 3): isotropic re-emission, no maze. Treated as a
     // maze whose start is the exit (d = d0, spin carried rigidly).
-    let iso = params.maze_mode == 3u;
+    let iso = (params.maze_mode & 255u) == 3u;
     if (iso) {
         let zz = 2.0 * rand01(params.seed_hi, params.seed_lo, key, 200u) - 1.0;
         let pz = TAU * rand01(params.seed_hi, params.seed_lo, key, 201u);
@@ -377,7 +377,13 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
         if (!iso) { q = maze_turn(sg, q); }
         (*p).g = vec4<f32>(maze_world(oq, th, q), (*p).g.w);
     }
-    let s_rel = length(v_in - (vcen + cross(om, xh - ch)));
+    // Doc §15.14: bit 8 of maze_mode = MazeSpeed::EjectC, the baryon ejects
+    // at c relative to its own surface (charge3.html); otherwise the photon
+    // keeps its incoming speed relative to the surface (MazeSpeed::Relative).
+    var s_rel = length(v_in - (vcen + cross(om, xh - ch)));
+    if (((params.maze_mode >> 8u) & 1u) != 0u) {
+        s_rel = 1.0;
+    }
     let xe = ch + out_w * rb * (1.0 + 1e-3);
     var v_out = vcen + cross(om, xe - ch) + out_w * s_rel;
     if (params.speed_mode == 1u) {
@@ -721,7 +727,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             var touched = false;
             var x_next = xh;
             var now_held = false;
-            if (params.maze_mode != 0u && ballkeys[b * BALLKEY_STRIDE + 47u].x > 0.5) {
+            if ((params.maze_mode & 255u) != 0u && ballkeys[b * BALLKEY_STRIDE + 47u].x > 0.5) {
                 // §15.9/§15.11: capture, then the tank or the maze.
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
@@ -1000,7 +1006,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             // envelope is taken in (envelope mode: with probability p
             // anywhere; polar mode: within `aperture` of the axis) and
             // funnelled to the core.
-            if (params.body_model == 2u && params.maze_mode != 0u && now_inside != 0u && prev_inside == 0u) {
+            if (params.body_model == 2u && (params.maze_mode & 255u) != 0u && now_inside != 0u && prev_inside == 0u) {
                 let b = now_inside - 1u;
                 let ik = ballkeys[b * BALLKEY_STRIDE + 47u];
                 var take = false;
