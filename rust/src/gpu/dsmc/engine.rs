@@ -610,7 +610,7 @@ impl DsmcEngine {
         let params_buf = ctx.uniform_buffer(&GpuParams::zeroed());
         let gather_params_buf = ctx.uniform_buffer(&NParamsLocal { n: 0, _p: [0; 3] });
 
-        let sorter = CellSorter::new_generic(ctx, grid.num_cells + 1, config.capacity);
+        let sorter = CellSorter::new_generic(ctx, grid.num_cells + 2, config.capacity);
 
         let shell_bodies: Vec<crate::baryon_shells::ShellBody> = match config.body_model {
             BodyModel::Absorber => vec![],
@@ -985,9 +985,10 @@ impl DsmcEngine {
 
         {
             self.cur = 1 - self.cur;
-            // n_live_after = offsets[grid.num_cells] (the dead bucket's exclusive-scan offset).
-            let offsets: Vec<u32> = ctx.read_buffer(&self.sorter.offsets, self.grid.num_cells as usize + 1);
-            let n_live_after = offsets[self.grid.num_cells as usize];
+            // n_live_after = offsets[grid.num_cells + 1] (the dead bucket's
+            // exclusive-scan offset; bucket num_cells parks held photons, doc §15.11).
+            let offsets: Vec<u32> = ctx.read_buffer(&self.sorter.offsets, self.grid.num_cells as usize + 2);
+            let n_live_after = offsets[self.grid.num_cells as usize + 1];
             self.n_live = n_live_after;
             self.n_used = n_live_after;
         }

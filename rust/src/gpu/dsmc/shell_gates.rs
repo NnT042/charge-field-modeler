@@ -1508,9 +1508,10 @@ fn report_intake() {
         let re = bands(180);
         let exits = t.sh_exits[0].max(1) as f64;
         println!(
-            "--- {run}: captures/step {:.1} (envelope {:.1}, fresh {:.3}, recaptured {:.3}) | held {} | steady {} ---",
+            "--- {run}: captures/step {:.1} (envelope {:.1}, tank releases {:.1}, fresh {:.3}, recaptured {:.3}) | held {} | steady {} ---",
             caps as f64 / avg as f64,
             t.env_capt[0] as f64 / avg as f64,
+            t.hold[0][1] as f64 / avg as f64,
             t.feed[0][0] as f64 / caps.max(1) as f64,
             1.0 - t.feed[0][0] as f64 / caps.max(1) as f64,
             engine.held[0],

@@ -1,6 +1,7 @@
 // DSMC step 2: advance every live photon by c*dt, test the nearest body for
 // absorption/lane-crossing, apply the domain boundary, and emit this
-// photon's cell index (dead -> bucket `num_cells`) for CellSorter.
+// photon's cell index (dead -> bucket `num_cells + 1`, held photons ->
+// parking bucket `num_cells`, which collide never visits) for CellSorter.
 // dsmc_common.wgsl is concatenated ahead of this source by engine.rs.
 
 struct GpuPhoton {
@@ -552,7 +553,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 
     var ph = photons[idx];
     if ((ph.c[0] & FLAG_ALIVE) == 0u) {
-        cell_of[idx] = params.num_cells;
+        cell_of[idx] = params.num_cells + 1u; // dead bucket (num_cells = held-photon parking, §15.11)
         return;
     }
 
@@ -575,7 +576,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             let xc = bk(hb, 8u, 0u).xyz;
             ph.a = vec4<f32>(xc, ph.a.w);
             photons[idx] = ph;
-            cell_of[idx] = cell_index(xc);
+            cell_of[idx] = params.num_cells;
             return;
         }
     }
@@ -782,7 +783,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if ((ph.c[0] & FLAG_HELD) != 0u) {
             ph.a = vec4<f32>(pos, ph.a.w);
             photons[idx] = ph;
-            cell_of[idx] = cell_index(pos);
+            cell_of[idx] = params.num_cells;
             return;
         }
     }
@@ -1126,7 +1127,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if (dead) {
         ph.c[0] = ph.c[0] & ~FLAG_ALIVE;
         photons[idx] = ph;
-        cell_of[idx] = params.num_cells;
+        cell_of[idx] = params.num_cells + 1u; // dead bucket (num_cells = held-photon parking, §15.11)
         return;
     }
 
@@ -1142,6 +1143,11 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     atomicAdd(&tallies[66], i32(dir.z * dir.z * TALLY_SCALE));
 
     let cell_idx = cell_index(pos);
+    if ((ph.c[0] & FLAG_HELD) != 0u) {
+        // §15.11: captured into the tank at the envelope this step.
+        cell_of[idx] = params.num_cells;
+        return;
+    }
     cell_of[idx] = cell_idx;
 
     // Density map (doc §8): time-averaged counts by kind x species, u32

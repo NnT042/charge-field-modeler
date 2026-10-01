@@ -1887,6 +1887,47 @@ poleward steering should raise intake, emission, and then steering:
   emitted-vs-incoming collisions just outside the envelope: a denser near
   field, stronger emission per body, or a longer interaction zone.
 
+#### 15.11c The holding tank does not raise emission per body (2026-09-30)
+
+**Fix:** held photons all sat in the core cell (~30k at a hold of one level-12
+cycle). The collide kernel drew O(count²) candidate pairs there and rejected
+every one, so the step ran ~10× slower and the cell overflowed MAX_CELL.
+- Held photons now go to a **parking bucket** (index `num_cells`). Dead
+  photons go to `num_cells + 1`.
+- Compaction keeps the parking bucket, and collide never visits it.
+- The sorter has `num_cells + 2` buckets.
+- Suite: 210 passed / 0 failed.
+
+**Test** (proton, λ = 0.3, hold = π, i.e. one level-12 spin cycle, and
+hold = 10):
+
+| run | captures/step | releases/step | held | fresh polar ratio (no field = 1) |
+|---|---|---|---|---|
+| env p = 1, no tank (§15.11) | 458 | — | 0 | 1.456 |
+| env p = 1, hold π | 448 | 444 | 28k | 1.492 |
+| env p = 1, hold 10 | 439 | 556* | 90k | 1.500 |
+
+\* Still draining warm-up captures. The window starts at step 300, and a hold
+of 10 is 200 steps.
+
+**Polar-only intake (aperture 0.6), maze vs isotropic envelope captures:**
+- no tank: +4.7%;
+- hold π: +5.2% (114.5 vs 108.8);
+- hold 10: +5.6% (114.2 vs 108.1).
+
+**Reading:**
+- **In steady state a tank re-emits exactly what it takes in**, so it cannot
+  raise emission per body. Measured: releases = captures (444 vs 448).
+- It removes rate × τ photons from the gas (28k–90k here).
+- It nudges the steering up by ~2–3% (polar 1.456 → 1.49) and the loop gain
+  by under a point. That is consistent with fewer gas photons near the core,
+  not with stronger emission.
+- **Emission per body is capped by what arrives.** Raising it needs more
+  arriving charge: a denser ambient, or a neighbour's emission. Holding it
+  longer doesn't help.
+- The tank's real use is the capacity / held-charge targets (EMC saturation,
+  15 m_e held). It is not a loop amplifier.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
