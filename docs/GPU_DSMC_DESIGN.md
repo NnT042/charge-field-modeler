@@ -2345,6 +2345,77 @@ self-force, toward the other body):
 - There is no capacity limit yet.
 - The neutron's jet crowds core cells (≈ 700 MAX_CELL overflow warnings).
 
+### 15.18 Tritium and a first alpha (2026-10-01)
+
+**What "no torque" means** (user question): the inner spins still run.
+- Levels 9–12 turn at their Spin-mode rates. The ball rides them around its
+  trace, and the maze frame sweeps with the level-9 phase (the sprinkler).
+  That is the source of the deterministic force modulation in §15.17.
+- What is fixed is each body's overall spin axis (and the inner rates). The
+  torque on it is tallied (TALLY_SH_TORQUE) but not applied.
+
+**Build:**
+- `GpuOrient::PoleDown` (axis −z).
+- `report_deuteron` now runs 2–4 body chains (`CFM_D_SEPS`, `CFM_D_ORIENTS`)
+  and the `alpha` layout.
+- Self-forces are turned with each body's orientation.
+- `CFM_D_CONTACT`: hard elastic contact at centre distance 2, i.e. envelopes
+  touching. It is on by default. Without it, bodies pass through each
+  other, and overlapping envelopes give meaningless forces.
+- `CFM_D_FSELF` reuses settled self-forces (each calibration is ~30 min at
+  R_D = 6).
+- All runs: λ = 0.3, h = 0.1, n_a = 8000, dt = 0.06, R_D = 6, φ = 2/3,
+  M = 7×10⁶, no damping, fixed centre of mass. Settled self-forces at
+  R_D = 6: neutron ≈ −7100, proton ≈ −200.
+
+**Deuteron at R_D = 6** (control): bound. It oscillates between 3.05 and
+3.48 about ≈ 3.26 (period ≈ 290) for 600 time units. The standoff moves
+from 3.05 (R_D = 4.5) to 3.26; the binding does not depend on the domain.
+
+**Tritium** (n–p–n on the axis, all pole up, gaps 3.05–3.26):
+- **Without contact:** both neutrons close in. The lower one stalls at
+  2.04 and starts to recede (gap 2.35 and opening). The upper one is driven
+  into the proton (gap 0.5, overlapping, the run stops). The lower neutron's
+  north jet pushes the proton up into the upper neutron, which beats the
+  short-range repulsion.
+- **With contact:** bound for all 600 time units.
+  - Both gaps swing between 2.0 (contact, 9 contact steps in all) and about
+    3.4, with the outer turning points creeping up (3.26 → 3.33 → 3.42).
+  - With no damping, the field's fluctuations slowly heat the motion.
+  - No ejection within 600 time units. That does not contradict Mathis's
+    "one neutron is eventually kicked out": real tritium's half-life is 12
+    years. A capacity rule is the real test.
+
+**Alpha** (deut.pdf He sandwich, as interpreted here):
+- Layout:
+  - lower proton at (0, 0, −2.3), pole up;
+  - upper proton at (0, 0, +2.3), pole down, so the protons face pole to
+    pole;
+  - neutron at (+2.3, 0, 0), pole up;
+  - neutron at (−2.3, 0, 0), pole down (antiparallel).
+- Each proton–neutron diagonal starts at 3.25, the deuteron standoff.
+- **It splits into its two deuterons.**
+  - Each p–n pair stays bound (2.76–3.26) and swings round to sit side by
+    side.
+  - The two deuterons push apart along the axis until they reach the
+    domain edge at t ≈ 122 (p–p 4.6 → 7.0, n–n 4.6 → 9.6).
+- **Reading:**
+  - The model so far gives a molecule-like p–n bond at a standoff of ~3, not
+    a fused contact bond. Near contact the p–n force is repulsive (§15.17).
+    Nothing holds two deuterons together.
+  - That fits deut.pdf: forming He4 needs a star's charge density, which
+    presses the plugs together ("a plug that has been filled very
+    forcefully"). In weak fields 2H only makes molecular bonds such as H–2H.
+  - The test that follows: does the near-contact force turn attractive in
+    a denser field (λ 0.1 → 0.05)?
+- **Caveats:**
+  - one interpretation of the sandwich: which deuteron is flipped, and the
+    neutron axes;
+  - fixed orientations (the deuterons might rather rotate into the
+    seating);
+  - start at standoff, not at contact;
+  - one seed, one density.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
