@@ -134,6 +134,8 @@ pub struct Totals {
     pub hold: [[i64; 2]; 4],
     pub capt_lat: Vec<i64>,
     pub env_capt: [i64; 4],
+    /// Doc §15.13: cell-steps run in parallel collision rounds.
+    pub par_cells: i64,
 }
 
 impl Totals {
@@ -266,6 +268,7 @@ impl Totals {
             self.env_capt[b] += other.env_capt[b];
         }
         add_vec(&mut self.capt_lat, &other.capt_lat);
+        self.par_cells += other.par_cells;
     }
 
     /// (mean, std) of escaping photons' speed, in c (doc §13, D7).
@@ -454,6 +457,7 @@ impl Totals {
         }
         let cl: Vec<i64> = raw[TALLY_CAPT_LAT..TALLY_CAPT_LAT + 360].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.capt_lat, &cl);
+        self.par_cells += raw[super::gpu_types::TALLY_PAR_CELLS] as i64;
     }
 }
 

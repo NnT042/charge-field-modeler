@@ -2002,6 +2002,32 @@ Finer cells (h = 0.1) and n_a = 8000 (`CFM_C_H` added to `report_intake`).
 - **Going denser needs a better grid first:** finer cells near the body, or
   a cap on per-cell candidate counts.
 
+#### 15.13a Dense cells: parallel NTC rounds (2026-10-01)
+
+**Why λ = 0.1 stalled:** the collide kernel ran each cell's NTC candidate loop
+on thread 0. The cap is n² candidates, up to ~4M for a 2048-photon cell. The
+crowded cells around a strong emitter serialized every step.
+
+**Fix** (`dsmc_collide.wgsl`):
+- The pair body is now `try_pair(i, j, ...)`.
+- Cells with m ≤ `PAR_MIN_CANDIDATES` (8192) keep the original serial loop.
+  These are bit-identical: the suite is unchanged at 210 passed.
+- Denser cells run **parallel rounds:**
+  - each round pairs sorted position i with i ^ mask, a random perfect
+    matching of the power-of-two padded list;
+  - every unordered pair is equally likely across rounds;
+  - each valid pair is a candidate with probability
+    sel = m (len − 1) / (rounds · n(n−1)/2);
+  - rounds = ⌈m (len − 1) / (n(n−1)/2)⌉;
+  - pairs within a round are disjoint (storageBarrier + workgroupBarrier
+    between rounds).
+- `TALLY_PAR_CELLS` counts such cell-steps.
+- **Gate `dense_cells_parallel_collision_rate`:** 1200 photons per unit cell,
+  ~14k candidates per cell-step. All 1280 cell-steps take the parallel path.
+  The collision rate is 797.98 vs analytic n σ ⟨g⟩ = 800.00 (0.25%).
+- **Limit:** a cell still pairs only its first MAX_CELL = 2048 photons. The
+  workgroup memory limit is 16 KiB; overflow is still tallied.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

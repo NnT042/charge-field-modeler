@@ -67,6 +67,7 @@ const TALLY_COLLISIONS_IDX: u32 = 61u;
 const TALLY_MOM_DRIFT_COUNT_IDX: u32 = 62u;
 const TALLY_MOM_DRIFT_SUM_IDX: u32 = 67u;
 const TALLY_CELL_OVERFLOW_IDX: u32 = 68u;
+const TALLY_PAR_CELLS_IDX: u32 = 2315u; // doc §15.13: cells run in parallel rounds
 const TALLY_EXCHANGE_DRIFT_SUM_IDX: u32 = 69u;
 const TALLY_REDIRECT_DRIFT_SUM_IDX: u32 = 70u;
 const TALLY_LOW_RANK64_IDX: u32 = 71u;
@@ -102,6 +103,12 @@ const RANK64: u32 = 64u;
 
 var<workgroup> sh_ids: array<u32, MAX_CELL>;
 var<workgroup> sh_slots: array<u32, MAX_CELL>;
+// Doc §15.13: this cell's NTC candidate count, broadcast to the workgroup.
+var<workgroup> sh_m: u32;
+// Cells with more candidates than this run them in parallel rounds of
+// disjoint pairs; below it, thread 0 runs the original serial loop
+// (bit-identical to before).
+const PAR_MIN_CANDIDATES: u32 = 8192u;
 
 fn chi_of(flags: u32) -> f32 {
     return select(-1.0, 1.0, (flags & FLAG_SPECIES_PLUS) != 0u);
@@ -331,10 +338,6 @@ fn main(
     // sh_ids/sh_slots[0..capn) are now id-ordered; [capn..MAX_CELL) hold the
     // sentinel and are never touched below.
 
-    if (lid.x != 0u) {
-        return;
-    }
-
     var axis = vec3<f32>(0.0, 0.0, 1.0);
     var body_center = vec3<f32>(0.0, 0.0, 0.0);
     if (params.n_bodies > 0u) {
@@ -358,22 +361,63 @@ fn main(
     let size_max: f32 = select(1.0, exp2(f32(k_max_ntc)), params.sigma_size_scaling != 0u);
     let sigma_eff = params.sigma * size_max * size_max;
 
-    let nf = f32(count);
-    var m_f = 0.5 * nf * (nf - 1.0) * sigma_eff * g_max * params.dt / vcell + cell_remainder[cell];
-    var m_i = i32(floor(m_f));
-    m_f = m_f - f32(m_i);
-    cell_remainder[cell] = m_f;
-    let cap_m = i32(capn) * i32(capn);
-    if (m_i > cap_m) {
-        m_i = cap_m;
+    if (lid.x == 0u) {
+        let nf = f32(count);
+        var m_f = 0.5 * nf * (nf - 1.0) * sigma_eff * g_max * params.dt / vcell + cell_remainder[cell];
+        var m_i = i32(floor(m_f));
+        m_f = m_f - f32(m_i);
+        cell_remainder[cell] = m_f;
+        let cap_m = i32(capn) * i32(capn);
+        if (m_i > cap_m) {
+            m_i = cap_m;
+        }
+        sh_m = u32(max(m_i, 0));
     }
-    if (m_i <= 0) {
+    let m = workgroupUniformLoad(&sh_m);
+    if (m == 0u) {
         return;
     }
-    let m = u32(m_i);
 
     // Hash-mixed so distinct (cell, step) pairs never share an RNG stream.
     let key_base = hash_u32(cell ^ hash_u32(params.step ^ 0x9E3779B9u));
+
+    // Doc §15.13: dense cells (near a strong emitter) would serialize the
+    // whole step on one thread. Run their candidates in rounds instead: each
+    // round pairs position i with i ^ mask (a random perfect matching of the
+    // power-of-two padded list, so every unordered pair is equally likely
+    // across rounds), each valid pair is a candidate with probability `sel`,
+    // and the rounds and `sel` are set so the expected candidate count per
+    // pair equals the serial NTC's m / (n(n-1)/2).
+    if (m > PAR_MIN_CANDIDATES) {
+        let pairs_total = f32(capn) * f32(capn - 1u) * 0.5;
+        let lm1 = f32(len - 1u);
+        let rounds = u32(ceil(f32(m) * lm1 / pairs_total));
+        let sel = f32(m) * lm1 / (f32(rounds) * pairs_total);
+        for (var r = 0u; r < rounds; r = r + 1u) {
+            let rkey = hash_u32(key_base ^ hash_u32(r * 0x85EBCA6Bu ^ 0x51ED27u));
+            let mask = 1u + (hash_u32(rkey) % (len - 1u));
+            for (var q = 0u; q < strides; q = q + 1u) {
+                let i = lid.x + q * SORT_LOCAL;
+                let j = i ^ mask;
+                if (i < j && j < capn) {
+                    let pkey = hash_u32(rkey ^ (i * 0x9E3779B9u));
+                    if (rand01(params.seed_hi, params.seed_lo, pkey, 0u) < sel) {
+                        try_pair(i, j, pkey, 8u, g_max, size_max, within, axis, body_center);
+                    }
+                }
+            }
+            storageBarrier();
+            workgroupBarrier();
+        }
+        if (lid.x == 0u) {
+            atomicAdd(&tallies[TALLY_PAR_CELLS_IDX], 1);
+        }
+        return;
+    }
+
+    if (lid.x != 0u) {
+        return;
+    }
     for (var c = 0u; c < m; c = c + 1u) {
         let draw0 = c * 8u;
         let ui = rand01(params.seed_hi, params.seed_lo, key_base, draw0);
@@ -384,275 +428,281 @@ fn main(
         let n_minus_1 = max(capn, 2u) - 1u;
         let j_off = min(u32(uj * f32(n_minus_1)), n_minus_1 - 1u);
         let j = (i + 1u + j_off) % capn;
+        try_pair(i, j, key_base, draw0, g_max, size_max, within, axis, body_center);
+    }
+}
 
-        let slot_a = sh_slots[i];
-        let slot_b = sh_slots[j];
-        var pa = photons[slot_a];
-        var pb = photons[slot_b];
-        // Doc §15.11: photons held in a body's tank take no collisions.
-        if (((pa.c[0] | pb.c[0]) & (1u << 20u)) != 0u) {
-            continue;
-        }
-        let da = pa.b.xyz;
-        let db = pb.b.xyz;
-        // E1 (doc §11d): pre-collision stiffness level/mass (m = 2^k). Read
-        // here, before either the exchange or shedding below can change them,
-        // since both the exchange math and NTC's size-scaling need the
-        // PRE-collision values.
-        let k_a = pa.c[3];
-        let k_b = pb.c[3];
-        let m_a = exp2(f32(k_a));
-        let m_b = exp2(f32(k_b));
+// One NTC candidate pair (sorted positions i != j in this cell's shared
+// list): acceptance, then the collision. Shared by the serial loop and the
+// parallel rounds of dense cells (doc §15.13).
+fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32, within: bool, axis: vec3<f32>, body_center: vec3<f32>) {
+    let slot_a = sh_slots[i];
+    let slot_b = sh_slots[j];
+    var pa = photons[slot_a];
+    var pb = photons[slot_b];
+    // Doc §15.11: photons held in a body's tank take no collisions.
+    if (((pa.c[0] | pb.c[0]) & (1u << 20u)) != 0u) {
+        return;
+    }
+    let da = pa.b.xyz;
+    let db = pb.b.xyz;
+    // E1 (doc §11d): pre-collision stiffness level/mass (m = 2^k). Read
+    // here, before either the exchange or shedding below can change them,
+    // since both the exchange math and NTC's size-scaling need the
+    // PRE-collision values.
+    let k_a = pa.c[3];
+    let k_b = pb.c[3];
+    let m_a = exp2(f32(k_a));
+    let m_b = exp2(f32(k_b));
 
-        // Relative VELOCITY (speed 1 unless RoughSphere+Free, where it
-        // bit-matches the old length(da - db)).
-        let g = length(da * pa.d.w - db * pb.d.w);
-        var accept_p: f32 = select(1.0, g / g_max, params.rate_kernel == 1u);
-        if (accept_p > 1.0) {
-            atomicAdd(&tallies[TALLY_ACCEPT_OVERFLOW_IDX], 1);
-        }
-        if (params.sigma_size_scaling != 0u) {
-            // sigma_pair / sigma_max = ((m1+m2)/2)^2 / size_max^2; sigma
-            // itself cancels (doc §11d).
-            let size_pair = (m_a + m_b) * 0.5;
-            accept_p = accept_p * (size_pair * size_pair) / (size_max * size_max);
-        }
-        if (rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 2u) >= accept_p) {
-            continue;
-        }
+    // Relative VELOCITY (speed 1 unless RoughSphere+Free, where it
+    // bit-matches the old length(da - db)).
+    let g = length(da * pa.d.w - db * pb.d.w);
+    var accept_p: f32 = select(1.0, g / g_max, params.rate_kernel == 1u);
+    if (accept_p > 1.0) {
+        atomicAdd(&tallies[TALLY_ACCEPT_OVERFLOW_IDX], 1);
+    }
+    if (params.sigma_size_scaling != 0u) {
+        // sigma_pair / sigma_max = ((m1+m2)/2)^2 / size_max^2; sigma
+        // itself cancels (doc §11d).
+        let size_pair = (m_a + m_b) * 0.5;
+        accept_p = accept_p * (size_pair * size_pair) / (size_max * size_max);
+    }
+    if (rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 2u) >= accept_p) {
+        return;
+    }
 
-        let a_emitted = (pa.c[0] & FLAG_KIND_EMITTED) != 0u;
-        let b_emitted = (pb.c[0] & FLAG_KIND_EMITTED) != 0u;
-        if (params.d5_far_zone_gate != 0u && !a_emitted && !b_emitted && !within) {
-            continue;
-        }
+    let a_emitted = (pa.c[0] & FLAG_KIND_EMITTED) != 0u;
+    let b_emitted = (pb.c[0] & FLAG_KIND_EMITTED) != 0u;
+    if (params.d5_far_zone_gate != 0u && !a_emitted && !b_emitted && !within) {
+        return;
+    }
 
-        if (params.exchange_rule == 2u) {
-            // Doc §13 RoughSphere: contact mechanics replace the exchange,
-            // the gear redirect, spin_transfer and shedding.
-            rough_collide(&pa, &pb, key_base, draw0);
-            atomicAdd(&tallies[TALLY_COLLISIONS_IDX], 1);
-            if (max(i, j) < RANK64) {
-                atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
-            }
-            let bounces_a = pa.c[1];
-            let bounces_b = pb.c[1];
-            pa.c[1] = bounces_a + 1u;
-            pb.c[1] = bounces_b + 1u;
-            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
-            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
-            photons[slot_a] = pa;
-            photons[slot_b] = pb;
-            continue;
-        }
-
-        let rel = da - db;
-        let rel_len = length(rel);
-        if (rel_len < 1e-6) {
-            continue;
-        }
-
-        // --- D6 exchange: SwapRenorm (legacy, |v|=c only) or RotateRelative
-        // (conserves |v|=c AND d1+d2 exactly; doc §4 D6). ---
-        var new_da: vec3<f32>;
-        var new_db: vec3<f32>;
-        var renorm_drift = 0.0;
-        if (params.exchange_rule == 1u) {
-            // RotateRelative, generalised for E1 stiffness (doc §4 D6, §11d).
-            // Glancing-biased scattering angle: same u-skew as
-            // sample_contact_normal (arp.pdf), mapped through the
-            // hard-sphere impact-parameter relation b=sin(chi/2)... doc's
-            // exact mapping: b = sqrt(u), chi = pi - 2*asin(b). Shared by
-            // both the equal-mass and generalised branches below.
-            let u0 = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
-            let one_minus_u0 = 1.0 - u0;
-            let u = 1.0 - one_minus_u0 * one_minus_u0 * one_minus_u0;
-            let b_impact = sqrt(clamp(u, 0.0, 1.0));
-            let chi_ang = PI - 2.0 * asin(clamp(b_impact, 0.0, 1.0));
-            let s = select(-1.0, 1.0, rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) < 0.5);
-
-            // Gate-only negative control (doc §11d gate 1): force the
-            // equal-mass branch even when k_a != k_b, to show the momentum
-            // check below is sensitive to using the wrong (mass-blind) rule.
-            let force_equal = params.debug_force_equal_mass_exchange != 0u;
-            if (k_a == k_b || force_equal) {
-                // Equal mass (includes the k=0 HEAD default: this branch is
-                // BIT-IDENTICAL to the pre-E1 code). V = mean, g = relative;
-                // |V|>0 case rotates g about V-hat (always perpendicular for
-                // equal-speed vectors); the exact head-on case (|V|~=0)
-                // rotates g about a random axis perpendicular to g instead.
-                let v_vec = (da + db) * 0.5;
-                let g_vec = da - db;
-                let v_len = length(v_vec);
-
-                var g_rot: vec3<f32>;
-                if (v_len > 1e-6) {
-                    let vhat = v_vec / v_len;
-                    let theta = s * chi_ang;
-                    g_rot = g_vec * cos(theta) + cross(vhat, g_vec) * sin(theta);
-                } else {
-                    let ghat = g_vec / max(length(g_vec), 1e-6);
-                    let helper = perp_helper(ghat);
-                    let t = normalize(cross(ghat, helper));
-                    let bperp = cross(ghat, t);
-                    let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 5u) * TAU;
-                    let raxis = t * cos(psi) + bperp * sin(psi);
-                    g_rot = g_vec * cos(chi_ang) + cross(raxis, g_vec) * sin(chi_ang);
-                }
-                let raw_da = v_vec + g_rot * 0.5;
-                let raw_db = v_vec - g_rot * 0.5;
-                new_da = normalize(raw_da); // defensive re-normalise: f32 error only
-                new_db = normalize(raw_db);
-                renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
-            } else {
-                // Unequal mass (E1, doc §11d): P = m1*d1 + m2*d2 is
-                // conserved. d1 lies on the cone d1.Phat = const, so rotating
-                // it about Phat by the SAME glancing-biased angle keeps
-                // |d1'|=1 and leaves |P - m1*d1'| invariant (= m2 exactly,
-                // mod f32), so d2' = (P - m1*d1')/m2 already has |d2'| ~= 1
-                // before the defensive renormalise below (doc's "assert
-                // pre-renorm |d2'| within 1e-4 of 1" -- checked via the
-                // existing renorm_drift/TALLY_MOM_DRIFT_SUM tally, which is
-                // exactly |raw_db|-1 here since raw_da is already unit-length
-                // to f32 rounding). |P|~=0 is only possible when m1=m2
-                // (excluded by this branch), so no separate near-zero case.
-                let p_vec = m_a * da + m_b * db;
-                let p_len = max(length(p_vec), 1e-6);
-                let phat = p_vec / p_len;
-                let theta = s * chi_ang;
-                let cos_t = cos(theta);
-                let sin_t = sin(theta);
-                // Full Rodrigues rotation (da is NOT generally perpendicular
-                // to phat, unlike the equal-mass g_vec/vhat pair above).
-                let raw_da = da * cos_t + cross(phat, da) * sin_t + phat * dot(phat, da) * (1.0 - cos_t);
-                new_da = normalize(raw_da);
-                let raw_db = (p_vec - m_a * new_da) / m_b;
-                new_db = normalize(raw_db);
-                renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
-            }
-        } else {
-            // SwapRenorm (legacy exchange rule, Phase-1-like): sample a
-            // grazing-biased contact normal, swap its component between the
-            // pair, renormalise both to c. Does not conserve d1+d2 exactly
-            // (measured ~0.30 photon-momenta/collision in G1) -- reported
-            // for comparison, not used for physics runs.
-            let rel_hat = rel / rel_len;
-            let nhat = sample_contact_normal(rel_hat, params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
-            let raw_da = da - dot(da, nhat) * nhat + dot(db, nhat) * nhat;
-            let raw_db = db - dot(db, nhat) * nhat + dot(da, nhat) * nhat;
-            let len_a = max(length(raw_da), 1e-6);
-            let len_b = max(length(raw_db), 1e-6);
-            new_da = raw_da / len_a;
-            new_db = raw_db / len_b;
-            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
-        }
-
-        let exchange_drift = length((new_da + new_db) - (da + db));
-        atomicAdd(&tallies[TALLY_MOM_DRIFT_SUM_IDX], i32(renorm_drift * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_EXCHANGE_DRIFT_SUM_IDX], i32(exchange_drift * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_MOM_DRIFT_COUNT_IDX], 1); // TALLY_MOM_DRIFT_COUNT (shared denominator)
+    if (params.exchange_rule == 2u) {
+        // Doc §13 RoughSphere: contact mechanics replace the exchange,
+        // the gear redirect, spin_transfer and shedding.
+        rough_collide(&pa, &pb, key_base, draw0);
         atomicAdd(&tallies[TALLY_COLLISIONS_IDX], 1);
         if (max(i, j) < RANK64) {
             atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
         }
+        let bounces_a = pa.c[1];
+        let bounces_b = pb.c[1];
+        pa.c[1] = bounces_a + 1u;
+        pb.c[1] = bounces_b + 1u;
+        pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
+        pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
+        photons[slot_a] = pa;
+        photons[slot_b] = pb;
+        return;
+    }
 
-        // E1 (doc §11d): per-photon deflection angle from the exchange step
-        // alone (before the gear redirect below can rotate it further),
-        // bucketed by that photon's OWN pre-collision stiffness level --
-        // e1_heavy_deflects_less compares these buckets directly. Tallied
-        // for both exchange rules (SwapRenorm collisions land in bucket 0
-        // since unshed/ambient photons stay at k=0).
-        let defl_a = acos(clamp(dot(da, new_da), -1.0, 1.0));
-        let defl_b = acos(clamp(dot(db, new_db), -1.0, 1.0));
-        let bucket_a = min(k_a, 7u);
-        let bucket_b = min(k_b, 7u);
-        atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_a], i32(defl_a * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_a], i32(defl_a * defl_a * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_a], 1);
-        atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_b], i32(defl_b * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_b], i32(defl_b * defl_b * TALLY_SCALE));
-        atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_b], 1);
+    let rel = da - db;
+    let rel_len = length(rel);
+    if (rel_len < 1e-6) {
+        return;
+    }
 
-        let chi_a = chi_of(pa.c[0]);
-        let chi_b = chi_of(pb.c[0]);
-        var mesh = chi_a * chi_b;
-        var dir_sign = 1.0;
-        if (params.mesh_mode == 1u) {
-            dir_sign = sign(dot(da, db));
-            if (dir_sign == 0.0) {
-                dir_sign = 1.0;
+    // --- D6 exchange: SwapRenorm (legacy, |v|=c only) or RotateRelative
+    // (conserves |v|=c AND d1+d2 exactly; doc §4 D6). ---
+    var new_da: vec3<f32>;
+    var new_db: vec3<f32>;
+    var renorm_drift = 0.0;
+    if (params.exchange_rule == 1u) {
+        // RotateRelative, generalised for E1 stiffness (doc §4 D6, §11d).
+        // Glancing-biased scattering angle: same u-skew as
+        // sample_contact_normal (arp.pdf), mapped through the
+        // hard-sphere impact-parameter relation b=sin(chi/2)... doc's
+        // exact mapping: b = sqrt(u), chi = pi - 2*asin(b). Shared by
+        // both the equal-mass and generalised branches below.
+        let u0 = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+        let one_minus_u0 = 1.0 - u0;
+        let u = 1.0 - one_minus_u0 * one_minus_u0 * one_minus_u0;
+        let b_impact = sqrt(clamp(u, 0.0, 1.0));
+        let chi_ang = PI - 2.0 * asin(clamp(b_impact, 0.0, 1.0));
+        let s = select(-1.0, 1.0, rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 4u) < 0.5);
+
+        // Gate-only negative control (doc §11d gate 1): force the
+        // equal-mass branch even when k_a != k_b, to show the momentum
+        // check below is sensitive to using the wrong (mass-blind) rule.
+        let force_equal = params.debug_force_equal_mass_exchange != 0u;
+        if (k_a == k_b || force_equal) {
+            // Equal mass (includes the k=0 HEAD default: this branch is
+            // BIT-IDENTICAL to the pre-E1 code). V = mean, g = relative;
+            // |V|>0 case rotates g about V-hat (always perpendicular for
+            // equal-speed vectors); the exact head-on case (|V|~=0)
+            // rotates g about a random axis perpendicular to g instead.
+            let v_vec = (da + db) * 0.5;
+            let g_vec = da - db;
+            let v_len = length(v_vec);
+
+            var g_rot: vec3<f32>;
+            if (v_len > 1e-6) {
+                let vhat = v_vec / v_len;
+                let theta = s * chi_ang;
+                g_rot = g_vec * cos(theta) + cross(vhat, g_vec) * sin(theta);
+            } else {
+                let ghat = g_vec / max(length(g_vec), 1e-6);
+                let helper = perp_helper(ghat);
+                let t = normalize(cross(ghat, helper));
+                let bperp = cross(ghat, t);
+                let psi = rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 5u) * TAU;
+                let raxis = t * cos(psi) + bperp * sin(psi);
+                g_rot = g_vec * cos(chi_ang) + cross(raxis, g_vec) * sin(chi_ang);
             }
-            mesh = mesh * dir_sign;
+            let raw_da = v_vec + g_rot * 0.5;
+            let raw_db = v_vec - g_rot * 0.5;
+            new_da = normalize(raw_da); // defensive re-normalise: f32 error only
+            new_db = normalize(raw_db);
+            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
+        } else {
+            // Unequal mass (E1, doc §11d): P = m1*d1 + m2*d2 is
+            // conserved. d1 lies on the cone d1.Phat = const, so rotating
+            // it about Phat by the SAME glancing-biased angle keeps
+            // |d1'|=1 and leaves |P - m1*d1'| invariant (= m2 exactly,
+            // mod f32), so d2' = (P - m1*d1')/m2 already has |d2'| ~= 1
+            // before the defensive renormalise below (doc's "assert
+            // pre-renorm |d2'| within 1e-4 of 1" -- checked via the
+            // existing renorm_drift/TALLY_MOM_DRIFT_SUM tally, which is
+            // exactly |raw_db|-1 here since raw_da is already unit-length
+            // to f32 rounding). |P|~=0 is only possible when m1=m2
+            // (excluded by this branch), so no separate near-zero case.
+            let p_vec = m_a * da + m_b * db;
+            let p_len = max(length(p_vec), 1e-6);
+            let phat = p_vec / p_len;
+            let theta = s * chi_ang;
+            let cos_t = cos(theta);
+            let sin_t = sin(theta);
+            // Full Rodrigues rotation (da is NOT generally perpendicular
+            // to phat, unlike the equal-mass g_vec/vhat pair above).
+            let raw_da = da * cos_t + cross(phat, da) * sin_t + phat * dot(phat, da) * (1.0 - cos_t);
+            new_da = normalize(raw_da);
+            let raw_db = (p_vec - m_a * new_da) / m_b;
+            new_db = normalize(raw_db);
+            renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
         }
-        let spin_delta_a = params.spin_transfer * chi_b * dir_sign;
-        let spin_delta_b = params.spin_transfer * chi_a * dir_sign;
+    } else {
+        // SwapRenorm (legacy exchange rule, Phase-1-like): sample a
+        // grazing-biased contact normal, swap its component between the
+        // pair, renormalise both to c. Does not conserve d1+d2 exactly
+        // (measured ~0.30 photon-momenta/collision in G1) -- reported
+        // for comparison, not used for physics runs.
+        let rel_hat = rel / rel_len;
+        let nhat = sample_contact_normal(rel_hat, params.seed_hi, params.seed_lo, key_base, draw0 + 3u);
+        let raw_da = da - dot(da, nhat) * nhat + dot(db, nhat) * nhat;
+        let raw_db = db - dot(db, nhat) * nhat + dot(da, nhat) * nhat;
+        let len_a = max(length(raw_da), 1e-6);
+        let len_b = max(length(raw_db), 1e-6);
+        new_da = raw_da / len_a;
+        new_db = raw_db / len_b;
+        renorm_drift = length(raw_da - new_da) + length(raw_db - new_db);
+    }
 
-        let pre_redirect_sum = new_da + new_db;
-        if (params.cancel_redirect > 0.0 && params.n_bodies > 0u) {
-            let pos_a = pa.a.xyz - body_center;
-            let pos_b = pb.a.xyz - body_center;
-            if (mesh < 0.0) {
-                let pole_a = sign(dot(pos_a, axis)) * axis;
-                let blended_a = mix(new_da, pole_a, params.cancel_redirect);
+    let exchange_drift = length((new_da + new_db) - (da + db));
+    atomicAdd(&tallies[TALLY_MOM_DRIFT_SUM_IDX], i32(renorm_drift * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_EXCHANGE_DRIFT_SUM_IDX], i32(exchange_drift * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_MOM_DRIFT_COUNT_IDX], 1); // TALLY_MOM_DRIFT_COUNT (shared denominator)
+    atomicAdd(&tallies[TALLY_COLLISIONS_IDX], 1);
+    if (max(i, j) < RANK64) {
+        atomicAdd(&tallies[TALLY_LOW_RANK64_IDX], 1);
+    }
+
+    // E1 (doc §11d): per-photon deflection angle from the exchange step
+    // alone (before the gear redirect below can rotate it further),
+    // bucketed by that photon's OWN pre-collision stiffness level --
+    // e1_heavy_deflects_less compares these buckets directly. Tallied
+    // for both exchange rules (SwapRenorm collisions land in bucket 0
+    // since unshed/ambient photons stay at k=0).
+    let defl_a = acos(clamp(dot(da, new_da), -1.0, 1.0));
+    let defl_b = acos(clamp(dot(db, new_db), -1.0, 1.0));
+    let bucket_a = min(k_a, 7u);
+    let bucket_b = min(k_b, 7u);
+    atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_a], i32(defl_a * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_a], i32(defl_a * defl_a * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_a], 1);
+    atomicAdd(&tallies[TALLY_DEFLECT_SUM_IDX + bucket_b], i32(defl_b * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_DEFLECT_SUMSQ_IDX + bucket_b], i32(defl_b * defl_b * TALLY_SCALE));
+    atomicAdd(&tallies[TALLY_DEFLECT_COUNT_IDX + bucket_b], 1);
+
+    let chi_a = chi_of(pa.c[0]);
+    let chi_b = chi_of(pb.c[0]);
+    var mesh = chi_a * chi_b;
+    var dir_sign = 1.0;
+    if (params.mesh_mode == 1u) {
+        dir_sign = sign(dot(da, db));
+        if (dir_sign == 0.0) {
+            dir_sign = 1.0;
+        }
+        mesh = mesh * dir_sign;
+    }
+    let spin_delta_a = params.spin_transfer * chi_b * dir_sign;
+    let spin_delta_b = params.spin_transfer * chi_a * dir_sign;
+
+    let pre_redirect_sum = new_da + new_db;
+    if (params.cancel_redirect > 0.0 && params.n_bodies > 0u) {
+        let pos_a = pa.a.xyz - body_center;
+        let pos_b = pb.a.xyz - body_center;
+        if (mesh < 0.0) {
+            let pole_a = sign(dot(pos_a, axis)) * axis;
+            let blended_a = mix(new_da, pole_a, params.cancel_redirect);
+            if (dot(blended_a, blended_a) > 1e-10) {
+                new_da = normalize(blended_a);
+            }
+            let pole_b = sign(dot(pos_b, axis)) * axis;
+            let blended_b = mix(new_db, pole_b, params.cancel_redirect);
+            if (dot(blended_b, blended_b) > 1e-10) {
+                new_db = normalize(blended_b);
+            }
+        } else if (mesh > 0.0) {
+            let flat_a = new_da - dot(new_da, axis) * axis;
+            if (dot(flat_a, flat_a) > 1e-9) {
+                let blended_a = mix(new_da, normalize(flat_a), params.cancel_redirect);
                 if (dot(blended_a, blended_a) > 1e-10) {
                     new_da = normalize(blended_a);
                 }
-                let pole_b = sign(dot(pos_b, axis)) * axis;
-                let blended_b = mix(new_db, pole_b, params.cancel_redirect);
+            }
+            let flat_b = new_db - dot(new_db, axis) * axis;
+            if (dot(flat_b, flat_b) > 1e-9) {
+                let blended_b = mix(new_db, normalize(flat_b), params.cancel_redirect);
                 if (dot(blended_b, blended_b) > 1e-10) {
                     new_db = normalize(blended_b);
                 }
-            } else if (mesh > 0.0) {
-                let flat_a = new_da - dot(new_da, axis) * axis;
-                if (dot(flat_a, flat_a) > 1e-9) {
-                    let blended_a = mix(new_da, normalize(flat_a), params.cancel_redirect);
-                    if (dot(blended_a, blended_a) > 1e-10) {
-                        new_da = normalize(blended_a);
-                    }
-                }
-                let flat_b = new_db - dot(new_db, axis) * axis;
-                if (dot(flat_b, flat_b) > 1e-9) {
-                    let blended_b = mix(new_db, normalize(flat_b), params.cancel_redirect);
-                    if (dot(blended_b, blended_b) > 1e-10) {
-                        new_db = normalize(blended_b);
-                    }
-                }
             }
         }
-        let redirect_drift = length((new_da + new_db) - pre_redirect_sum);
-        atomicAdd(&tallies[TALLY_REDIRECT_DRIFT_SUM_IDX], i32(redirect_drift * TALLY_SCALE));
-
-        let bounces_a = pa.c[1];
-        let bounces_b = pb.c[1];
-        let cap = params.bounce_cap;
-        if (cap == 0u || bounces_a < cap) {
-            pa.b = vec4<f32>(new_da, clamp(pa.b.w + spin_delta_a, -2.0, 2.0));
-            pa.c[1] = bounces_a + 1u;
-            pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
-        }
-        if (cap == 0u || bounces_b < cap) {
-            pb.b = vec4<f32>(new_db, clamp(pb.b.w + spin_delta_b, -2.0, 2.0));
-            pb.c[1] = bounces_b + 1u;
-            pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
-        }
-
-        // E1 shedding (doc §11d, Transfer mode): move one stacked level from
-        // the higher-k photon to the lower-k one, AFTER the exchange (which
-        // used the pre-collision k_a/k_b/m_a/m_b above) -- conserves the
-        // total stacked-level count across the box. Equal k: no change.
-        // Independent of the bounce cap (k is a stiffness bookkeeping field,
-        // not a ricochet-limited direction update).
-        if (params.stiffness_shed == 1u) {
-            if (k_a > k_b) {
-                pa.c[3] = k_a - 1u;
-                pb.c[3] = k_b + 1u;
-            } else if (k_b > k_a) {
-                pb.c[3] = k_b - 1u;
-                pa.c[3] = k_a + 1u;
-            }
-        }
-
-        photons[slot_a] = pa;
-        photons[slot_b] = pb;
     }
+    let redirect_drift = length((new_da + new_db) - pre_redirect_sum);
+    atomicAdd(&tallies[TALLY_REDIRECT_DRIFT_SUM_IDX], i32(redirect_drift * TALLY_SCALE));
+
+    let bounces_a = pa.c[1];
+    let bounces_b = pb.c[1];
+    let cap = params.bounce_cap;
+    if (cap == 0u || bounces_a < cap) {
+        pa.b = vec4<f32>(new_da, clamp(pa.b.w + spin_delta_a, -2.0, 2.0));
+        pa.c[1] = bounces_a + 1u;
+        pa.c[0] = pa.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
+    }
+    if (cap == 0u || bounces_b < cap) {
+        pb.b = vec4<f32>(new_db, clamp(pb.b.w + spin_delta_b, -2.0, 2.0));
+        pb.c[1] = bounces_b + 1u;
+        pb.c[0] = pb.c[0] | FLAG_COLLIDED_SINCE_CROSS | FLAG_PP_PASSAGE;
+    }
+
+    // E1 shedding (doc §11d, Transfer mode): move one stacked level from
+    // the higher-k photon to the lower-k one, AFTER the exchange (which
+    // used the pre-collision k_a/k_b/m_a/m_b above) -- conserves the
+    // total stacked-level count across the box. Equal k: no change.
+    // Independent of the bounce cap (k is a stiffness bookkeeping field,
+    // not a ricochet-limited direction update).
+    if (params.stiffness_shed == 1u) {
+        if (k_a > k_b) {
+            pa.c[3] = k_a - 1u;
+            pb.c[3] = k_b + 1u;
+        } else if (k_b > k_a) {
+            pb.c[3] = k_b - 1u;
+            pa.c[3] = k_a + 1u;
+        }
+    }
+
+    photons[slot_a] = pa;
+    photons[slot_b] = pb;
 }

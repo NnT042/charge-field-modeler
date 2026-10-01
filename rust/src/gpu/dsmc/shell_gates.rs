@@ -1640,3 +1640,43 @@ fn report_stack() {
         println!("   loop gain per body ({} vs {} envelope captures): {}", rates[0].0, rates[1].0, line.join(", "));
     }
 }
+
+/// Doc §15.13 gate: in cells crowded past PAR_MIN_CANDIDATES the collide
+/// kernel runs NTC candidates in parallel rounds of disjoint pairs. The
+/// collision rate must still match n*sigma*<g> (<g> = 4/3 for isotropic
+/// unit speeds), and the dense path must actually be taken.
+#[test]
+fn dense_cells_parallel_collision_rate() {
+    let half: f64 = 2.0;
+    let per_cell: u32 = 1200;
+    let n: u32 = per_cell * 64; // h = 1: 64 unit cells
+    let n_density = n as f64 / (2.0 * half).powi(3);
+    let sigma = 0.5; // ~14k candidates per cell per step at dt 0.02
+    let mut config = shell_config(Boundary::PeriodicBox { half_extent: half }, [0.0; 4], 0.0, twist_rough(false, SpeedMode::PinnedC), sigma, 0.0, 0.5, n + 16, 0xDE5E);
+    config.body_model = BodyModel::Ball;
+    config.bodies.clear();
+    config.shell_signs.clear();
+    config.h = 1.0;
+    let ctx = GpuContext::new().expect("GPU");
+    let mut engine = DsmcEngine::new(&ctx, config);
+    let mut rng = Lcg(0xDE5E);
+    let photons: Vec<GpuPhoton> = (0..n)
+        .map(|id| {
+            let pos = DVec3::new(rng.f(), rng.f(), rng.f()) * (2.0 * half) - DVec3::splat(half);
+            let d = rng.unit();
+            let chi = if rng.f() < 0.5 { 1.0 } else { -1.0 };
+            make_photon(id, pos, d, d * chi, chi)
+        })
+        .collect();
+    engine.write_photons_for_test(&ctx, &photons);
+    let mut t = Totals::default();
+    let steps = 20;
+    for _ in 0..steps {
+        engine.step_collide(&ctx, &mut t);
+    }
+    let rate = 2.0 * t.collisions as f64 / (n as f64 * steps as f64 * engine.config.dt);
+    let expect = n_density * sigma * 4.0 / 3.0;
+    println!("dense cells: parallel cell-steps {} of {}, collision rate {rate:.2} vs expected {expect:.2}", t.par_cells, 64 * steps, );
+    assert!(t.par_cells as u32 > 60 * steps, "dense path not taken ({})", t.par_cells);
+    assert!((rate / expect - 1.0).abs() < 0.03, "dense-cell collision rate distorted");
+}

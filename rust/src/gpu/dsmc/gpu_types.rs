@@ -495,7 +495,10 @@ pub const TALLY_CAPT_LAT: usize = 1951;
 /// Doc §15.11: envelope captures per body, len 4.
 pub const TALLY_ENV_CAPT: usize = 2311;
 
-pub const TALLY_LEN: usize = 2315;
+/// Doc §15.13: cell-steps whose NTC candidates ran in parallel rounds.
+pub const TALLY_PAR_CELLS: usize = 2315;
+
+pub const TALLY_LEN: usize = 2316;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
