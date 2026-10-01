@@ -1487,6 +1487,8 @@ fn report_intake() {
         let hold: f64 = f.get(2).map(|h| h.parse().unwrap()).unwrap_or(0.0);
         let mut config = two_body_config(&[DVec3::ZERO], &[class.as_str()], n_a, lambda, cap, seed, dt);
         config.rough = RoughParams { intake, maze, hold_time: hold, ..config.rough };
+        // CFM_C_H: DSMC cell size (0.25); keep it at or below lambda.
+        config.h = env("CFM_C_H", "0.25").parse().unwrap();
         let mut engine = DsmcEngine::new(&ctx, config);
         for b in engine.shell_bodies.iter_mut() {
             b.depth = depth;
@@ -1508,7 +1510,8 @@ fn report_intake() {
         let re = bands(180);
         let exits = t.sh_exits[0].max(1) as f64;
         println!(
-            "--- {run}: captures/step {:.1} (envelope {:.1}, tank releases {:.1}, fresh {:.3}, recaptured {:.3}) | held {} | steady {} ---",
+            "--- {run} (h {}): captures/step {:.1} (envelope {:.1}, tank releases {:.1}, fresh {:.3}, recaptured {:.3}) | held {} | steady {} ---",
+            engine.config.h,
             caps as f64 / avg as f64,
             t.env_capt[0] as f64 / avg as f64,
             t.hold[0][1] as f64 / avg as f64,
@@ -1551,5 +1554,89 @@ fn report_intake() {
             }
         }
         println!("{line}");
+    }
+}
+
+/// Report (doc §15.12): a short stack of up to 4 maze bodies in a row, along
+/// the poles (axial) or in each other's equatorial plane (side). The loop
+/// test of §15.11b per body: envelope captures with the maze disc against
+/// the isotropic-emission control, under polar-only intake, so a closed
+/// emission -> steering -> intake loop shows as more captures with the
+/// maze. Also what fed each body (never captured / itself / others).
+/// Env: CFM_S_CLASSES ("pnpn"), CFM_S_GEOM (axial | side), CFM_S_SEP (2.2),
+/// CFM_S_INTAKE (polar0.6), CFM_S_EMIT ("swept,iso"), CFM_S_HOLD (0), plus
+/// CFM_C_LAMBDA / NA / DEPTH / WARMUP / AVG / SEED / CAP.
+#[test]
+#[ignore]
+fn report_stack() {
+    use super::config::Intake;
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let classes_s = env("CFM_S_CLASSES", "pnpn");
+    let classes: Vec<&str> = classes_s.chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect();
+    let geom = env("CFM_S_GEOM", "axial");
+    let sep: f64 = env("CFM_S_SEP", "2.2").parse().unwrap();
+    let intake_s = env("CFM_S_INTAKE", "polar0.6");
+    let intake = if let Some(p) = intake_s.strip_prefix("env") {
+        Intake::Envelope { p: p.parse().unwrap() }
+    } else if let Some(a) = intake_s.strip_prefix("polar") {
+        Intake::Polar { aperture: a.parse().unwrap() }
+    } else {
+        Intake::Ball
+    };
+    let hold: f64 = env("CFM_S_HOLD", "0").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.3").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "4000").parse().unwrap();
+    let depth: usize = env("CFM_C_DEPTH", "0").parse().unwrap();
+    let warmup: u32 = env("CFM_C_WARMUP", "300").parse().unwrap();
+    let avg: u32 = env("CFM_C_AVG", "1200").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let cap: u32 = env("CFM_C_CAP", "9000000").parse().unwrap();
+    let e = if geom == "side" { DVec3::X } else { DVec3::Z };
+    let n = classes.len();
+    let centers: Vec<DVec3> = (0..n).map(|i| e * (i as f64 - (n as f64 - 1.0) / 2.0) * sep).collect();
+    println!("=== stack {classes_s} {geom}, sep {sep}, intake {intake:?}, hold {hold}, lambda {lambda}, n_a {n_a}, depth {depth}, warmup {warmup}, avg {avg} ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let mut rates: Vec<(String, Vec<f64>)> = Vec::new();
+    for emit in env("CFM_S_EMIT", "swept,iso").split(',') {
+        let maze = if emit == "iso" { MazeMode::Isotropic } else { MazeMode::Swept };
+        let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, 0.05);
+        config.rough = RoughParams { intake, maze, hold_time: hold, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for (b, cl) in engine.shell_bodies.iter_mut().zip(&classes) {
+            b.depth = depth;
+            if *cl == "neutron" {
+                b.inner_signs = NEUTRON_INNER_SIGNS;
+                b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+        let rep = engine.run_steady(&ctx, warmup, avg, 200);
+        let t = &rep.totals;
+        println!("--- emission {emit}, steady {} ---", rep.steady_ok);
+        let mut r = Vec::new();
+        for b in 0..n {
+            let caps: i64 = t.feed[b].iter().sum();
+            let own = t.feed[b][1 + b];
+            let others: i64 = (0..n).filter(|&o| o != b).map(|o| t.feed[b][1 + o]).sum();
+            let ex = t.sh_exits[b].max(1) as f64;
+            println!(
+                "   body {b} {:<7} at {:+.2}: envelope captures/step {:.1} (all {:.1}) | fed by never-captured {:.3} itself {:.3} others {:.3} | contacted-exit p/m/e {:.3}/{:.3}/{:.3}",
+                classes[b],
+                centers[b].dot(e),
+                t.env_capt[b] as f64 / avg as f64,
+                caps as f64 / avg as f64,
+                t.feed[b][0] as f64 / caps.max(1) as f64,
+                own as f64 / caps.max(1) as f64,
+                others as f64 / caps.max(1) as f64,
+                t.sh_exit_band[b][0] as f64 / ex,
+                t.sh_exit_band[b][1] as f64 / ex,
+                t.sh_exit_band[b][2] as f64 / ex
+            );
+            r.push(t.env_capt[b] as f64 / avg as f64);
+        }
+        rates.push((emit.to_string(), r));
+    }
+    if rates.len() == 2 {
+        let line: Vec<String> = (0..n).map(|b| format!("{} {:+.1}%", classes[b], 100.0 * (rates[0].1[b] / rates[1].1[b] - 1.0))).collect();
+        println!("   loop gain per body ({} vs {} envelope captures): {}", rates[0].0, rates[1].0, line.join(", "));
     }
 }

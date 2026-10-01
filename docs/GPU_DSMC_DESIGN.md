@@ -1928,6 +1928,80 @@ of 10 is 200 steps.
 - The tank's real use is the capacity / held-charge targets (EMC saturation,
   15 m_e held). It is not a loop amplifier.
 
+### 15.12 Short stacks: does lining up nucleons raise the loop gain? (2026-09-30)
+
+**Setup:**
+- `report_stack`: 4 maze bodies in a row, separation 2.2 (envelopes 0.2
+  apart).
+- Axial (along the poles) or side (equatorial plane), λ = 0.3, polar-only
+  intake (aperture 0.6), depth 0, no tank.
+- Loop gain per body = envelope captures with the maze disc vs the
+  isotropic-emission control (single proton: +4.7%, §15.11b).
+
+| stack | bodies (in row order) | gain per body |
+|---|---|---|
+| p-n-p-n axial | p (end), n, **p (between two n)**, n (end) | +4.5%, −11.6%, **+15.2%**, −9.3% |
+| p-p-p-p axial | | +0.4%, −3.0%, −3.3%, +1.2% |
+| p-n-p-n side | | +5.8%, −7.1%, +6.1%, −7.5% |
+| p-p-p-p side | | +4.5%, +3.6%, +3.3%, +4.7% |
+
+- **Alternating p-n axially is the one arrangement that amplifies the
+  loop.** The proton between two neutrons triples its single-body gain
+  (+15%), and 20% of its intake comes from neighbours. The neutron jets
+  pour into its polar intake: Mathis's nuclear axis with neutrons feeding
+  protons.
+- **Protons pole-to-pole shade each other** (−3%). Side-by-side rows behave
+  like isolated bodies.
+- **Neutrons lose intake (−7% to −12%) under polar-only intake**, because
+  their own polar jets block their polar intake. This is the same tension as
+  §15.11: our neutron releases charge where Mathis's neutron takes it in.
+- Even the best case stays far below a self-sustaining gain (~1).
+
+### 15.13 Denser local field: the recycling loop starts to self-confine (2026-09-30)
+
+**User's lead:** the local charge field is probably far denser than we have
+run.
+
+**Mathis on density:**
+- An average charge-field density of 1.54e-29 kg/m³, about 5.6e7 photons/m³
+  (photon3.pdf). This is a universal average.
+- Heat = photon density (heat.html), with no room-temperature figure.
+- At proton scale the field is "quite full" (fine3.pdf).
+- Converting to a proton-scale mean free path hinges on the photon's
+  effective size, which his figures leave open by ~17 orders of magnitude:
+  the 1e-24 m radius vs the c²-scaled field size. So λ stays a free
+  parameter.
+- The usable target is that a proton's near field is dominated by its own
+  emission. The measured proxy is the **recaptured share** r of intake: each
+  photon recycles 1/(1 − r) times on average before escaping.
+
+**Run:** single proton, envelope intake p = 1, maze disc vs isotropic control.
+Finer cells (h = 0.1) and n_a = 8000 (`CFM_C_H` added to `report_intake`).
+
+| λ | captures/step, disc / control | recaptured share, disc / control | recycles per photon, disc | fresh polar intake, disc ÷ control |
+|---|---|---|---|---|
+| 0.3 | 951 / 877 | 0.298 / 0.266 | 1.42 | 1.28 |
+| 0.15 | **957 / 776** | **0.533 / 0.440** | **2.14** | 1.34 |
+
+- **The disc now holds its charge better than isotropic emission.**
+  - At λ = 0.15 the disc body recycles each photon 2.1 times on average,
+    against 1.8 for the control.
+  - It takes in 23% more in total, because its core ball catches back about
+    200 of its own emitted photons per step (21 for the control).
+  - The concentrated disc scatters more of its outflow back onto the core.
+  - This is the first sign of the self-confinement Mathis describes: trapped
+    photons held in by the boundary (fine3.pdf).
+- The recaptured share rose 0.03 → 0.09 → 0.27/0.30 → 0.53 as λ went 3 → 1
+  → 0.3 → 0.15. A near field dominated by emission (r → 1) looks reachable at
+  higher density.
+- Polar steering holds at about 1.3× the control. The h = 0.1 run gave 1.28
+  vs 1.33 at h = 0.25, so it is resolution-stable.
+- **λ = 0.1 did not finish.** At h = 0.1 the cells at the core overflow
+  MAX_CELL already at λ = 0.15 (warned once), and at 0.1 the collide pass
+  stalled for over an hour. It was stopped.
+- **Going denser needs a better grid first:** finer cells near the body, or
+  a cap on per-cell candidate counts.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
