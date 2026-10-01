@@ -2215,6 +2215,11 @@ is a nucleus that holds on its own forces.
   first p–n axial runs used a domain that grew with separation; the solo
   baseline replaced them.
 
+**Superseded by §15.17:** every number in this section was measured
+600 steps (12 time units) after a cold start. The neutron's self-force takes
+~150–200 time units to settle (−15000 → −5000 at λ = 0.1), so these are
+transient values. The settled curve is in §15.17.
+
 **Self-forces of isolated bodies (the problem):**
 - The neutron pushes itself toward its south pole at **0.64 photon-momenta
   per capture**. Its through-channel takes in at the south and emits 80% out
@@ -2251,6 +2256,94 @@ other body; noise about ±50):
   - the neutron's interaction has not yet started to fall off at separation
     4 (the domain can't go further);
   - envelopes overlapping below separation 2 are untested.
+
+### 15.17 A free deuteron holds together (2026-10-01)
+
+**User decision (b):** only interaction forces move bodies. Each body's
+isolated self-force, measured in the same field and domain, is subtracted.
+Subtracting the pair's mean instead (session 35) would leave most of the
+neutron's self-force (15–30× the proton's) as a fake relative force.
+
+**Engine:**
+- `DsmcEngine::set_body_centers(ctx, centers)` translates bodies between
+  steps. It rewrites the body buffer and the shell kinematics the ball
+  keyframes come from, and recomputes the nearest-body map after a move of
+  more than h/4. The escape sphere stays at its construction centre
+  (`domain_ctr`; it used to follow the body centroid every step).
+- Orientation and level phases are untouched. The body's own velocity is not
+  added to its ball (≪ c).
+- **Gate `moving_body_follows`:** after a 1.0 shift the ball orbits the new
+  centre, the capture rate is unchanged (278.8 → 279.9 per step) and the live
+  count is unchanged (domain fixed).
+
+**Report `report_deuteron`:**
+1. Self-force per class, body alone at the centre, after a warm-up of
+   `CFM_D_CALWARMT` = 250 then `CFM_D_CALT` = 150 time units.
+2. The pair held for `CFM_D_FIXT` = 250.
+3. Then free. Per step J_i = dp_i − F_self,i dt; v += J/M − damp·v dt.
+   Translation is along the pair axis only.
+4. `CFM_D_FIXCOM` = 1 (default) evolves only the separation and keeps the
+   centre fixed. The open forces push the pair as a whole; letting it drift
+   took the neutron toward the domain edge, where its self-force differs
+   from the calibrated value.
+- `report_pair_force` gained `CFM_F_BLOCK` (force trace by block, warm-up
+  included).
+
+**Field settling (what invalidated §15.16):**
+- The isolated neutron's force along the axis relaxes from −15000 to a
+  plateau.
+  - At λ = 0.1 (two seeds, nearly identical): about −5000 by t ≈ 200.
+  - At λ = 0.3: −8700 by t ≈ 180.
+  - The time scale is about the same in time units at both densities, so it
+    is not simple diffusion. Most likely the photon population's speed and
+    spin mix relaxes as maze-processed photons replace the ambient. Open.
+- The block-to-block wiggles (about ±10%, period ~30) repeat exactly across
+  seeds. They are deterministic modulation from the body's rotation phases,
+  not noise, so force averages should span whole periods.
+- Settled self-forces at λ = 0.3, R_D = 4.5, φ = 2/3: proton −293, neutron
+  −8700 per unit time (0.015 and 0.38 per capture), both toward the south
+  pole. Repeat runs agree to 0.4%.
+
+**Settled static p–n curve** (λ = 0.3, h = 0.1, n_a = 8000, dt = 0.06,
+warm-up 250, average 150; proton at −z, neutron at +z; interaction = pair −
+self-force, toward the other body):
+
+| sep | proton | neutron | closing (sum) |
+|---|---|---|---|
+| 2.0 | −1095 | −2034 | **−3129** |
+| 2.5 | −1356 | −1092 | **−2448** |
+| 3.0 | −559 | +467 | **−92** |
+| 4.0 | −152 (solo here) | +2234 (solo here) | **+2082** |
+
+- Repulsive inside about 3.0 and attractive outside: a stable standoff.
+- At separation 4 the solo-at-position baselines match the centre ones
+  (neutron 8691 vs 8689), so there is no edge effect. The pull has not begun
+  to decay by 4; a larger domain is needed to see the far tail.
+- The proton is mildly repelled at every separation. The binding is carried
+  by the neutron being drawn toward the proton's pole.
+
+**Free deuteron** (same field, M = 7×10⁶, no damping, start at separation
+3.6, 600 time units):
+- **A clean bound oscillation about separation ≈ 3.05:**
+  3.60 → 2.50 → 3.61 → 2.52 → 3.64.
+  - Period ≈ 270 time units, consistent with the static stiffness:
+    ω² = k/(M/2), k ≈ 3–5k per unit.
+  - The amplitude holds with no damping (range 2.494–3.643).
+  - The pair neither collapses nor separates.
+- An earlier run at λ = 0.1 with M = 10⁶ (fast motion, transient
+  self-forces) bounced at 2.4 and flew apart. The field could not follow the
+  bodies, and the self-force subtraction was 2–3× off.
+
+**Meaning and limits:**
+- A proton–neutron pair holds together on photon traffic alone, with a
+  standoff about 1.5 body radii across (envelope radius 1). Nothing in the
+  model was tuned for binding.
+- M is a free calibration knob. It sets the period, not whether the pair
+  binds.
+- The bodies are pole-on and axial with fixed orientation (no torque yet).
+  That is one sign state at depth 0, one seed, λ = 0.3.
+- There is no capacity limit yet.
+- The neutron's jet crowds core cells (≈ 700 MAX_CELL overflow warnings).
 
 ## 12. Out of scope for this step
 

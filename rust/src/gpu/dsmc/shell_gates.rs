@@ -1474,6 +1474,46 @@ fn maze_eject_c_bounds_speed() {
     assert!(max_by[1] > max_by[0], "Relative should heat past EjectC ({} vs {})", max_by[1], max_by[0]);
 }
 
+/// Doc §15.17 gate: `set_body_centers` moves a body without moving the
+/// domain. After a 1.0 shift the ball keyframes sit at the new centre, the
+/// body keeps capturing at its old rate (uniform ambient), and the live
+/// photon count (set by the fixed escape sphere) is unchanged.
+#[test]
+fn moving_body_follows() {
+    use super::config::Intake;
+    let ctx = GpuContext::new().expect("GPU");
+    let mut config = two_body_config(&[DVec3::ZERO], &["proton"], 2000.0, 1.0, 2_000_000, 0x40BE, 0.05);
+    config.boundary = Boundary::SphereEscape { r_d: 4.0 };
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, ..config.rough };
+    let mut engine = DsmcEngine::new(&ctx, config);
+    for _ in 0..150 {
+        engine.step_flux(&ctx);
+    }
+    let rate = |engine: &mut DsmcEngine| -> (f64, u32) {
+        let mut t = Totals::default();
+        for _ in 0..200 {
+            t.add(&engine.step_flux(&ctx));
+        }
+        (t.env_capt[0] as f64 / 200.0, engine.n_live)
+    };
+    let (r0, live0) = rate(&mut engine);
+    let to = DVec3::new(1.0, 0.0, 0.0);
+    engine.set_body_centers(&ctx, &[to]);
+    for _ in 0..100 {
+        engine.step_flux(&ctx);
+    }
+    let keys = engine.ball_keyframes();
+    let ball = DVec3::new(keys[0][0] as f64, keys[0][1] as f64, keys[0][2] as f64);
+    let (r1, live1) = rate(&mut engine);
+    println!("captures/step {r0:.1} -> {r1:.1}, live {live0} -> {live1}, ball centre {ball:?}");
+    // The ball orbits inside the envelope (levels 9-12), up to ~0.9 from the
+    // body centre; before the move it was within that of the origin.
+    assert!((ball - to).length() < 0.95, "ball keyframe did not follow ({ball:?})");
+    assert_eq!(engine.shell_bodies[0].center, to);
+    assert!((r1 / r0 - 1.0).abs() < 0.1, "capture rate changed after the move ({r0} -> {r1})");
+    assert!((live1 as f64 / live0 as f64 - 1.0).abs() < 0.02, "domain moved ({live0} -> {live1})");
+}
+
 /// Report (doc §15.11): one body with envelope / polar / ball intake, tank,
 /// maze or isotropic emission. The option-2 test: with intake equally likely
 /// everywhere on the envelope, does the latitude of the never-captured
@@ -1858,12 +1898,33 @@ fn report_pair_force() {
                 b.tier1_signs = NEUTRON_INNER_SIGNS;
             }
         }
-        for _ in 0..warmup {
-            engine.step_flux(&ctx);
-        }
+        // CFM_F_BLOCK > 0: print every body's force (per unit time, along
+        // the pair axis e) per block of steps, warm-up included, to see
+        // when it settles.
+        let block: u32 = std::env::var("CFM_F_BLOCK").ok().and_then(|b| b.parse().ok()).unwrap_or(0);
+        let mut bt = Totals::default();
+        let mut trace = String::new();
         let mut t = Totals::default();
-        for _ in 0..avg {
-            t.add(&engine.step_flux(&ctx));
+        for s in 0..warmup + avg {
+            let st = engine.step_flux(&ctx);
+            if s >= warmup {
+                t.add(&st);
+            }
+            if block > 0 {
+                bt.add(&st);
+                if (s + 1) % block == 0 {
+                    let tb = block as f64 * dt;
+                    trace += &format!(" [t {:.0}:", (s + 1) as f64 * dt);
+                    for b in 0..centers.len() {
+                        trace += &format!(" {:+.0}", DVec3::new(bt.sh_dp[b][0], bt.sh_dp[b][1], bt.sh_dp[b][2]).dot(e) / tb);
+                    }
+                    trace += "]";
+                    bt = Totals::default();
+                }
+            }
+        }
+        if block > 0 {
+            println!("   force along e by block:{trace}");
         }
         (t, avg as f64 * dt)
     };
@@ -1908,5 +1969,153 @@ fn report_pair_force() {
         }
         println!("{line}");
     }
+}
+
+/// Report (doc §15.17): a free deuteron. A proton and a neutron start pole
+/// to pole and move under the photon traffic alone. Self-force rule (user
+/// decision (b), 2026-10-01): each body's own isolated self-force, measured
+/// first in the same field and domain, is subtracted, so only the
+/// interaction moves the bodies. Per step, body i gets impulse
+/// J = dp_i - F_self,i dt and v += J / M - damp v dt, x += v dt (translation
+/// only, orientation fixed; axial motion only unless CFM_D_AXIAL=0). Env:
+/// CFM_F_PAIR (pn), CFM_F_GEOM (axial | side), CFM_D_SEP0 (3), CFM_D_MASS
+/// (1e6, momentum-per-velocity in photon units: the calibration knob),
+/// CFM_D_DAMP (0), CFM_D_FIXT (250 time units with the pair held),
+/// CFM_D_CALWARMT (250) + CFM_D_CALT (150) for each self-force,
+/// CFM_D_STEPS (5000), CFM_D_LOG (100),
+/// CFM_C_LAMBDA (0.1), CFM_C_NA (8000), CFM_C_H (0.1), CFM_C_DT (lambda/5),
+/// CFM_I_PHI (2/3), CFM_F_RD (4.5), CFM_C_SEED.
+#[test]
+#[ignore]
+fn report_deuteron() {
+    use super::config::{Intake, MazeSpeed};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let pair = env("CFM_F_PAIR", "pn");
+    let geom = env("CFM_F_GEOM", "axial");
+    let sep0: f64 = env("CFM_D_SEP0", "3").parse().unwrap();
+    let mass: f64 = env("CFM_D_MASS", "1e6").parse().unwrap();
+    let damp: f64 = env("CFM_D_DAMP", "0").parse().unwrap();
+    // Warm-ups and the calibration are in time units (doc §15.17: the
+    // neutron's self-force relaxes over ~150-200 time units at lambda 0.1
+    // and 0.3, so anything shorter measures a transient).
+    let lambda_pre: f64 = env("CFM_C_LAMBDA", "0.1").parse().unwrap();
+    let dt_pre: f64 = env("CFM_C_DT", &format!("{}", lambda_pre / 5.0)).parse().unwrap();
+    let steps_of = |k: &str, d: &str| -> u32 { (env(k, d).parse::<f64>().unwrap() / dt_pre).round() as u32 };
+    let fix = steps_of("CFM_D_FIXT", "250");
+    let cal = steps_of("CFM_D_CALT", "150");
+    let cal_warm = steps_of("CFM_D_CALWARMT", "250");
+    let steps: u32 = env("CFM_D_STEPS", "5000").parse().unwrap();
+    let log: u32 = env("CFM_D_LOG", "100").parse().unwrap();
+    let axial_only = env("CFM_D_AXIAL", "1") == "1";
+    // CFM_D_FIXCOM=1 (default): only the separation evolves. The pair's
+    // centre stays at the domain centre (the common-mode push of the open,
+    // non-Newtonian forces is reported, not integrated), which keeps both
+    // bodies where the centre-calibrated self-force applies.
+    let fix_com = env("CFM_D_FIXCOM", "1") == "1";
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.1").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
+    let h: f64 = env("CFM_C_H", "0.1").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", &format!("{}", lambda / 5.0)).parse().unwrap();
+    let phi: f64 = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let r_d: f64 = env("CFM_F_RD", "4.5").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect();
+    let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
+    println!("=== deuteron: {pair} {geom}, sep0 {sep0}, mass {mass:e}, damp {damp}, fixed centre {fix_com}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d} ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let make = |centers: &[DVec3], cls: &[&str]| -> DsmcEngine {
+        let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
+        let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
+        config.h = h;
+        config.photon_fraction = phi;
+        config.boundary = Boundary::SphereEscape { r_d };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for (b, cl) in engine.shell_bodies.iter_mut().zip(cls) {
+            b.depth = 0;
+            if *cl == "neutron" {
+                b.inner_signs = NEUTRON_INNER_SIGNS;
+                b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+        engine
+    };
+    // 1. Self-force per class, body alone at the domain centre.
+    let mut f_self = std::collections::HashMap::new();
+    let mut uniq = classes.clone();
+    uniq.dedup();
+    for cl in uniq {
+        let mut engine = make(&[DVec3::ZERO], &[cl]);
+        for _ in 0..cal_warm {
+            engine.step_flux(&ctx);
+        }
+        let mut t = Totals::default();
+        for _ in 0..cal {
+            t.add(&engine.step_flux(&ctx));
+        }
+        let f = DVec3::new(t.sh_dp[0][0], t.sh_dp[0][1], t.sh_dp[0][2]) / (cal as f64 * dt);
+        println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
+        f_self.insert(cl, f);
+    }
+    // 2. The pair, held while the field settles, then free.
+    let mut x = [-e * sep0 / 2.0, e * sep0 / 2.0];
+    let mut v = [DVec3::ZERO; 2];
+    let mut engine = make(&x, &classes);
+    for _ in 0..fix {
+        engine.step_flux(&ctx);
+    }
+    let mut win = [DVec3::ZERO; 2];
+    let mut caps = [0i64; 2];
+    let mut seps = Vec::new();
+    for s in 1..=steps {
+        let t = engine.step_flux(&ctx);
+        for b in 0..2 {
+            let dp = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]);
+            let mut j = dp - f_self[classes[b]] * dt;
+            if axial_only {
+                j = e * j.dot(e);
+            }
+            win[b] += j;
+            caps[b] += t.feed[b].iter().sum::<i64>();
+            v[b] += j / mass - v[b] * damp * dt;
+            x[b] += v[b] * dt;
+        }
+        if fix_com {
+            let com = (x[0] + x[1]) / 2.0;
+            let vcom = (v[0] + v[1]) / 2.0;
+            for b in 0..2 {
+                x[b] -= com;
+                v[b] -= vcom;
+            }
+        }
+        engine.set_body_centers(&ctx, &x);
+        let sep = (x[1] - x[0]).dot(e);
+        seps.push(sep);
+        if s % log == 0 {
+            let tw = log as f64 * dt;
+            let toward = |b: usize| if b == 0 { win[b].dot(e) } else { -win[b].dot(e) } / tw;
+            println!(
+                "t {:7.2}: sep {sep:.4} | v_rel {:+.5} | interaction toward other: {} {:+.0}, {} {:+.0} | captures/time {:.0}, {:.0} | lateral {:.3}",
+                s as f64 * dt,
+                (v[1] - v[0]).dot(e),
+                classes[0],
+                toward(0),
+                classes[1],
+                toward(1),
+                caps[0] as f64 / tw,
+                caps[1] as f64 / tw,
+                (x[0] - e * x[0].dot(e)).length().max((x[1] - e * x[1].dot(e)).length())
+            );
+            win = [DVec3::ZERO; 2];
+            caps = [0; 2];
+        }
+        if sep < 0.5 || x.iter().any(|p| p.length() > r_d - 1.2) {
+            println!("stopped at t {:.2}: sep {sep:.3}, centres {:?} {:?}", s as f64 * dt, x[0], x[1]);
+            break;
+        }
+    }
+    let (mn, mx) = seps.iter().fold((f64::MAX, f64::MIN), |(a, b), &q| (a.min(q), b.max(q)));
+    let tail = &seps[seps.len() * 3 / 4..];
+    println!("separation range {mn:.3} .. {mx:.3}; last quarter mean {:.3}; drift of the pair centre {:+.3}", tail.iter().sum::<f64>() / tail.len() as f64, ((x[0] + x[1]) / 2.0).dot(e));
 }
 

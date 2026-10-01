@@ -487,6 +487,11 @@ pub struct DsmcEngine {
     photons: [wgpu::Buffer; 2],
     cur: usize,
     bodies_buf: wgpu::Buffer,
+    /// Doc §15.17: the escape sphere's centre, fixed at construction so
+    /// that moving bodies (`set_body_centers`) do not drag the domain.
+    domain_ctr: glam::DVec3,
+    /// Body centres the nearest-body map was last computed for.
+    nb_centers: Vec<glam::DVec3>,
     body_emit_counts_buf: wgpu::Buffer,
     raw_cell_of: wgpu::Buffer,
     nearest_body_buf: wgpu::Buffer,
@@ -643,12 +648,16 @@ impl DsmcEngine {
         let emit_remainder = vec![0.0; n_bodies.max(1)];
         let pump_rate_ema = vec![0.0; n_bodies.max(1)];
 
+        let domain_ctr = Grid::centroid(&config);
+        let nb_centers: Vec<glam::DVec3> = config.bodies.iter().map(|b| b.center).collect();
         Self {
             config,
             grid,
             photons,
             cur: 0,
             bodies_buf,
+            domain_ctr,
+            nb_centers,
             body_emit_counts_buf,
             raw_cell_of,
             nearest_body_buf,
@@ -691,7 +700,63 @@ impl DsmcEngine {
     }
 
     fn domain_center(&self) -> glam::DVec3 {
-        Grid::centroid(&self.config)
+        self.domain_ctr
+    }
+
+    /// Doc §15.17: move the bodies (translation only; orientation and level
+    /// phases are untouched). Updates the body buffer and the shell
+    /// kinematics the ball keyframes come from; the nearest-body map is
+    /// recomputed once any body has moved more than h/4 since the last
+    /// time. The domain stays where it was built. The bodies' own motion is
+    /// not added to the ball velocity (it is many orders below c).
+    pub fn set_body_centers(&mut self, ctx: &GpuContext, centers: &[glam::DVec3]) {
+        assert_eq!(centers.len(), self.config.bodies.len());
+        for (i, c) in centers.iter().enumerate() {
+            self.config.bodies[i].center = *c;
+            if let Some(sb) = self.shell_bodies.get_mut(i) {
+                sb.center = *c;
+            }
+        }
+        let gpu_bodies: Vec<GpuBody> = self
+            .config
+            .bodies
+            .iter()
+            .map(|b| {
+                let axis = b.orient.spin_axis();
+                let (p0, p1, sigma) = b.class.exit_profile();
+                let swing = self.config.swing_boost * b.class.chirality_sign();
+                GpuBody {
+                    center: [b.center.x as f32, b.center.y as f32, b.center.z as f32, 1.0],
+                    axis: [axis.x as f32, axis.y as f32, axis.z as f32, b.class.chirality_sign() as f32],
+                    emit: [p0 as f32, p1.map(|v| v as f32).unwrap_or(-1.0), sigma as f32, swing as f32],
+                    lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, 0.0],
+                }
+            })
+            .collect();
+        ctx.write_buffer(&self.bodies_buf, &gpu_bodies);
+        let moved = centers.iter().zip(&self.nb_centers).any(|(a, b)| (*a - *b).length() > self.grid.h / 4.0);
+        if moved {
+            let g = &self.grid;
+            let mut nb = vec![0u32; g.num_cells as usize];
+            for cz in 0..g.dim[2] {
+                for cy in 0..g.dim[1] {
+                    for cx in 0..g.dim[0] {
+                        let p = g.cell_center(cx, cy, cz);
+                        let (mut best, mut bd) = (0usize, f64::MAX);
+                        for (i, c) in centers.iter().enumerate() {
+                            let d = (p - *c).length();
+                            if d < bd {
+                                bd = d;
+                                best = i;
+                            }
+                        }
+                        nb[(cx + cy * g.dim[0] + cz * g.dim[0] * g.dim[1]) as usize] = best as u32;
+                    }
+                }
+            }
+            ctx.write_buffer(&self.nearest_body_buf, &nb);
+            self.nb_centers = centers.to_vec();
+        }
     }
 
     fn write_params(&self, ctx: &GpuContext) {
