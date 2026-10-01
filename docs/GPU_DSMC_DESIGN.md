@@ -2416,6 +2416,63 @@ from 3.05 (R_D = 4.5) to 3.26; the binding does not depend on the domain.
   - start at standoff, not at contact;
   - one seed, one density.
 
+### 15.19 The compact sandwich: contact holds in a denser field (2026-10-01)
+
+**User's diagram of Mathis's He sandwich** (corrects §15.18's diamond):
+- The two neutrons stand side by side between the proton discs and are
+  antiparallel (each one's stronger pole points opposite the other).
+- Both protons turn the same way about the nuclear axis (the user's reading;
+  Mathis does not say).
+- Charge enters the outer pole of each proton, leaves at its equator, and
+  is channelled diagonally through the neutrons between the inner holes.
+
+**Layout `CFM_D_LAYOUT=sandwich`** (`CFM_F_PAIR=pnnp`, `CFM_D_ORIENTS`
+default `uudu`), compact, with every neighbour touching (contact distance 2):
+- p (0, 0, −√3) and p (0, 0, +√3), both pole up;
+- n (+1, 0, 0) pole up and n (−1, 0, 0) pole down.
+
+**Run:** contact on, M = 7×10⁶, R_D = 4.5, h = 0.1, n_a = 8000. The run
+stops when a body comes within 1.2 of the domain edge.
+
+**λ = 0.3** (self-forces from §15.17):
+- The core pushes apart from contact. The protons are driven out along the
+  axis (≈ 2000–4000 each), and the neutrons spread to 3–4 from everything.
+- The run stops at t ≈ 83 (proton at the edge).
+- Expected from the §15.17 curve: p–n is repulsive near contact at this
+  density.
+
+**λ = 0.1** (dt 0.02; settled self-forces neutron −4280, proton −648):
+- **Three bodies stay in contact for all 92 time units:**
+  - n–n 2.00–2.09 (end 2.03);
+  - down-neutron to top proton 2.00–2.06 (end 2.01);
+  - the up-neutron drifts from the top proton (2.0 → 3.0).
+- The bottom proton backs off to 3.2 from the up-neutron, the deuteron bond
+  distance, and 4.2 from the down-neutron. It reaches the edge stop at
+  t ≈ 92.
+- The contact pair is a deuteron "turned over": the neutron (axis down)
+  sits below the proton (axis up), so the neutron's intake pole faces the
+  proton's south pole.
+
+**Reading:**
+- At 3× the density the near-contact force changes character. Contact
+  holds instead of pushing apart, and an antiparallel neutron pair sticks
+  together.
+- This is the first sign in the model of a fused-type (contact) bond rather
+  than the molecular standoff, appearing as the field gets denser. That is
+  what deut.pdf requires for He4.
+- It is not yet an alpha: the bottom proton leaves to bond distance.
+
+**Caveats:**
+- R_D = 4.5 is cramped for four bodies; the run ended at the edge stop.
+- One seed. Orientations are fixed. The protons' same-sense spin is assumed.
+- The run started from contact, so formation from apart is untested.
+
+**Next:**
+- a larger domain at λ = 0.1 (R_D 6; ~6 h with calibrations) so the
+  bottom proton can settle or leave;
+- the p–n force near contact at λ = 0.1 (static);
+- λ = 0.05.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

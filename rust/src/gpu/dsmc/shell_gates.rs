@@ -2091,7 +2091,18 @@ fn report_deuteron() {
     let n = classes.len();
     assert!(n >= 2 && n <= 4, "2-4 bodies");
     let layout = env("CFM_D_LAYOUT", "chain");
-    let (mut x, ors): (Vec<DVec3>, Vec<GpuOrient>) = if layout == "alpha" {
+    let parse_ors = |d: &str| -> Vec<GpuOrient> { env("CFM_D_ORIENTS", d).chars().map(|c| if c == 'd' { GpuOrient::PoleDown } else { GpuOrient::PoleOn }).collect() };
+    let (mut x, ors): (Vec<DVec3>, Vec<GpuOrient>) = if layout == "sandwich" {
+        // Mathis's He sandwich as drawn (user, 2026-10-01): the neutrons
+        // stand side by side between the proton discs, antiparallel; both
+        // protons turn the same way about the nuclear axis. Compact: every
+        // neighbour touching (n-n = p-n = 2 at CFM_D_B 1, CFM_D_A sqrt 3).
+        // Order pnnp; CFM_D_ORIENTS default "uudu".
+        assert_eq!(pair, "pnnp", "sandwich layout needs CFM_F_PAIR=pnnp");
+        let a: f64 = env("CFM_D_A", "1.7320508").parse().unwrap();
+        let b: f64 = env("CFM_D_B", "1").parse().unwrap();
+        (vec![DVec3::new(0.0, 0.0, -a), DVec3::new(b, 0.0, 0.0), DVec3::new(-b, 0.0, 0.0), DVec3::new(0.0, 0.0, a)], parse_ors("uudu"))
+    } else if layout == "alpha" {
         assert_eq!(pair, "pnnp", "alpha layout needs CFM_F_PAIR=pnnp");
         let a: f64 = env("CFM_D_A", "2.16").parse().unwrap();
         let b: f64 = env("CFM_D_B", "2.16").parse().unwrap();
@@ -2108,10 +2119,11 @@ fn report_deuteron() {
             u[k] = u[k - 1] + gaps[k - 1];
         }
         let mid = (u[0] + u[n - 1]) / 2.0;
-        let os: Vec<GpuOrient> = env("CFM_D_ORIENTS", &"u".repeat(n)).chars().map(|c| if c == 'd' { GpuOrient::PoleDown } else { GpuOrient::PoleOn }).collect();
+        let os: Vec<GpuOrient> = parse_ors(&"u".repeat(n));
         (u.iter().map(|&q| e * (q - mid)).collect(), os)
     };
-    let axial_only = axial_only && layout != "alpha";
+    let free3d = layout != "chain";
+    let axial_only = axial_only && !free3d;
     // Each body's self-force is its class's (calibrated pole up), turned
     // by the same rotation that orients the body.
     let f_body: Vec<DVec3> = (0..n).map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, ors[b].spin_axis()) * f_self[classes[b]]).collect();
@@ -2125,7 +2137,7 @@ fn report_deuteron() {
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
     let pairs_ij: Vec<(usize, usize)> = (0..n).flat_map(|i| (i + 1..n).map(move |k| (i, k))).collect();
-    let n_g = if layout == "alpha" { pairs_ij.len() } else { n - 1 };
+    let n_g = if free3d { pairs_ij.len() } else { n - 1 };
     let mut gap_hist: Vec<Vec<f64>> = vec![Vec::new(); n_g];
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
@@ -2172,7 +2184,7 @@ fn report_deuteron() {
             }
         }
         engine.set_body_centers(&ctx, &x);
-        let g: Vec<f64> = if layout == "alpha" {
+        let g: Vec<f64> = if free3d {
             pairs_ij.iter().map(|&(i, k)| (x[k] - x[i]).length()).collect()
         } else {
             (0..n - 1).map(|k| (x[k + 1] - x[k]).dot(e)).collect()
@@ -2186,7 +2198,7 @@ fn report_deuteron() {
             for k in 0..g.len() {
                 line += &format!(" {:.4}", g[k]);
             }
-            if layout == "alpha" {
+            if free3d {
                 line += " | interaction (x,z):";
                 for b in 0..n {
                     line += &format!(" {} ({:+.0},{:+.0})", &classes[b][..1], win[b].x / tw, win[b].z / tw);
@@ -2218,7 +2230,7 @@ fn report_deuteron() {
         }
     }
     for k in 0..n_g {
-        let (i, j) = if layout == "alpha" { pairs_ij[k] } else { (k, k + 1) };
+        let (i, j) = if free3d { pairs_ij[k] } else { (k, k + 1) };
         let h = &gap_hist[k];
         let (mn, mx) = h.iter().fold((f64::MAX, f64::MIN), |(a, b), &q| (a.min(q), b.max(q)));
         let tail = &h[h.len() * 3 / 4..];
