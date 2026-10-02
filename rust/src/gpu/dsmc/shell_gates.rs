@@ -1514,6 +1514,45 @@ fn moving_body_follows() {
     assert!((live1 as f64 / live0 as f64 - 1.0).abs() < 0.02, "domain moved ({live0} -> {live1})");
 }
 
+/// Doc §15.20 gate: `set_body_poses` turns a body. A proton turned so its
+/// spin axis points along +x emits its maze disc about the new equator
+/// (|d.x| small), not the old one; the unturned control does the reverse.
+#[test]
+fn turned_body_emits_in_its_own_frame() {
+    use super::config::Intake;
+    let ctx = GpuContext::new().expect("GPU");
+    let mut res = Vec::new();
+    for turned in [false, true] {
+        let mut config = two_body_config(&[DVec3::ZERO], &["proton"], 2000.0, 3.0, 2_000_000, 0x7E2D, 0.05);
+        config.boundary = Boundary::SphereEscape { r_d: 4.0 };
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        if turned {
+            let q = DQuat::from_rotation_arc(DVec3::Z, DVec3::X);
+            engine.set_body_poses(&ctx, &[DVec3::ZERO], Some(&[q]));
+        }
+        for _ in 0..120 {
+            engine.step_flux(&ctx);
+        }
+        // Photons last emitted by body 0, still near it.
+        let ph = engine.read_photons(&ctx);
+        let near: Vec<DVec3> = ph
+            .iter()
+            .filter(|q| q.c[0] & FLAG_ALIVE != 0 && (q.c[0] >> 17) & 7 == 1)
+            .filter(|q| DVec3::new(q.a[0] as f64, q.a[1] as f64, q.a[2] as f64).length() < 1.5)
+            .map(|q| DVec3::new(q.b[0] as f64, q.b[1] as f64, q.b[2] as f64))
+            .collect();
+        let n = near.len().max(1) as f64;
+        let eq_z = near.iter().filter(|d| d.z.abs() < 0.5).count() as f64 / n;
+        let eq_x = near.iter().filter(|d| d.x.abs() < 0.5).count() as f64 / n;
+        println!("turned {turned}: {} recent emissions, within 30 deg of the z-equator {eq_z:.3}, of the x-equator {eq_x:.3}", near.len());
+        assert!(near.len() > 200, "too few emitted photons to judge");
+        res.push((eq_z, eq_x));
+    }
+    assert!(res[0].0 > res[0].1 + 0.15, "unturned body: disc not about the z-equator ({:?})", res[0]);
+    assert!(res[1].1 > res[1].0 + 0.15, "turned body: disc did not follow the axis ({:?})", res[1]);
+}
+
 /// Report (doc §15.11): one body with envelope / polar / ball intake, tank,
 /// maze or isotropic emission. The option-2 test: with intake equally likely
 /// everywhere on the envelope, does the latitude of the never-captured
@@ -2051,6 +2090,9 @@ fn report_deuteron() {
     };
     // 1. Self-force per class, body alone at the domain centre.
     let mut f_self = std::collections::HashMap::new();
+    // Doc §15.20: the isolated self-torque, in the body frame (calibrated
+    // pole up, frame = identity), subtracted like the self-force.
+    let mut t_self: std::collections::HashMap<&str, DVec3> = std::collections::HashMap::new();
     let mut uniq = classes.clone();
     uniq.sort();
     uniq.dedup();
@@ -2062,9 +2104,14 @@ fn report_deuteron() {
         let key = *uniq.iter().find(|u| **u == cl).expect("CFM_D_FSELF class not in the stack");
         println!("self-force {key:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time (given)", c[0], c[1], c[2]);
         f_self.insert(key, DVec3::new(c[0], c[1], c[2]));
+        if c.len() >= 6 {
+            println!("self-torque {key:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time (given)", c[3], c[4], c[5]);
+            t_self.insert(key, DVec3::new(c[3], c[4], c[5]));
+        }
     }
+    let inertia: f64 = env("CFM_D_INERTIA", "0").parse().unwrap();
     for cl in uniq.clone() {
-        if f_self.contains_key(cl) {
+        if f_self.contains_key(cl) && (inertia == 0.0 || t_self.contains_key(cl)) {
             continue;
         }
         let mut engine = make(&[DVec3::ZERO], &[cl], &[GpuOrient::PoleOn]);
@@ -2076,8 +2123,11 @@ fn report_deuteron() {
             t.add(&engine.step_flux(&ctx));
         }
         let f = DVec3::new(t.sh_dp[0][0], t.sh_dp[0][1], t.sh_dp[0][2]) / (cal as f64 * dt);
+        let tq = DVec3::new(t.sh_torque[0][0], t.sh_torque[0][1], t.sh_torque[0][2]) / (cal as f64 * dt);
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
+        println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
         f_self.insert(cl, f);
+        t_self.insert(cl, tq);
     }
     // 2. The stack, held while the field settles, then free. Bodies sit on
     // the axis e in CFM_F_PAIR order with gaps CFM_D_SEPS (default all
@@ -2126,14 +2176,26 @@ fn report_deuteron() {
     let axial_only = axial_only && !free3d;
     // Each body's self-force is its class's (calibrated pole up), turned
     // by the same rotation that orients the body.
-    let f_body: Vec<DVec3> = (0..n).map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, ors[b].spin_axis()) * f_self[classes[b]]).collect();
+    // Doc §15.20 rotation: body frames q (spin axis = q Z). With
+    // CFM_D_INERTIA = I > 0 the axis turns under the measured torque minus
+    // the frame-turned self-torque. Angular momentum L = L_s a + I w_perp:
+    // CFM_D_LSPIN = L_s (0 = plain rigid turning; > 0 a gyroscope that
+    // precesses). The axial part is dropped (inner spin rates are driven).
+    // CFM_D_RDAMP damps w_perp.
+    let l_spin: f64 = env("CFM_D_LSPIN", "0").parse().unwrap();
+    let rdamp: f64 = env("CFM_D_RDAMP", "0").parse().unwrap();
+    let mut q: Vec<glam::DQuat> = (0..n).map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, ors[b].spin_axis())).collect();
+    let mut l_ang: Vec<DVec3> = (0..n).map(|b| q[b] * DVec3::Z * l_spin).collect();
+    println!("rotation: inertia {inertia:e}, L_spin {l_spin:e}, damp {rdamp}");
     println!("layout {layout}: orients {ors:?}, start {:?}", x.iter().map(|p| (p.x, p.y, p.z)).collect::<Vec<_>>());
     let mut v = vec![DVec3::ZERO; n];
     let mut engine = make(&x, &classes, &ors);
+    engine.set_body_poses(&ctx, &x, Some(&q));
     for _ in 0..fix {
         engine.step_flux(&ctx);
     }
     let mut win = vec![DVec3::ZERO; n];
+    let mut twin = vec![DVec3::ZERO; n];
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
     let pairs_ij: Vec<(usize, usize)> = (0..n).flat_map(|i| (i + 1..n).map(move |k| (i, k))).collect();
@@ -2143,7 +2205,7 @@ fn report_deuteron() {
         let t = engine.step_flux(&ctx);
         for b in 0..n {
             let dp = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]);
-            let mut j = dp - f_body[b] * dt;
+            let mut j = dp - (q[b] * f_self[classes[b]]) * dt;
             if axial_only {
                 j = e * j.dot(e);
             }
@@ -2183,7 +2245,25 @@ fn report_deuteron() {
                 v[b] -= vcom;
             }
         }
-        engine.set_body_centers(&ctx, &x);
+        if inertia > 0.0 {
+            for b in 0..n {
+                let a = q[b] * DVec3::Z;
+                let tq = DVec3::new(t.sh_torque[b][0], t.sh_torque[b][1], t.sh_torque[b][2]);
+                let jr = tq - (q[b] * t_self[classes[b]]) * dt;
+                let jr = jr - a * jr.dot(a);
+                twin[b] += jr;
+                l_ang[b] += jr;
+                let mut w = (l_ang[b] - a * l_ang[b].dot(a)) / inertia;
+                w -= w * rdamp * dt;
+                let ang = w.length() * dt;
+                if ang > 0.0 {
+                    q[b] = (glam::DQuat::from_axis_angle(w / w.length(), ang) * q[b]).normalize();
+                }
+                let a2 = q[b] * DVec3::Z;
+                l_ang[b] = a2 * l_spin + (w * inertia - a2 * (w * inertia).dot(a2));
+            }
+        }
+        engine.set_body_poses(&ctx, &x, Some(&q));
         let g: Vec<f64> = if free3d {
             pairs_ij.iter().map(|&(i, k)| (x[k] - x[i]).length()).collect()
         } else {
@@ -2214,6 +2294,18 @@ fn report_deuteron() {
                 for b in 0..n {
                     line += &format!(" {} {:+.0}", &classes[b][..1], win[b].dot(e) / tw);
                 }
+            }
+            if inertia > 0.0 {
+                line += " | axes";
+                for b in 0..n {
+                    let a = q[b] * DVec3::Z;
+                    line += &format!(" ({:+.2},{:+.2},{:+.2})", a.x, a.y, a.z);
+                }
+                line += " | net torque";
+                for b in 0..n {
+                    line += &format!(" {:.0}", twin[b].length() / tw);
+                }
+                twin = vec![DVec3::ZERO; n];
             }
             line += &format!(" | contact steps {n_contacts}");
             line += " | captures/time";

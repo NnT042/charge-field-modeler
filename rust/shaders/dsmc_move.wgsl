@@ -727,17 +727,26 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             var touched = false;
             var x_next = xh;
             var now_held = false;
+            // Doc §15.20: a maze capture's torque about the body centre uses
+            // the photon's true lines of action, absorbed at the contact xh
+            // and re-emitted from x_next (the ball surface opposite).
+            var tq_maze = vec3<f32>(0.0);
+            var has_tq_maze = false;
             if ((params.maze_mode & 255u) != 0u && ballkeys[b * BALLKEY_STRIDE + 47u].x > 0.5) {
                 // §15.9/§15.11: capture, then the tank or the maze.
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
                 x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held);
                 let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                let bcm = bodies[b].center.xyz;
                 if (now_held) {
                     dp = v_before * m;
+                    tq_maze = cross(xh - bcm, v_before * m);
                 } else {
                     dp = -(ph.b.xyz * ph.d.w - v_before) * m;
+                    tq_maze = cross(xh - bcm, v_before * m) - cross(x_next - bcm, ph.b.xyz * ph.d.w * m);
                 }
+                has_tq_maze = true;
                 touched = true;
             } else {
                 let n = normalize(ch - xh);
@@ -761,7 +770,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             }
             if (touched) {
                 let bc = bodies[b].center.xyz;
-                let tq = cross(xh - bc, dp);
+                let tq = select(cross(xh - bc, dp), tq_maze, has_tq_maze);
                 for (var a = 0u; a < 3u; a = a + 1u) {
                     atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dp[a] * TALLY_SCALE));
                     atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tq[a] * TALLY_SCALE));
@@ -1025,6 +1034,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     let rb8 = bk(b, 8u, 0u).w;
                     var eheld = false;
                     let v_before = ph.b.xyz * ph.d.w;
+                    let pos_in = pos;
                     // Tally the capture at the envelope entry latitude.
                     let xh8 = ch8 - ph.b.xyz * rb8;
                     let tag = (ph.c[0] >> FLAG_EMIT_SHIFT) & 7u;
@@ -1046,9 +1056,16 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     }
                     let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
-                    let dp = -(select(ph.b.xyz * ph.d.w, vec3<f32>(0.0), (ph.c[0] & FLAG_HELD) != 0u) - v_before) * m;
+                    let v_after = select(ph.b.xyz * ph.d.w, vec3<f32>(0.0), (ph.c[0] & FLAG_HELD) != 0u);
+                    let dp = -(v_after - v_before) * m;
+                    // Doc §15.20: torque about the body centre, absorbed on
+                    // the photon's incoming line (through pos_in) and
+                    // re-emitted from the core surface (pos).
+                    let bce = bodies[b].center.xyz;
+                    let tqe = cross(pos_in - bce, v_before * m) - cross(pos - bce, v_after * m);
                     for (var a = 0u; a < 3u; a = a + 1u) {
                         atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dp[a] * TALLY_SCALE));
+                        atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqe[a] * TALLY_SCALE));
                     }
                     ph.c[2] = ph.c[2] + (1u << 13u);
                 }

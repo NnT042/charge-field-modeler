@@ -710,19 +710,30 @@ impl DsmcEngine {
     /// time. The domain stays where it was built. The bodies' own motion is
     /// not added to the ball velocity (it is many orders below c).
     pub fn set_body_centers(&mut self, ctx: &GpuContext, centers: &[glam::DVec3]) {
+        self.set_body_poses(ctx, centers, None);
+    }
+
+    /// Doc §15.20: move and turn the bodies. `orients` (one per body) sets
+    /// each body's frame (spin axis = frame * Z); the inner levels keep
+    /// their own phases inside it. Needs shell bodies (Ball/Shells model).
+    pub fn set_body_poses(&mut self, ctx: &GpuContext, centers: &[glam::DVec3], orients: Option<&[glam::DQuat]>) {
         assert_eq!(centers.len(), self.config.bodies.len());
         for (i, c) in centers.iter().enumerate() {
             self.config.bodies[i].center = *c;
             if let Some(sb) = self.shell_bodies.get_mut(i) {
                 sb.center = *c;
+                if let Some(o) = orients {
+                    sb.orient = o[i].normalize();
+                }
             }
         }
         let gpu_bodies: Vec<GpuBody> = self
             .config
             .bodies
             .iter()
-            .map(|b| {
-                let axis = b.orient.spin_axis();
+            .enumerate()
+            .map(|(i, b)| {
+                let axis = self.shell_bodies.get(i).map(|sb| sb.orient * glam::DVec3::Z).unwrap_or(b.orient.spin_axis());
                 let (p0, p1, sigma) = b.class.exit_profile();
                 let swing = self.config.swing_boost * b.class.chirality_sign();
                 GpuBody {
