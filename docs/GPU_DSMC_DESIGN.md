@@ -2473,6 +2473,36 @@ stops when a body comes within 1.2 of the domain edge.
 - the p–n force near contact at λ = 0.1 (static);
 - λ = 0.05.
 
+#### 15.19a The λ = 0.1 sandwich with room to move (R_D = 6)
+
+Same as §15.19 at λ = 0.1, but R_D = 6. Settled self-forces at R_D = 6 are
+neutron −6405 and proton −685.
+
+**Only one contact pair survives:**
+- **The up-neutron and the top proton stay in contact for all 139 time
+  units** (2.00–2.07). Both are pole up, with the neutron below and to the
+  side, so its exit (north) pole faces the proton's intake pole.
+- Everything else comes apart:
+  - the neutrons separate (2.0 → 3.07);
+  - the down-neutron leaves the top proton (→ 4.4);
+  - the bottom proton leaves everything (6.6 / 4.4 from the neutrons) and
+    hits the edge stop at t ≈ 139.
+
+**Revises §15.19's reading.**
+- The n–n–p "core" there was a snapshot cut short by the cramped domain.
+- The contact pair that holds is different in the two runs: down-neutron
+  under the top proton there, up-neutron here. So no particular seating is
+  favoured yet.
+- What does hold up across runs: at λ = 0.1 one p–n pair stays in contact
+  while at λ = 0.3 none do. Density makes p–n contact sticky, but not enough
+  to hold the four-body sandwich.
+
+**Not tested yet** (each could change this):
+- free rotation, letting the bodies find their seating;
+- higher density (λ 0.05);
+- the other proton spin sense;
+- formation from apart.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
