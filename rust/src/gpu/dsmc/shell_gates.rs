@@ -2253,14 +2253,20 @@ fn report_deuteron() {
                 let jr = jr - a * jr.dot(a);
                 twin[b] += jr;
                 l_ang[b] += jr;
-                let mut w = (l_ang[b] - a * l_ang[b].dot(a)) / inertia;
-                w -= w * rdamp * dt;
+                // Damping acts on the tumble part of L only.
+                let lperp = l_ang[b] - a * l_ang[b].dot(a);
+                l_ang[b] -= lperp * rdamp * dt;
+                let w = (l_ang[b] - a * l_ang[b].dot(a)) / inertia;
                 let ang = w.length() * dt;
                 if ang > 0.0 {
                     q[b] = (glam::DQuat::from_axis_angle(w / w.length(), ang) * q[b]).normalize();
                 }
+                // L itself is unchanged by the turn (only torque changes it);
+                // the driven inner spins hold its component along the new
+                // axis at L_s. Keeping L (not rebuilding it from w) is what
+                // couples spin and tilt: a gyroscope precesses.
                 let a2 = q[b] * DVec3::Z;
-                l_ang[b] = a2 * l_spin + (w * inertia - a2 * (w * inertia).dot(a2));
+                l_ang[b] = l_ang[b] - a2 * l_ang[b].dot(a2) + a2 * l_spin;
             }
         }
         engine.set_body_poses(&ctx, &x, Some(&q));
