@@ -2603,7 +2603,27 @@ neutron F (196, −116, −7097), τ (43, 127, −12099); proton F (−281, −1
   the neutrons sit between the protons, so it is worth checking against
   Mathis.
 
-A free run of A6 (rotating, gyroscope on) is in progress.
+**Free run of A6** (M 7×10⁶, I 2.8×10⁶, L_s 8.75×10⁵, contact on, fixed
+centre of mass):
+- **The stack holds compressed for ~120 time units.** Every neighbour stays
+  at contact (2.00–2.03), the axes stay within 5°, and each neutron keeps
+  being pushed onto its proton (+3600–3700).
+- **Then it buckles sideways.**
+  - The lateral offset grows 0.02 → 0.27 → 0.53 (t 90–120) → 1.1 (t 180).
+  - The column folds: the end-cap neutrons swing round toward each other
+    (n–n 6.0 → 2.03 at t 180), and the four bodies then drift apart (run
+    stopped at t 363).
+- **Reading:** axial compression with no lateral restoring force is a
+  column instability.
+  - The screen tests only the inward force, not the sideways stiffness.
+  - Mathis anticipates it (stack.html): "just as with a stack of plates, a
+    stack of nucleons must become more unstable at greater numbers… A stack
+    is among the least stable" configurations.
+  - What should centre a neutron on a proton's pole is the polar intake
+    vortex. With envelope intake (p = 1 anywhere on the envelope) nothing
+    pulls charge, and so a neighbour, toward the axis.
+- **Next:** a lateral-stiffness screen (offset one body sideways and read
+  the restoring force), polar-focused intake, and the electron.
 
 ## 12. Out of scope for this step
 
