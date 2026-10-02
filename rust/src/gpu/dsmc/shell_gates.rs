@@ -2111,7 +2111,8 @@ fn report_deuteron() {
     }
     let inertia: f64 = env("CFM_D_INERTIA", "0").parse().unwrap();
     for cl in uniq.clone() {
-        if f_self.contains_key(cl) && (inertia == 0.0 || t_self.contains_key(cl)) {
+        let want_torque = inertia > 0.0 || env("CFM_D_FREEZE", "0") == "1";
+        if f_self.contains_key(cl) && (!want_torque || t_self.contains_key(cl)) {
             continue;
         }
         let mut engine = make(&[DVec3::ZERO], &[cl], &[GpuOrient::PoleOn]);
@@ -2142,7 +2143,22 @@ fn report_deuteron() {
     assert!(n >= 2 && n <= 4, "2-4 bodies");
     let layout = env("CFM_D_LAYOUT", "chain");
     let parse_ors = |d: &str| -> Vec<GpuOrient> { env("CFM_D_ORIENTS", d).chars().map(|c| if c == 'd' { GpuOrient::PoleDown } else { GpuOrient::PoleOn }).collect() };
-    let (mut x, ors): (Vec<DVec3>, Vec<GpuOrient>) = if layout == "sandwich" {
+    // CFM_D_LAYOUT=custom (doc §15.21): CFM_D_POS "x,y,z;x,y,z;..." and
+    // CFM_D_AXES "x,y,z;..." (spin axes, default +z), any orientation.
+    let parse_v3s = |k: &str| -> Vec<DVec3> {
+        env(k, "").split(';').filter(|q| !q.is_empty()).map(|q| { let c: Vec<f64> = q.split(',').map(|v| v.trim().parse().unwrap()).collect(); DVec3::new(c[0], c[1], c[2]) }).collect()
+    };
+    let custom_axes: Option<Vec<DVec3>> = if layout == "custom" {
+        let ax = parse_v3s("CFM_D_AXES");
+        Some(if ax.is_empty() { vec![DVec3::Z; n] } else { ax.iter().map(|a| a.normalize()).collect() })
+    } else {
+        None
+    };
+    let (mut x, ors): (Vec<DVec3>, Vec<GpuOrient>) = if layout == "custom" {
+        let pos = parse_v3s("CFM_D_POS");
+        assert_eq!(pos.len(), n, "CFM_D_POS needs one position per body");
+        (pos, vec![GpuOrient::PoleOn; n])
+    } else if layout == "sandwich" {
         // Mathis's He sandwich as drawn (user, 2026-10-01): the neutrons
         // stand side by side between the proton discs, antiparallel; both
         // protons turn the same way about the nuclear axis. Compact: every
@@ -2184,7 +2200,15 @@ fn report_deuteron() {
     // CFM_D_RDAMP damps w_perp.
     let l_spin: f64 = env("CFM_D_LSPIN", "0").parse().unwrap();
     let rdamp: f64 = env("CFM_D_RDAMP", "0").parse().unwrap();
-    let mut q: Vec<glam::DQuat> = (0..n).map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, ors[b].spin_axis())).collect();
+    let mut q: Vec<glam::DQuat> = (0..n)
+        .map(|b| glam::DQuat::from_rotation_arc(DVec3::Z, custom_axes.as_ref().map(|a| a[b]).unwrap_or(ors[b].spin_axis())))
+        .collect();
+    // CFM_D_FREEZE=1 (doc §15.21): hold every body (no translation or
+    // rotation) and report the mean interaction force and torque on each,
+    // the stability screen. With hard contact, a layout whose interaction
+    // forces all point into the cluster (compression) holds; any body pulled
+    // outward means it comes apart.
+    let freeze = env("CFM_D_FREEZE", "0") == "1";
     let mut l_ang: Vec<DVec3> = (0..n).map(|b| q[b] * DVec3::Z * l_spin).collect();
     println!("rotation: inertia {inertia:e}, L_spin {l_spin:e}, damp {rdamp}");
     println!("layout {layout}: orients {ors:?}, start {:?}", x.iter().map(|p| (p.x, p.y, p.z)).collect::<Vec<_>>());
@@ -2196,6 +2220,9 @@ fn report_deuteron() {
     }
     let mut win = vec![DVec3::ZERO; n];
     let mut twin = vec![DVec3::ZERO; n];
+    let mut fsum = vec![DVec3::ZERO; n];
+    let mut tsum = vec![DVec3::ZERO; n];
+    let mut steps_done = 0u32;
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
     let pairs_ij: Vec<(usize, usize)> = (0..n).flat_map(|i| (i + 1..n).map(move |k| (i, k))).collect();
@@ -2203,6 +2230,7 @@ fn report_deuteron() {
     let mut gap_hist: Vec<Vec<f64>> = vec![Vec::new(); n_g];
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
+        steps_done = s;
         for b in 0..n {
             let dp = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]);
             let mut j = dp - (q[b] * f_self[classes[b]]) * dt;
@@ -2211,9 +2239,12 @@ fn report_deuteron() {
             }
             win[b] += j;
             caps[b] += t.feed[b].iter().sum::<i64>();
-            let vb = v[b];
-            v[b] = vb + j / mass - vb * damp * dt;
-            x[b] += v[b] * dt;
+            if !freeze {
+                let vb = v[b];
+                v[b] = vb + j / mass - vb * damp * dt;
+                x[b] += v[b] * dt;
+            }
+            fsum[b] += j;
         }
         if contact > 0.0 {
             let mut contacts_now = 0;
@@ -2245,7 +2276,15 @@ fn report_deuteron() {
                 v[b] -= vcom;
             }
         }
-        if inertia > 0.0 {
+        if freeze && t_self.len() == f_self.len() {
+            for b in 0..n {
+                let a = q[b] * DVec3::Z;
+                let tq = DVec3::new(t.sh_torque[b][0], t.sh_torque[b][1], t.sh_torque[b][2]);
+                let jr = tq - (q[b] * t_self[classes[b]]) * dt;
+                tsum[b] += jr - a * jr.dot(a);
+            }
+        }
+        if inertia > 0.0 && !freeze {
             for b in 0..n {
                 let a = q[b] * DVec3::Z;
                 let tq = DVec3::new(t.sh_torque[b][0], t.sh_torque[b][1], t.sh_torque[b][2]);
@@ -2335,5 +2374,28 @@ fn report_deuteron() {
         println!("distance {i}-{j} ({}-{}): range {mn:.3} .. {mx:.3}; last quarter mean {:.3}", classes[i], classes[j], tail.iter().sum::<f64>() / tail.len().max(1) as f64);
     }
     println!("drift of the stack centre {:+.3}", (x.iter().sum::<DVec3>() / n as f64).dot(e));
+    // Doc §15.21 screen summary: mean interaction force per body over the
+    // run, its component toward the cluster centre (+ = compressive), and
+    // toward each touching neighbour; mean tilting torque.
+    let time = steps_done.max(1) as f64 * dt;
+    let cen = x.iter().sum::<DVec3>() / n as f64;
+    for b in 0..n {
+        let f = fsum[b] / time;
+        let inward = (cen - x[b]).try_normalize().map(|u| f.dot(u)).unwrap_or(0.0);
+        let mut nb = String::new();
+        for k in 0..n {
+            if k != b && (x[k] - x[b]).length() < 3.6 {
+                nb += &format!(" {}{}:{:+.0}", &classes[k][..1], k, f.dot((x[k] - x[b]).normalize()));
+            }
+        }
+        println!(
+            "screen body {b} {:<7} at ({:+.2},{:+.2},{:+.2}) axis ({:+.2},{:+.2},{:+.2}): force ({:+.0},{:+.0},{:+.0}) |{:.0}| inward {inward:+.0} | toward neighbours{nb} | tilt torque {:.0}",
+            classes[b],
+            x[b].x, x[b].y, x[b].z,
+            (q[b] * DVec3::Z).x, (q[b] * DVec3::Z).y, (q[b] * DVec3::Z).z,
+            f.x, f.y, f.z, f.length(),
+            (tsum[b] / time).length()
+        );
+    }
 }
 

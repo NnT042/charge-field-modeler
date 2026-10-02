@@ -2557,6 +2557,54 @@ R_D 6 gives neutron F −6429, τ_z −10453; proton F −660, τ_z −9677):
   molecular standoff. Nothing binds deuteron to deuteron.
 - Next lever: density (λ 0.05).
 
+### 15.21 Pre-built nuclei: a stability screen, and an alpha that compresses (2026-10-02)
+
+**User direction:** the goal is a self-emergent visualization of nuclear
+architecture, not reproducing fusion. Pre-build the best candidates, place
+them in an ordinary (room-temperature class) field, and show they don't
+break down on their own. Electrons should come in soon.
+
+**Screen** (`report_deuteron`, `CFM_D_FREEZE=1`, `CFM_D_LAYOUT=custom`):
+- Layout: `CFM_D_POS` (positions) and `CFM_D_AXES` (any spin axes).
+- The bodies are held. After the 250 time-unit warm-up, each body's mean
+  interaction force over 150 time units is reported. That is the measured
+  force minus its frame-turned self-force, along with the self-torque.
+- Each body's force is projected toward the cluster centre ("inward") and
+  toward each touching neighbour.
+- With hard contact, a layout whose forces are all compressive holds; any
+  outward pull means it comes apart.
+- About 25 minutes per candidate (λ 0.3, R_D 6), against hours of free
+  dynamics.
+
+**Results** (λ 0.3, φ 2/3, h 0.1, n_a 8000; settled R_D 6 self-forces:
+neutron F (196, −116, −7097), τ (43, 127, −12099); proton F (−281, −164,
+−198), τ (597, −102, −10896)). Inward force per body:
+
+| candidate | layout | inward (+ = compressed) | verdict |
+|---|---|---|---|
+| D0 | deuteron at its standoff 3.26 | p −255, n +213 (net ≈ 0) | equilibrium (control) |
+| A1 | compact sandwich, protons same sense | −1701, −2756, −948, −2179 | comes apart |
+| A2 | compact sandwich, top p reversed | −574, −3680, −3706, −586 | comes apart |
+| A3 | loose sandwich (p–n 3.2), same sense | −1369, −696, −800, −1344 | comes apart |
+| A4 | loose sandwich, reversed | −1432, −1354, −1332, −1441 | comes apart |
+| A5 | p–n \| n–p end to end, neutron north poles facing | p +112, n −7058, n −7065, p +111 | splits between the neutrons |
+| **A6** | **n–p–p–n: neutron jets outward, protons hole to hole (south to south)** | **n +3764, p +1482, p +1423, n +3695** | **compressed: holds** |
+
+**Mechanism:**
+- A neutron's polar jet repels whatever it points at. In A5 the two neutron
+  jets fire into each other (about 7000 each), and that splits every
+  layout in which neutron jets point into the cluster.
+- In A6 the jets point outward. Each neutron is drawn onto its proton's
+  pole (its intake pole faces the proton), and the two protons are drawn
+  together hole to hole, as in stack.html's helium, where "we simply let
+  the protons meet hole to hole".
+- A6 is the user's sandwich turned inside out: the protons in the middle,
+  the neutrons as end caps. That differs from the deut.pdf diagram, where
+  the neutrons sit between the protons, so it is worth checking against
+  Mathis.
+
+A free run of A6 (rotating, gyroscope on) is in progress.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
