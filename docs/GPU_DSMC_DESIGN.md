@@ -2503,6 +2503,60 @@ neutron −6405 and proton −685.
 - the other proton spin sense;
 - formation from apart.
 
+### 15.20 Rotation: gyroscopic nucleons (2026-10-02)
+
+**Build (7f48679, e8b4895):**
+- **Maze-capture torque about the body centre** now uses the photon's real
+  lines of action: absorbed on its incoming line (the ball contact point, or
+  its position at envelope entry) and re-emitted from the core surface.
+  Before, the ball case used a single point and the envelope case had no
+  torque at all. The tank release still tallies no momentum (unused here).
+- **`DsmcEngine::set_body_poses(ctx, centers, Option<&[DQuat]>)`** sets each
+  body frame; the spin axis is frame·Z.
+- **Gate `turned_body_emits_in_its_own_frame`:** a proton turned to axis +x
+  emits its disc about the new equator (0.668 / 0.463 becomes
+  0.479 / 0.675).
+- **`report_deuteron` rotation:**
+  - The self-torque is calibrated with the self-force (body frame), and
+    both are turned with the body each step.
+  - L = L_s a + I ω⊥. The torque minus the self-torque changes L; the axial
+    part is dropped (inner rates are driven). The axis turns with
+    ω⊥ = L⊥/I.
+  - L is then kept and only its axial part is reset to L_s. Rebuilding L
+    from ω⊥ (the first version) decouples spin from tilt, and nothing
+    precesses.
+  - Offline check (torque 1000, L_s 8.75×10⁵): 0.66 rad of precession in
+    600 time units against 0.69 theory. L_s = 0 tumbles.
+- **Knobs:** `CFM_D_INERTIA` (I), `CFM_D_LSPIN` (L_s), `CFM_D_RDAMP`.
+  `CFM_D_FSELF` takes force + torque (6 numbers).
+- **L_s from the spin structure:** level 9, the spin about the pole, orbits
+  at radius 1/8 at c, so L_s = M · (1/8) · c = 8.75×10⁵ for M = 7×10⁶.
+  I = 0.4 M (solid sphere).
+
+**Deuteron** (λ 0.3, R_D 4.5, start 3.6):
+
+| L_s | result |
+|---|---|
+| 0 | The neutron's axis tumbles right over (z from +1 to −1 by t ≈ 270), the binding is lost, and the pair separates to 6.6. |
+| 8.75×10⁵ | **Bound:** 2.47 ↔ 3.67 for 600 time units, period ≈ 270, as without rotation. Axes stay within ~10° of +z, with gentle precession. |
+
+**Sandwich** (λ 0.1, R_D 6, rotating with the gyroscope; calibration at
+R_D 6 gives neutron F −6429, τ_z −10453; proton F −660, τ_z −9677):
+
+| top proton | result |
+|---|---|
+| same as the bottom (uudu) | As without rotation: the up-neutron and the top proton stay in contact (2.00–2.09, 146 time units) while everything else separates. Axes turn < 12°. |
+| reversed (uudd) | Mirror-symmetric split into two deuterons: bottom p with the up-neutron, and the down-neutron with the top p. Each is in contact for ~90 time units, then slowly opens to its bond distance (≈ 3.2–3.3 by t ≈ 190). The deuterons fly apart (p–p 9.5). |
+
+**Reading:**
+- The gyroscope keeps the deuteron upright and bound.
+- Over these times precession is too slow to reseat a nucleus: neither
+  sandwich turns into a better arrangement.
+- The two-deuteron split recurs in every alpha attempt. At λ 0.1, p–n
+  contact is sticky, holding 90–150 time units, but the pairs relax to the
+  molecular standoff. Nothing binds deuteron to deuteron.
+- Next lever: density (λ 0.05).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
