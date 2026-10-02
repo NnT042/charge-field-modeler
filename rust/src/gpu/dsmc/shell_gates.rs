@@ -2399,3 +2399,123 @@ fn report_deuteron() {
     }
 }
 
+/// Report (doc §15.22): the hydrogen atom. A proton (maze, envelope intake,
+/// held at the origin, pole +z) and a free electron: a lepton ball of radius
+/// CFM_H_RE that photons bounce off and that takes nothing in, mass
+/// CFM_H_ME, moved only by its contact impulses. It cannot enter the
+/// proton's envelope (hard contact at 1 + r_e). diatom.pdf: the electron
+/// should be driven off near the equator by emitted charge and drawn to a
+/// pole by incoming charge, then circle that pole. Env: CFM_H_START
+/// ("x,y,z", 2.5,0,0), CFM_H_RE (0.2), CFM_H_ME (3800 = 7e6/1836),
+/// CFM_H_SPIN (+1/-1, electron spin sense about +z), CFM_C_LAMBDA (0.3),
+/// CFM_C_NA (8000), CFM_C_H (0.1), CFM_C_DT (lambda/5), CFM_I_PHI (2/3),
+/// CFM_F_RD (6), CFM_H_FIXT (250 time units held), CFM_H_STEPS (5000),
+/// CFM_H_LOG (250), CFM_C_SEED.
+#[test]
+#[ignore]
+fn report_hydrogen() {
+    use super::config::{Intake, MazeSpeed};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let v3 = |q: &str| -> DVec3 { let c: Vec<f64> = q.split(',').map(|v| v.trim().parse().unwrap()).collect(); DVec3::new(c[0], c[1], c[2]) };
+    let start = v3(&env("CFM_H_START", "2.5,0,0"));
+    let r_e: f64 = env("CFM_H_RE", "0.2").parse().unwrap();
+    let m_e: f64 = env("CFM_H_ME", "3800").parse().unwrap();
+    let spin: f64 = env("CFM_H_SPIN", "1").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.3").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
+    let h: f64 = env("CFM_C_H", "0.1").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", &format!("{}", lambda / 5.0)).parse().unwrap();
+    let phi: f64 = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let r_d: f64 = env("CFM_F_RD", "6").parse().unwrap();
+    let fix = (env("CFM_H_FIXT", "250").parse::<f64>().unwrap() / dt).round() as u32;
+    let steps: u32 = env("CFM_H_STEPS", "5000").parse().unwrap();
+    let log: u32 = env("CFM_H_LOG", "250").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    println!("=== hydrogen: electron r {r_e}, m {m_e}, spin {spin:+}, start {start:?}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d} ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
+    let mut config = two_body_config(&[DVec3::ZERO, start], &["proton", "proton"], n_a, lambda, cap, seed, dt);
+    config.bodies[1].class = GpuClass::Electron;
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
+    config.h = h;
+    config.photon_fraction = phi;
+    config.boundary = Boundary::SphereEscape { r_d };
+    let mut engine = DsmcEngine::new(&ctx, config);
+    engine.shell_bodies[0].depth = 0;
+    let q_e = if spin < 0.0 { DQuat::from_rotation_arc(DVec3::Z, -DVec3::Z) } else { DQuat::IDENTITY };
+    engine.make_lepton(&ctx, 1, r_e);
+    engine.set_body_poses(&ctx, &[DVec3::ZERO, start], Some(&[DQuat::IDENTITY, q_e]));
+    for _ in 0..fix {
+        engine.step_flux(&ctx);
+    }
+    let mut x = start;
+    let mut v = DVec3::ZERO;
+    let mut win = DVec3::ZERO;
+    let mut hits = 0i64;
+    let mut bands = [0u64; 6]; // |lat| 0-30 / 30-60 / 60-90, then south / north caps (>60), then contact steps
+    let mut r_hist = Vec::new();
+    let r_min = 1.0 + r_e;
+    for s in 1..=steps {
+        let t = engine.step_flux(&ctx);
+        let dp = DVec3::new(t.sh_dp[1][0], t.sh_dp[1][1], t.sh_dp[1][2]);
+        hits += t.sh_contacts[1];
+        win += dp;
+        v += dp / m_e;
+        x += v * dt;
+        // Hard contact with the proton's envelope.
+        let r = x.length();
+        if r < r_min {
+            let n = x / r.max(1e-9);
+            x = n * r_min;
+            let vn = v.dot(n);
+            if vn < 0.0 {
+                v -= n * vn * 2.0;
+            }
+            bands[5] += 1;
+        }
+        if x.length() > r_d - 1.0 {
+            println!("electron escaped the domain at t {:.1}: {x:?}", s as f64 * dt);
+            break;
+        }
+        engine.set_body_poses(&ctx, &[DVec3::ZERO, x], Some(&[DQuat::IDENTITY, q_e]));
+        let r = x.length();
+        let lat = (x.z / r).clamp(-1.0, 1.0).asin().to_degrees();
+        bands[if lat.abs() < 30.0 { 0 } else if lat.abs() < 60.0 { 1 } else { 2 }] += 1;
+        if lat < -60.0 {
+            bands[3] += 1;
+        } else if lat > 60.0 {
+            bands[4] += 1;
+        }
+        r_hist.push(r);
+        if s % log == 0 {
+            let tw = log as f64 * dt;
+            let f = win / tw;
+            let rh = x / r;
+            let f_r = f.dot(rh);
+            // Poleward component: along -d(lat) direction toward the nearer pole.
+            let e_lat = (DVec3::Z - rh * rh.z).try_normalize().unwrap_or(DVec3::X);
+            let f_pole = f.dot(e_lat) * lat.signum();
+            println!(
+                "t {:7.1}: r {r:.3} lat {lat:+6.1} speed {:.4} | force/time radial {f_r:+.1} poleward {f_pole:+.1} | photon hits/time {:.0} | proton contacts {}",
+                s as f64 * dt,
+                v.length(),
+                hits as f64 / tw,
+                bands[5]
+            );
+            win = DVec3::ZERO;
+            hits = 0;
+        }
+    }
+    let n = r_hist.len().max(1) as f64;
+    println!(
+        "time share |lat| 0-30 {:.3} 30-60 {:.3} 60-90 {:.3} (uniform on a sphere 0.500/0.366/0.134) | south cap {:.3} north cap {:.3} | mean r {:.3}, last half {:.3}",
+        bands[0] as f64 / n,
+        bands[1] as f64 / n,
+        bands[2] as f64 / n,
+        bands[3] as f64 / n,
+        bands[4] as f64 / n,
+        r_hist.iter().sum::<f64>() / n,
+        r_hist[r_hist.len() / 2..].iter().sum::<f64>() / (r_hist.len() - r_hist.len() / 2).max(1) as f64
+    );
+}
+

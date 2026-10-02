@@ -709,6 +709,17 @@ impl DsmcEngine {
     /// recomputed once any body has moved more than h/4 since the last
     /// time. The domain stays where it was built. The bodies' own motion is
     /// not added to the ball velocity (it is many orders below c).
+    /// Doc §15.22: turn body `b` into a lepton (electron) of ball radius `r`
+    /// and re-upload the bodies (its envelope becomes its ball).
+    pub fn make_lepton(&mut self, ctx: &GpuContext, b: usize, r: f64) {
+        let sb = &mut self.shell_bodies[b];
+        sb.lepton = true;
+        sb.radius = r;
+        sb.signs = [1.0, 0.0, 0.0, 0.0];
+        let centers: Vec<glam::DVec3> = self.config.bodies.iter().map(|c| c.center).collect();
+        self.set_body_poses(ctx, &centers, None);
+    }
+
     pub fn set_body_centers(&mut self, ctx: &GpuContext, centers: &[glam::DVec3]) {
         self.set_body_poses(ctx, centers, None);
     }
@@ -736,8 +747,10 @@ impl DsmcEngine {
                 let axis = self.shell_bodies.get(i).map(|sb| sb.orient * glam::DVec3::Z).unwrap_or(b.orient.spin_axis());
                 let (p0, p1, sigma) = b.class.exit_profile();
                 let swing = self.config.swing_boost * b.class.chirality_sign();
+                // Doc §15.22: a lepton's envelope is its own ball.
+                let env_r = self.shell_bodies.get(i).filter(|sb| sb.lepton).map(|sb| sb.radius).unwrap_or(1.0);
                 GpuBody {
-                    center: [b.center.x as f32, b.center.y as f32, b.center.z as f32, 1.0],
+                    center: [b.center.x as f32, b.center.y as f32, b.center.z as f32, env_r as f32],
                     axis: [axis.x as f32, axis.y as f32, axis.z as f32, b.class.chirality_sign() as f32],
                     emit: [p0 as f32, p1.map(|v| v as f32).unwrap_or(-1.0), sigma as f32, swing as f32],
                     lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, 0.0],
@@ -917,7 +930,8 @@ impl DsmcEngine {
             let r = &self.config.rough;
             let neutron = self.config.bodies.get(b).map(|c| c.class == super::config::GpuClass::Neutron).unwrap_or(false);
             let hold = r.hold_time * if neutron { r.hold_time_neutron } else { 1.0 };
-            let open = r.hold_cap == 0 || self.held.get(b).copied().unwrap_or(0) < r.hold_cap as i64;
+            // Doc §15.22: lepton bodies never take photons in.
+            let open = !body.lepton && (r.hold_cap == 0 || self.held.get(b).copied().unwrap_or(0) < r.hold_cap as i64);
             let (mode, par) = match r.intake {
                 super::config::Intake::Ball => (0.0, 0.0),
                 super::config::Intake::Envelope { p } => (1.0, p),

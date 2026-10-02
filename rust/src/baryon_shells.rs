@@ -104,11 +104,16 @@ pub struct ShellBody {
     /// only by the unresolved-inner-levels surface twist; +1 in every
     /// Spin-mode preset; the adopted neutron flips level 4).
     pub tier1_signs: [f64; 4],
+    /// Doc §15.22: a lepton (electron) body. Mathis's electron is a photon
+    /// with only the level-9 axial spin: one ball of radius `radius` at
+    /// `center`, spinning about the axis at edge speed c, with no orbiting
+    /// levels. It takes nothing in (too big to be recycled, diatom.pdf).
+    pub lepton: bool,
 }
 
 impl ShellBody {
     pub fn new(center: DVec3, orient: DQuat, radius: f64, signs: [f64; 4]) -> Self {
-        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4] }
+        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4], lepton: false }
     }
 
     /// Angular rate of electron-tier level `8 - m` at edge speed c.
@@ -235,6 +240,11 @@ impl ShellBody {
     /// chain applied to the origin; every chain level carries the ball, so
     /// V = sum_j w_j x (c - o_j) and Omega = sum_j w_j.
     pub fn ball(&self) -> BallState {
+        if self.lepton {
+            let axis = self.orient * DVec3::Z;
+            let sign = if self.signs[0] < 0.0 { -1.0 } else { 1.0 };
+            return BallState { center: self.center, radius: self.radius, velocity: DVec3::ZERO, omega: axis * (sign / self.radius), frame: self.orient };
+        }
         // (rotation, offset, axis, rate) per chain level, innermost first.
         let mut chain: Vec<(DQuat, DVec3, DVec3, f64)> = Vec::with_capacity(8);
         for m in (0..self.depth).rev() {
