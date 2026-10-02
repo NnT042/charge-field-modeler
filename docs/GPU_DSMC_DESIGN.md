@@ -2625,6 +2625,70 @@ centre of mass):
 - **Next:** a lateral-stiffness screen (offset one body sideways and read
   the restoring force), polar-focused intake, and the electron.
 
+### 15.22 The electron and the hydrogen atom (2026-10-02)
+
+**User direction:** sort out the electron, the hydrogen atom and H2 first,
+then revisit helium once the recycling field is calibrated on those. The
+user's point on the neutron jet: channelled charge should meet the next
+baryon's polar vortex and pass through like water down a drain. Our maze
+bodies have no pass-through channel: everything taken in is re-emitted at
+the body's own exits, so the jet's axial momentum is dumped into the
+proton. A through-charge channel (venus2.pdf) is the first item when we
+return to helium.
+
+**Mathis on the electron:**
+- diatom.pdf: it does not orbit the nucleus. It circles the *pole* of one
+  proton, "like a pingpong ball too big to go down the drain with the
+  water"; electrons near the equator are "driven off by emitted charge",
+  and those near the pole are "attracted by incoming charge".
+- elec3.html / elecpro.html: it is a photon with only the level-9 axial
+  spin.
+- electron.pdf: south-pole electrons spin with the nucleus; north-pole
+  electrons are bound "in half the amount" and are released first.
+
+**Build (dc0cba7):**
+- `ShellBody::lepton`: one ball of radius `radius` at the body centre,
+  spinning about its axis at edge speed c, with no orbiting levels.
+- `DsmcEngine::make_lepton(ctx, b, r)`: the body never takes photons in
+  (keyframe intake flag closed), and its envelope is its own ball. Photons
+  bounce off it with the body contact law.
+- `report_hydrogen`:
+  - a proton (maze, envelope intake) held at the origin, pole +z;
+  - a free electron of radius `CFM_H_RE` and mass `CFM_H_ME`, moved by its
+    contact impulses alone;
+  - hard contact at 1 + r_e (it cannot enter the proton).
+  - The report logs radius, latitude, and the radial / poleward force.
+
+**First runs:**
+- λ 0.3, n_a 8000, h 0.1, R_D 6, φ 2/3.
+- Electron r 0.2 (≈ 900 photon hits per time unit), m = 3800 (M/1836 for
+  M 7×10⁶).
+- Spin +z; 250 time units held, then 300 free.
+
+| start | result |
+|---|---|
+| equator (2.5, 0, 0) | Weak outward push (+5), then a slow drift outward; escapes at t ≈ 89. |
+| north pole (0, 0, 2.5) | Same: pushed out (+3), escapes at t ≈ 86. |
+| 45° north | Drifts out at about 50° latitude; escapes at t ≈ 129. |
+| **south pole (0, 0, −2.5)** | **Captured.** Pulled in hard (radial −110 to −165 per unit time against ±5 elsewhere), it sits against the proton at r ≈ 1.2–1.3 and latitude −50° to −75° for the whole 300 time units (78 touches). |
+
+**Reading:**
+- The electron is bound at one pole only, the south, and pushed away
+  everywhere else. That is diatom.pdf's picture: one pole, not the
+  equator. It also matches electron.pdf's south-tight / north-loose
+  asymmetry. Nothing was tuned for it.
+- The south preference follows the proton's south-dominant intake.
+  - §15.15 measured fresh intake S 0.110 / N 0.082 and net inflow at
+    r = 1.5 of S +0.043 / N +0.008.
+  - §15.15 also found that skew does not change with φ (it is
+    body-intrinsic). So whether this south preference is Mathis's
+    field-driven one is open; a φ = 0.5 control will tell.
+- **Capture range:** strong pull right at the pole; weak forces (±5) by
+  r ≈ 2.5 off the axis.
+
+**Caveats:** one seed; the proton is held; r_e and m_e are scaled up from
+true size (1/1800); the electron's spin sense has not been varied.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
