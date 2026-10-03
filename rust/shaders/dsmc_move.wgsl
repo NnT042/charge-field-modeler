@@ -112,6 +112,7 @@ const FLAG_HELD: u32 = 1u << 20u;  // held in a body's tank; c[1] = release step
 const TALLY_HOLD: u32 = 1943u;     // [b*2 + (0 in, 1 out)], len 8
 const TALLY_CAPT_LAT: u32 = 1951u; // [(tag != 0)*180 + bin], body 0 envelope captures only, len 360
 const TALLY_ENV_CAPT: u32 = 2311u; // [b], len 4
+const TALLY_HOLE_PASS: u32 = 2316u; // [b], len 4 (doc §15.24)
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -189,7 +190,7 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-const BALLKEY_STRIDE: u32 = 48u;
+const BALLKEY_STRIDE: u32 = 49u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
 
 fn quat_rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -1022,6 +1023,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let ekey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0xE17Eu));
                 if (ik.x > 0.5 && ik.w > 0.5 && ik.w < 1.5) {
                     take = rand01(params.seed_hi, params.seed_lo, ekey, 0u) < ik.z;
+                    // Doc §15.24: the through-charge hole passes polar
+                    // entries straight through.
+                    let hole = ballkeys[b * BALLKEY_STRIDE + 48u].x;
+                    if (hole > 0.0) {
+                        let relh = pos - bodies[b].center.xyz;
+                        let axh = bodies[b].axis.xyz;
+                        let perph = relh - dot(relh, axh) * axh;
+                        if (dot(perph, perph) <= hole * hole) {
+                            take = false;
+                            atomicAdd(&tallies[TALLY_HOLE_PASS + b], 1);
+                        }
+                    }
                 } else if (ik.x > 0.5 && ik.w > 1.5) {
                     let rel = pos - bodies[b].center.xyz;
                     let ax = bodies[b].axis.xyz;

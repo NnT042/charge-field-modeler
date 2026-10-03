@@ -185,6 +185,12 @@ pub struct RoughParams {
     pub hold_time: f64,
     pub hold_time_neutron: f64,
     pub hold_cap: u32,
+    /// Doc §15.24: through-charge hole. With envelope intake, a photon that
+    /// enters within `through_hole` (fraction of the radius) of the spin
+    /// axis is not taken in: it crosses the body on its own line, pushing
+    /// nothing (venus2.pdf through charge, "water down the drain").
+    /// 0 = off.
+    pub through_hole: f64,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -192,7 +198,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, body_law: None }
     }
 }
 

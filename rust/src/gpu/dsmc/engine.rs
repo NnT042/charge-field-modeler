@@ -134,6 +134,8 @@ pub struct Totals {
     pub hold: [[i64; 2]; 4],
     pub capt_lat: Vec<i64>,
     pub env_capt: [i64; 4],
+    /// Doc §15.24: photons passed through the through-charge hole.
+    pub hole_pass: [i64; 4],
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
 }
@@ -266,6 +268,7 @@ impl Totals {
             self.hold[b][0] += other.hold[b][0];
             self.hold[b][1] += other.hold[b][1];
             self.env_capt[b] += other.env_capt[b];
+            self.hole_pass[b] += other.hole_pass[b];
         }
         add_vec(&mut self.capt_lat, &other.capt_lat);
         self.par_cells += other.par_cells;
@@ -454,6 +457,7 @@ impl Totals {
             self.hold[b][0] += raw[TALLY_HOLD + b * 2] as i64;
             self.hold[b][1] += raw[TALLY_HOLD + b * 2 + 1] as i64;
             self.env_capt[b] += raw[TALLY_ENV_CAPT + b] as i64;
+            self.hole_pass[b] += raw[super::gpu_types::TALLY_HOLE_PASS + b] as i64;
         }
         let cl: Vec<i64> = raw[TALLY_CAPT_LAT..TALLY_CAPT_LAT + 360].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.capt_lat, &cl);
@@ -938,6 +942,7 @@ impl DsmcEngine {
                 super::config::Intake::Polar { aperture } => (2.0, aperture),
             };
             data[b * BALLKEY_STRIDE + 47] = [if open { 1.0 } else { 0.0 }, (hold / self.config.dt).round() as f32, par as f32, mode];
+            data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, 0.0, 0.0, 0.0];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

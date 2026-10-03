@@ -499,7 +499,10 @@ pub const TALLY_ENV_CAPT: usize = 2311;
 /// Doc §15.13: cell-steps whose NTC candidates ran in parallel rounds.
 pub const TALLY_PAR_CELLS: usize = 2315;
 
-pub const TALLY_LEN: usize = 2316;
+/// Doc §15.24: photons passed through the through-charge hole, per body, len 4.
+pub const TALLY_HOLE_PASS: usize = 2316;
+
+pub const TALLY_LEN: usize = 2320;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
@@ -510,7 +513,8 @@ pub const TALLY_LEN: usize = 2316;
 /// (a, x, y, z) signs.
 /// Doc §15.11: [47] = (intake open 1/0, hold steps, intake parameter,
 /// intake mode 0 ball / 1 envelope / 2 polar).
-pub const BALLKEY_STRIDE: usize = 48;
+/// Doc §15.24: [48] = (through-charge hole radius, 0, 0, 0).
+pub const BALLKEY_STRIDE: usize = 49;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

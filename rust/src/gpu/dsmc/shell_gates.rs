@@ -1474,6 +1474,36 @@ fn maze_eject_c_bounds_speed() {
     assert!(max_by[1] > max_by[0], "Relative should heat past EjectC ({} vs {})", max_by[1], max_by[0]);
 }
 
+/// Doc §15.24 gate: the through-charge hole. With hole 0 nothing passes;
+/// with hole 1/3 the passes are the share of envelope entries that land on
+/// the two polar caps inside the cylinder (1 - sqrt(8/9) = 0.057 of the
+/// area for isotropic arrivals; the body's own emission skews it a little).
+#[test]
+fn through_hole_passes_polar_entries() {
+    use super::config::{Intake, MazeSpeed};
+    let ctx = GpuContext::new().expect("GPU");
+    let mut share = Vec::new();
+    for hole in [0.0, 1.0 / 3.0] {
+        let mut config = two_body_config(&[DVec3::ZERO], &["proton"], 2000.0, 1.0, 2_000_000, 0x401E, 0.05);
+        config.boundary = Boundary::SphereEscape { r_d: 2.5 };
+        config.h = 0.25;
+        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, through_hole: hole, ..config.rough };
+        let mut engine = DsmcEngine::new(&ctx, config);
+        for _ in 0..200 {
+            engine.step_flux(&ctx);
+        }
+        let mut t = Totals::default();
+        for _ in 0..400 {
+            t.add(&engine.step_flux(&ctx));
+        }
+        let s = t.hole_pass[0] as f64 / (t.hole_pass[0] + t.env_capt[0]).max(1) as f64;
+        println!("hole {hole:.3}: passes {}, envelope captures {}, pass share {s:.4}", t.hole_pass[0], t.env_capt[0]);
+        share.push(s);
+    }
+    assert_eq!(share[0], 0.0, "no hole, no passes");
+    assert!(share[1] > 0.03 && share[1] < 0.10, "hole 1/3 pass share {} (expected ~0.057)", share[1]);
+}
+
 /// Doc §15.17 gate: `set_body_centers` moves a body without moving the
 /// domain. After a 1.0 shift the ball keyframes sit at the new centre, the
 /// body keeps capturing at its old rate (uniform ambient), and the live
@@ -2075,7 +2105,9 @@ fn report_deuteron() {
     // CFM_D_INTAKE: env<p> (default env1) | polar<aperture> (doc §15.23).
     let intake_s = env("CFM_D_INTAKE", "env1");
     let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
-    println!("intake {d_intake:?}");
+    // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
+    let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
+    println!("intake {d_intake:?}, through hole {d_hole}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2085,7 +2117,7 @@ fn report_deuteron() {
                 bc.class = GpuClass::Electron;
             }
         }
-        config.rough = RoughParams { intake: d_intake, maze_speed: MazeSpeed::EjectC, ..config.rough };
+        config.rough = RoughParams { intake: d_intake, maze_speed: MazeSpeed::EjectC, through_hole: d_hole, ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2475,8 +2507,9 @@ fn report_hydrogen() {
     // a polar drain, photons taken in only within `aperture` of the axis).
     let intake_s = env("CFM_H_INTAKE", "env1");
     let intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
-    println!("intake {intake:?}");
-    config.rough = RoughParams { intake, maze_speed: MazeSpeed::EjectC, ..config.rough };
+    let hole: f64 = env("CFM_H_HOLE", "0").parse().unwrap();
+    println!("intake {intake:?}, through hole {hole}");
+    config.rough = RoughParams { intake, maze_speed: MazeSpeed::EjectC, through_hole: hole, ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };
