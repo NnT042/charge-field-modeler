@@ -2860,7 +2860,31 @@ units free, seeds matched to §15.24's no-hole runs.
   4.00 → 4.47 (t 120) → 5.55 (t 210) → 7.33 (t 300).
 - This layout does not bond at λ 0.1. Its λ 0.3 frozen screen (+85,
   compressive) does not carry over to the denser field.
-- Next: frozen screens of the other layouts at λ 0.1.
+
+**Frozen screens at λ 0.1** (proton self-force as above). "p→p" is each
+proton's force toward the other (+ = together).
+
+| layout | p→p at λ 0.3 | p→p at λ 0.1 | electrons at λ 0.1 |
+|---|---|---|---|
+| e p↑ · p↓ e (outside) | −418, −451 | −449, −437 | held +183, +190 |
+| e p↑ · e p↑ (both bottom, parallel) | +77, −720 | **+385, −643** | held +181, +274 |
+| p↓ e · e p↑ (between, d 4) | +85, +85 | −50, −42 | held +195, +193 |
+
+- The between layout flips to a mild repulsion at λ 0.1, which matches
+  its free run.
+- The parallel ("threaded screw", combination 2) layout is the one moving
+  toward binding as the field gets denser. The lower proton's pull rose
+  5×, and the net separating push fell from ~640 to ~260.
+- Electrons are held in every layout.
+- User's reading (2026-10-03): pole-on protons should not push each other
+  apart. The disc's outflow should swirl back to the poles as a cone
+  vortex, whose wall (the ±30° emission edge) turns the partner's stream
+  aside before it reaches the core. Our measured return flow is weak (≈5-10%
+  of intake), so the partner's axial stream reaches the core and its
+  momentum is absorbed.
+- Proposed next: a flow-field picture (density + mean velocity on a slice
+  through the axis, with arrival sources by emitter tag) for one proton and
+  for a pole-on pair, to see whether a return cone exists.
 
 ## 12. Out of scope for this step
 
