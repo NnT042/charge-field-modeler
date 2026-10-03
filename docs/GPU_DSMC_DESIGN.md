@@ -2689,6 +2689,56 @@ return to helium.
 **Caveats:** one seed; the proton is held; r_e and m_e are scaled up from
 true size (1/1800); the electron's spin sense has not been varied.
 
+### 15.23 Hydrogen controls: the south-pole well is real but leaky (2026-10-02)
+
+Same setup as §15.22 (λ 0.3, R_D 6, r_e 0.2, m_e 3800), proton held unless
+noted. The hydrogen log now also gives the swirl force and velocity about
+the proton axis.
+
+| run | start | result |
+|---|---|---|
+| φ = 0.5 (balanced field) | south 2.5 | Captured at t ≈ 30, held to the end (300); south cap share 0.74 (0.51 at φ 2/3). |
+| electron spin flipped | south 2.5 | Captured at t ≈ 45; flung at t ≈ 70 (speed 0.22), escapes. |
+| start farther out | south 3.5 | Never pulled (forces ±7); random-walks out, escapes at t ≈ 114. |
+| seed 777 (long run) | south 2.5 | Captured at t ≈ 45; flung at t ≈ 108, escapes. |
+| same, fine log (3 tu) | south 2.5 | See the ejection sequence below. |
+| start at the pole | south 1.3, seed 777 | Held ~120, drifts to −59°, flung at t ≈ 130. |
+| free proton (moves, turns; report_deuteron "pe") | south 1.3 | Flung between t 30 and 60. |
+| polar drain intake (aperture 0.5, 0.7) | south 2.5 | No pull at all; escapes. |
+| polar drain 0.5 | south 1.3 | Pushed straight out (+14, +21 radial). |
+
+**Readings:**
+- **South preference is body-intrinsic.** It survives φ = 0.5 (stronger,
+  if anything). In our model the side is set by the proton's spin sense,
+  not by the field's photon excess as in diatom.pdf. Flipping the proton
+  flips the side (the H2 layouts below rely on that).
+- **Spin sense of the electron:** the flipped electron was flung, but so
+  were two matched-spin electrons; one seed each, no verdict.
+- **Capture reach:** between 2.5 and 3.5 proton radii at this density
+  (Mathis: the Bohr radius is the limit of capture, not an orbit). The
+  pull switches on inside r ≈ 2.
+- **Why it leaks (fine log):** in the well the radial pull is −150 to
+  −230, but the poleward (centring) force is only ±20 noise. The electron
+  wanders down the cap; past about −60° the push turns equatorward (−30 to
+  −70), and at −52° it takes one strong kick (poleward +147, swirl +108,
+  radial +39 over 3 time units). That is the edge of the proton's swept
+  emission. Residence times: ≥ 250, ≥ 270, ~30, ~65, ~30–60, ~120.
+- **The pull is a shadow, not a drain.** With envelope intake the proton
+  absorbs all round, and the electron sees ~700 hits per time unit at the
+  pole against ~980 in open field. The polar drain absorbs too little to
+  shadow and its re-emission pushes outward, so it binds nothing.
+  Mathis's converging polar vortex (which would centre the electron) is
+  not resolved at λ 0.3.
+- **Lever:** density. The pull scales with density and the kick noise as
+  its square root, so a denser field should deepen the well relative to
+  the kicks (λ 0.1 next). Mathis: a lower charge density (temperature)
+  weakens the minima and maxima.
+
+**Build:** report_deuteron takes electrons ('e' in CFM_F_PAIR; CFM_D_RE,
+CFM_D_ME; mass-weighted contacts and centre; electrons do not turn) and
+both reports take CFM_*_INTAKE (env<p> | polar<aperture>). Electron
+self-force in isolation: (−4.3, +2.9, −0.3) per unit time, zero torque.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

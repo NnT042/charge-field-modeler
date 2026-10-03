@@ -2064,17 +2064,28 @@ fn report_deuteron() {
     let phi: f64 = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
     let r_d: f64 = env("CFM_F_RD", "4.5").parse().unwrap();
     let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
-    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect();
+    // Doc §15.23: 'e' in CFM_F_PAIR is an electron (lepton ball, radius
+    // CFM_D_RE, mass CFM_D_ME, no intake; spin axis from CFM_D_AXES).
+    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else if c == 'e' { "electron" } else { "proton" }).collect();
+    let r_e: f64 = env("CFM_D_RE", "0.2").parse().unwrap();
+    let m_e: f64 = env("CFM_D_ME", "3800").parse().unwrap();
     let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
     println!("=== deuteron: {pair} {geom}, sep0 {sep0}, mass {mass:e}, damp {damp}, fixed centre {fix_com}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d} ===");
     let ctx = GpuContext::new().expect("GPU");
+    // CFM_D_INTAKE: env<p> (default env1) | polar<aperture> (doc §15.23).
+    let intake_s = env("CFM_D_INTAKE", "env1");
+    let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
+    println!("intake {d_intake:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
-        for (bc, o) in config.bodies.iter_mut().zip(ors) {
+        for ((bc, o), cl) in config.bodies.iter_mut().zip(ors).zip(cls) {
             bc.orient = *o;
+            if *cl == "electron" {
+                bc.class = GpuClass::Electron;
+            }
         }
-        config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
+        config.rough = RoughParams { intake: d_intake, maze_speed: MazeSpeed::EjectC, ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2084,6 +2095,11 @@ fn report_deuteron() {
             if *cl == "neutron" {
                 b.inner_signs = NEUTRON_INNER_SIGNS;
                 b.tier1_signs = NEUTRON_INNER_SIGNS;
+            }
+        }
+        for (b, cl) in cls.iter().enumerate() {
+            if *cl == "electron" {
+                engine.make_lepton(&ctx, b, r_e);
             }
         }
         engine
@@ -2213,6 +2229,10 @@ fn report_deuteron() {
     println!("rotation: inertia {inertia:e}, L_spin {l_spin:e}, damp {rdamp}");
     println!("layout {layout}: orients {ors:?}, start {:?}", x.iter().map(|p| (p.x, p.y, p.z)).collect::<Vec<_>>());
     let mut v = vec![DVec3::ZERO; n];
+    let is_e: Vec<bool> = classes.iter().map(|c| *c == "electron").collect();
+    let m_b: Vec<f64> = is_e.iter().map(|&e| if e { m_e } else { mass }).collect();
+    let rad: Vec<f64> = is_e.iter().map(|&e| if e { r_e } else { contact / 2.0 }).collect();
+    let m_tot: f64 = m_b.iter().sum();
     let mut engine = make(&x, &classes, &ors);
     engine.set_body_poses(&ctx, &x, Some(&q));
     for _ in 0..fix {
@@ -2241,7 +2261,7 @@ fn report_deuteron() {
             caps[b] += t.feed[b].iter().sum::<i64>();
             if !freeze {
                 let vb = v[b];
-                v[b] = vb + j / mass - vb * damp * dt;
+                v[b] = vb + j / m_b[b] - vb * damp * dt;
                 x[b] += v[b] * dt;
             }
             fsum[b] += j;
@@ -2252,15 +2272,18 @@ fn report_deuteron() {
                 for k in i + 1..n {
                     let d = x[k] - x[i];
                     let r = d.length();
-                    if r < contact && r > 1e-9 {
+                    let c_ik = rad[i] + rad[k];
+                    if r < c_ik && r > 1e-9 {
+                        // Elastic, mass-weighted (equal masses: the old
+                        // half-and-half push and normal-velocity swap).
                         let nrm = d / r;
-                        let push = (contact - r) / 2.0;
-                        x[i] -= nrm * push;
-                        x[k] += nrm * push;
+                        let (wi, wk) = (m_b[k] / (m_b[i] + m_b[k]), m_b[i] / (m_b[i] + m_b[k]));
+                        x[i] -= nrm * (c_ik - r) * wi;
+                        x[k] += nrm * (c_ik - r) * wk;
                         let vn = (v[k] - v[i]).dot(nrm);
                         if vn < 0.0 {
-                            v[i] += nrm * vn;
-                            v[k] -= nrm * vn;
+                            v[i] += nrm * vn * 2.0 * wi;
+                            v[k] -= nrm * vn * 2.0 * wk;
                         }
                         contacts_now += 1;
                     }
@@ -2269,8 +2292,8 @@ fn report_deuteron() {
             n_contacts += contacts_now;
         }
         if fix_com {
-            let com = x.iter().sum::<DVec3>() / n as f64;
-            let vcom = v.iter().sum::<DVec3>() / n as f64;
+            let com = (0..n).map(|b| x[b] * m_b[b]).sum::<DVec3>() / m_tot;
+            let vcom = (0..n).map(|b| v[b] * m_b[b]).sum::<DVec3>() / m_tot;
             for b in 0..n {
                 x[b] -= com;
                 v[b] -= vcom;
@@ -2286,6 +2309,9 @@ fn report_deuteron() {
         }
         if inertia > 0.0 && !freeze {
             for b in 0..n {
+                if is_e[b] {
+                    continue;
+                }
                 let a = q[b] * DVec3::Z;
                 let tq = DVec3::new(t.sh_torque[b][0], t.sh_torque[b][1], t.sh_torque[b][2]);
                 let jr = tq - (q[b] * t_self[classes[b]]) * dt;
@@ -2351,6 +2377,15 @@ fn report_deuteron() {
                     line += &format!(" {:.0}", twin[b].length() / tw);
                 }
                 twin = vec![DVec3::ZERO; n];
+            }
+            // Each electron: distance to and latitude on its nearest baryon
+            // (latitude in that baryon's frame, + = toward its pole).
+            for b in (0..n).filter(|&b| is_e[b]) {
+                if let Some(k) = (0..n).filter(|&k| !is_e[k]).min_by(|&i, &j| (x[i] - x[b]).length().total_cmp(&(x[j] - x[b]).length())) {
+                    let d = x[b] - x[k];
+                    let lat = (d.normalize().dot(q[k] * DVec3::Z)).clamp(-1.0, 1.0).asin().to_degrees();
+                    line += &format!(" | e{b} on {}{k}: r {:.2} lat {lat:+.0}", &classes[k][..1], d.length());
+                }
             }
             line += &format!(" | contact steps {n_contacts}");
             line += " | captures/time";
@@ -2436,7 +2471,12 @@ fn report_hydrogen() {
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
     let mut config = two_body_config(&[DVec3::ZERO, start], &["proton", "proton"], n_a, lambda, cap, seed, dt);
     config.bodies[1].class = GpuClass::Electron;
-    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, ..config.rough };
+    // CFM_H_INTAKE: env<p> (default env1) | polar<aperture> (doc §15.23:
+    // a polar drain, photons taken in only within `aperture` of the axis).
+    let intake_s = env("CFM_H_INTAKE", "env1");
+    let intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
+    println!("intake {intake:?}");
+    config.rough = RoughParams { intake, maze_speed: MazeSpeed::EjectC, ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };
@@ -2495,10 +2535,15 @@ fn report_hydrogen() {
             // Poleward component: along -d(lat) direction toward the nearer pole.
             let e_lat = (DVec3::Z - rh * rh.z).try_normalize().unwrap_or(DVec3::X);
             let f_pole = f.dot(e_lat) * lat.signum();
+            // Swirl about the proton axis (+ = the proton's own turning sense).
+            let e_az = DVec3::Z.cross(rh).try_normalize().unwrap_or(DVec3::Y);
             println!(
-                "t {:7.1}: r {r:.3} lat {lat:+6.1} speed {:.4} | force/time radial {f_r:+.1} poleward {f_pole:+.1} | photon hits/time {:.0} | proton contacts {}",
+                "t {:7.1}: r {r:.3} lat {lat:+6.1} speed {:.4} (radial {:+.4} swirl {:+.4}) | force/time radial {f_r:+.1} poleward {f_pole:+.1} swirl {:+.1} | photon hits/time {:.0} | proton contacts {}",
                 s as f64 * dt,
                 v.length(),
+                v.dot(rh),
+                v.dot(e_az),
+                f.dot(e_az),
                 hits as f64 / tw,
                 bands[5]
             );
