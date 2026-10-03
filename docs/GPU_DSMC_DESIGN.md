@@ -2809,6 +2809,19 @@ Screens with a hole of 1/3:
   none at radius 1/3.
 - Electrons stay held with the hole (+172).
 
+**Hydrogen with the hole:** electron started at the pole (r 1.3), matched
+seeds, residence in time units:
+
+| | seed 777 | seed 1234 | seed 49344 |
+|---|---|---|---|
+| no hole | ~130 | ≥ 300 | ~75 |
+| hole 1/3 | ~84 | ~216 | ≥ 300 |
+
+- No difference: residence is a broad distribution of order 100-300 time
+  units either way.
+- Every ejection leaves the same way, by wandering down the cap past
+  −40° to −55° into the emission edge (§15.23).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
