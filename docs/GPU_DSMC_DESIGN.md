@@ -2739,6 +2739,76 @@ CFM_D_ME; mass-weighted contacts and centre; electrons do not turn) and
 both reports take CFM_*_INTAKE (env<p> | polar<aperture>). Electron
 self-force in isolation: (−4.3, +2.9, −0.3) per unit time, zero torque.
 
+### 15.24 H2 screens, a free H2 run, and the through-charge hole (2026-10-02)
+
+**Mathis (diatom.pdf, figure 1):** H2 bonds pole to pole, never at the
+equator. In his account, which combinations bond:
+
+| combination | bonds? | Mathis's reason |
+|---|---|---|
+| electrons outside, "top-bottom" | yes, whatever the spins | a charge minimum between the atoms; the push comes from the outside poles |
+| both electrons on the same side | only with equal spins (threaded screw) | |
+| electrons between the protons | no | competing vortices drive the atoms apart |
+
+The equal-spin para bond (combination 6) is the strongest. In our model
+the electron sits at the proton's south pole (§15.22-23), so the
+electron's side fixes the proton's orientation.
+
+**Frozen screens** (CFM_D_FREEZE, λ 0.3, R_D 6, held 250 + 150 time
+units). "p→p" is each proton's interaction force toward the other
+(+ = together).
+
+| layout | p-p distance | p→p (lower, upper) | electrons |
+|---|---|---|---|
+| e p↑ · p↓ e (outside; north faces north) | 3 | −418, −451 | held +180 |
+| p↑ · p↓ (same, no electrons) | 3 | −358, −357 | – |
+| e p↑ · e p↑ (both "bottom", parallel) | 3 | +77, −720 | held +177, +226 |
+| p↑ · p↑ (parallel, no electrons) | 3 | +162, −873 | – |
+| p↓ e · e p↑ (between; south faces south) | 4 | **+85, +85** | held +180, +177 |
+| p↓ · p↑ (same, no electrons) | 4 | −25, −13 | – |
+
+- Only electrons between the protons compress the pair: south faces south,
+  each electron on its own proton. That is the opposite of Mathis's
+  combinations 7-8.
+- The south-south pair alone is neutral. The electrons in the gap supply
+  the pull, by shading each proton's inner face.
+- North-facing poles repel. In a parallel pair the lower proton's north
+  pushes the upper hard (−873) while the lower is drawn up (+162).
+  - That is the "hose into the drain" problem: a body absorbs the axial
+    stream that hits its pole and keeps its momentum.
+- Every pair also feels an opposite sideways force (about ±600 on the
+  N-N pair), a shear, plus tilt torques of 100-900.
+
+**Free H2 run** (the between layout, rotation on, 300 time units after
+250 held):
+- Neither electron escaped in 300 time units, the longest hold so far.
+- At t ≈ 45 one electron hopped to the other proton. Both electrons then
+  sat together (0.4-0.6 apart) on one proton's south pole.
+- The protons drifted apart slowly: 3.98 → 4.53, faster near the end.
+- Not bound yet.
+
+**Through-charge hole** (7a5f744): `RoughParams::through_hole`, default 0.
+- With envelope intake, a photon that enters within the hole radius of the
+  spin axis is not taken in. It crosses on its own line and pushes
+  nothing (venus2.pdf through charge; the user's "water down the drain").
+- Gate `through_hole_passes_polar_entries`: a hole of 1/3 passes 6.3% of
+  entries against the 5.7% polar-cap area.
+- Proton self-force with the hole: (−261, −152, −248). Without it:
+  (−281, −164, −198).
+
+Screens with a hole of 1/3:
+
+| layout | p→p without hole | p→p with hole |
+|---|---|---|
+| p↑ · p↑ (parallel) | +162, −873 | +149, −544 |
+| p↑ · p↓ (north faces north) | −358, −357 | −283, −302 |
+| e p↑ · p↓ e (outside) | −418, −451 | −301, −296 |
+| e p↑ · e p↑ (both bottom) | +77, −720 | +134, −487 |
+
+- The hole cuts the axial push by 20-40% in every layout but reverses
+  none at radius 1/3.
+- Electrons stay held with the hole (+172).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
