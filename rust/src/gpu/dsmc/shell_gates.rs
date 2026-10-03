@@ -2677,9 +2677,23 @@ fn report_flowmap() {
     let mut tags = vec![[0f64; 3]; cells]; // ambient, body 0, body 1
     let mut plus = vec![0f64; cells];
     let mut t = Totals::default();
+    // Body 0 ball kinematics, sampled every step: mean ball velocity along
+    // the axis by the ball's own (distance from axis, height) in the body
+    // frame. Emission inherits the ball velocity (EjectC: v = v_ball + c).
+    let mut bk = vec![[0f64; 3]; 4 * 4]; // [r band 0-0.25-0.5-0.75-1][z band] -> (n, sum vz, sum |v|)
     for k in 0..snaps {
         for _ in 0..every {
             t.add(&engine.step_flux(&ctx));
+            let sb = &engine.shell_bodies[0];
+            let bs = sb.ball();
+            let rel = sb.orient.inverse() * (bs.center - sb.center);
+            let vl = sb.orient.inverse() * bs.velocity;
+            let ir = ((rel.x * rel.x + rel.y * rel.y).sqrt() / 0.25).min(3.0) as usize;
+            let iz = (((rel.z + 1.0) / 0.5).max(0.0) as usize).min(3);
+            let c = &mut bk[ir * 4 + iz];
+            c[0] += 1.0;
+            c[1] += vl.z;
+            c[2] += vl.length();
         }
         for p in engine.read_photons(&ctx) {
             // Skip dead photons and photons held in a tank (flag bit 20).
@@ -2712,6 +2726,23 @@ fn report_flowmap() {
     let steps = (snaps * every) as f64;
     let caps: Vec<String> = (0..centers.len()).map(|b| format!("{:.0}", t.env_capt[b] as f64 / (steps * dt))).collect();
     println!("envelope captures per unit time: {}", caps.join(", "));
+    // Body 0 maze outcomes [escaped upright, escaped flipped, trapped
+    // upright, trapped flipped, patch fallbacks] and the emission direction
+    // latitude at the ball (before the ball's own velocity is added).
+    println!("body 0 maze outcomes {:?}", t.maze);
+    for ir in 0..4 {
+        let row: Vec<String> = (0..4).map(|iz| { let c = bk[ir * 4 + iz]; if c[0] > 0.0 { format!("z{:+.2}..: share {:.3} vz {:+.2} |v| {:.2}", iz as f64 * 0.5 - 1.0, c[0] / (snaps * every) as f64, c[1] / c[0], c[2] / c[0]) } else { "-".into() } }).collect();
+        println!("ball at axis dist {:.2}-{:.2}: {}", ir as f64 * 0.25, ir as f64 * 0.25 + 0.25, row.join(" | "));
+    }
+    let ml = &t.maze_lat;
+    if ml.len() == 180 {
+        let band = |lo: i32, hi: i32| -> i64 { (0..180).filter(|&k| { let l = k as i32 - 90; l >= lo && l < hi }).map(|k| ml[k]).sum() };
+        let tot = ml.iter().sum::<i64>().max(1) as f64;
+        println!(
+            "body 0 emission latitude at the ball: N 60-90 {:.3}, N 30-60 {:.3}, eq +-30 {:.3}, S 30-60 {:.3}, S 60-90 {:.3}",
+            band(60, 91) as f64 / tot, band(30, 60) as f64 / tot, band(-30, 30) as f64 / tot, band(-60, -30) as f64 / tot, band(-91, -60) as f64 / tot
+        );
+    }
     // Text digest: density and mean flow on a few probe points (2x2 cells).
     let vol = |ir: usize| 2.0 * std::f64::consts::PI * (ir as f64 + 0.5) * DR * DR * DR;
     let probe = |rr: f64, zz: f64| -> String {

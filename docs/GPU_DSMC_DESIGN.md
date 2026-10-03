@@ -2948,15 +2948,42 @@ protons should never push apart.
 - South intake comes mostly through 30-60° (−1437 to −1915); the equator
   is quiet.
 
+**Where the north jet comes from** (λ 0.3 check, body 0 tallies):
+- Not the maze. Every proton emission leaves the ball within ±30° of the
+  equator (maze outcomes all "escaped").
+- It is the ball's own motion. Sampled every step in the body frame:
+
+| ball distance from axis | share of time | mean v_z |
+|---|---|---|
+| 0.25-0.5 | 0.50 | +0.95 c |
+| 0.5-0.75 | 0.50 | −0.96 c |
+
+- The nested level 10-12 orbits carry the ball in a single poloidal loop:
+  up near the axis, down farther out. Speed is 1.6-2.0 c.
+- EjectC emission is v_ball + c·dir, so the core sprays up the middle and
+  down the outside: a smoke ring turning north through the axis.
+- Net momentum is zero over a cycle, but the gas sees a fountain up the
+  north axis and a drain into the south pole. The spin sense picks the
+  direction.
+- Inside the envelope the axial upward drift is +1 to +2.4 c at both λ.
+  - At λ 0.3 it stays inside: the north cap draws in, −0.16 c at z 1.2.
+  - At λ 0.1 it leaks out as the weak jet: +0.07 to +0.11 c.
+- Mathis's picture is in at both poles, out at the equator: a double loop
+  symmetric about the equator. The model's single loop is the source of the
+  proton's north-south asymmetry (the south-pole electron, the north-axis
+  push). It comes from the inner-level kinematics (ShellBody levels 10-12),
+  not from the field.
+
 **Reading:**
 - The pole-on repulsion between protons comes from the proton's narrow
   north axial jet, which the partner absorbs.
 - The neutron already emits a cone, the shape of the user's vortex wall;
   the proton does not.
-- Candidate fix to discuss: where the proton's maze emission puts photons
-  along the north axis, and whether Mathis's proton should have any axial
-  emission at all ("taking them in at their poles and emitting them (most
-  heavily) at their equators", diatom.pdf).
+- Question for the user: should the inner-level orbits carry the ball in
+  one poloidal loop at all? Options: emit at c in the body frame without the
+  ball velocity; or a level arrangement whose ball motion is symmetric about
+  the equator. Mathis: "taking them in at their poles and emitting them
+  (most heavily) at their equators" (diatom.pdf).
 
 ## 12. Out of scope for this step
 
