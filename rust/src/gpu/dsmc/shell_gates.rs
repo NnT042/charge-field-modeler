@@ -2597,3 +2597,162 @@ fn report_hydrogen() {
     );
 }
 
+
+/// Report (doc §15.26): the meridional flow map. Bodies are held on the z
+/// axis through the domain centre; after the warm-up, photon snapshots are
+/// binned by (R, z), R = distance from the axis (an average over azimuth,
+/// so a pair must sit on the axis). Per cell: count, mean velocity (v_R,
+/// v_z, swirl v_phi = + along the right-handed turn about +z) and counts by
+/// emitter tag (0 = never emitted by a body, b + 1 = last emitted by body b).
+/// Written as JSON for the flow-map page. The user's question: does the
+/// disc outflow come back to the poles as a cone vortex, and how much of a
+/// partner stream reaches the core?
+/// Env: CFM_M_LAYOUT (p | n | pp_par | pp_nn | pp_ss), CFM_M_SEP (3, centre
+/// distance of a pair), CFM_C_LAMBDA (0.1), CFM_C_NA (8000), CFM_C_H (0.1),
+/// CFM_F_RD (6), CFM_M_HOLE (0), CFM_M_FIXT (250 time units), CFM_M_SNAPS
+/// (80), CFM_M_EVERY (10 steps), CFM_M_OUT (JSON path), CFM_C_SEED.
+#[test]
+#[ignore]
+fn report_flowmap() {
+    use super::config::{Intake, MazeSpeed};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let layout = env("CFM_M_LAYOUT", "p");
+    let sep: f64 = env("CFM_M_SEP", "3").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.1").parse().unwrap();
+    let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
+    let h: f64 = env("CFM_C_H", "0.1").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", &format!("{}", lambda / 5.0)).parse().unwrap();
+    let phi: f64 = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let r_d: f64 = env("CFM_F_RD", "6").parse().unwrap();
+    let hole: f64 = env("CFM_M_HOLE", "0").parse().unwrap();
+    let fix = (env("CFM_M_FIXT", "250").parse::<f64>().unwrap() / dt).round() as u32;
+    let snaps: u32 = env("CFM_M_SNAPS", "80").parse().unwrap();
+    let every: u32 = env("CFM_M_EVERY", "10").parse().unwrap();
+    let out = env("CFM_M_OUT", "flowmap.json");
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let up = DQuat::IDENTITY;
+    let down = DQuat::from_rotation_arc(DVec3::Z, -DVec3::Z);
+    let s2 = sep / 2.0;
+    let (centers, classes, orients): (Vec<DVec3>, Vec<&str>, Vec<DQuat>) = match layout.as_str() {
+        "p" => (vec![DVec3::ZERO], vec!["proton"], vec![up]),
+        "n" => (vec![DVec3::ZERO], vec!["neutron"], vec![up]),
+        // Parallel: both poles up (the lower north faces the upper south).
+        "pp_par" => (vec![DVec3::new(0.0, 0.0, -s2), DVec3::new(0.0, 0.0, s2)], vec!["proton", "proton"], vec![up, up]),
+        // North faces north.
+        "pp_nn" => (vec![DVec3::new(0.0, 0.0, -s2), DVec3::new(0.0, 0.0, s2)], vec!["proton", "proton"], vec![up, down]),
+        // South faces south.
+        "pp_ss" => (vec![DVec3::new(0.0, 0.0, -s2), DVec3::new(0.0, 0.0, s2)], vec!["proton", "proton"], vec![down, up]),
+        _ => panic!("CFM_M_LAYOUT: p | n | pp_par | pp_nn | pp_ss"),
+    };
+    println!("=== flow map: {layout}, sep {sep}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d}, hole {hole}, {snaps} snapshots every {every} steps ===");
+    let ctx = GpuContext::new().expect("GPU");
+    let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
+    let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt);
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, through_hole: hole, ..config.rough };
+    config.h = h;
+    config.photon_fraction = phi;
+    config.boundary = Boundary::SphereEscape { r_d };
+    let mut engine = DsmcEngine::new(&ctx, config);
+    for (b, cl) in engine.shell_bodies.iter_mut().zip(&classes) {
+        b.depth = 0;
+        if *cl == "neutron" {
+            b.inner_signs = NEUTRON_INNER_SIGNS;
+            b.tier1_signs = NEUTRON_INNER_SIGNS;
+        }
+    }
+    engine.set_body_poses(&ctx, &centers, Some(&orients));
+    for _ in 0..fix {
+        engine.step_flux(&ctx);
+    }
+    // Grid: R in [0, r_max), z in [-r_max, r_max), square cells DR.
+    const DR: f64 = 0.1;
+    let r_max = (r_d - 1.0).min(5.0);
+    let nr = (r_max / DR).round() as usize;
+    let nz = (2.0 * r_max / DR).round() as usize;
+    let cells = nr * nz;
+    let mut cnt = vec![0f64; cells];
+    let mut s_vr = vec![0f64; cells];
+    let mut s_vz = vec![0f64; cells];
+    let mut s_vp = vec![0f64; cells];
+    let mut tags = vec![[0f64; 3]; cells]; // ambient, body 0, body 1
+    let mut plus = vec![0f64; cells];
+    let mut t = Totals::default();
+    for k in 0..snaps {
+        for _ in 0..every {
+            t.add(&engine.step_flux(&ctx));
+        }
+        for p in engine.read_photons(&ctx) {
+            // Skip dead photons and photons held in a tank (flag bit 20).
+            if p.c[0] & FLAG_ALIVE == 0 || p.c[0] & (1u32 << 20) != 0 {
+                continue;
+            }
+            let (x, y, z) = (p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
+            let r = (x * x + y * y).sqrt();
+            if r >= r_max || z.abs() >= r_max {
+                continue;
+            }
+            let i = ((r / DR) as usize) * nz + ((z + r_max) / DR) as usize;
+            let sp = p.d[3] as f64;
+            let (vx, vy, vz) = (p.b[0] as f64 * sp, p.b[1] as f64 * sp, p.b[2] as f64 * sp);
+            let (vr, vp) = if r > 1e-9 { ((x * vx + y * vy) / r, (x * vy - y * vx) / r) } else { (0.0, 0.0) };
+            cnt[i] += 1.0;
+            s_vr[i] += vr;
+            s_vz[i] += vz;
+            s_vp[i] += vp;
+            let tag = ((p.c[0] >> 17) & 7) as usize;
+            tags[i][tag.min(2)] += 1.0;
+            if p.c[0] & FLAG_SPECIES_PLUS != 0 {
+                plus[i] += 1.0;
+            }
+        }
+        if k % 20 == 19 {
+            println!("snapshot {}/{snaps}", k + 1);
+        }
+    }
+    let steps = (snaps * every) as f64;
+    let caps: Vec<String> = (0..centers.len()).map(|b| format!("{:.0}", t.env_capt[b] as f64 / (steps * dt))).collect();
+    println!("envelope captures per unit time: {}", caps.join(", "));
+    // Text digest: density and mean flow on a few probe points (2x2 cells).
+    let vol = |ir: usize| 2.0 * std::f64::consts::PI * (ir as f64 + 0.5) * DR * DR * DR;
+    let probe = |rr: f64, zz: f64| -> String {
+        let ir = (rr / DR) as usize;
+        let iz = ((zz + r_max) / DR) as usize;
+        let (mut n, mut a, mut bz, mut c, mut v) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for dr in 0..2 {
+            for dz in 0..2 {
+                let jr = (ir + dr).min(nr - 1);
+                let i = jr * nz + (iz + dz).min(nz - 1);
+                n += cnt[i];
+                a += s_vr[i];
+                bz += s_vz[i];
+                c += s_vp[i];
+                v += vol(jr);
+            }
+        }
+        let nn = n.max(1.0);
+        format!("({rr:.1},{zz:+.1}): dens {:.3} vR {:+.3} vz {:+.3} vphi {:+.3}", n / (snaps as f64 * v * n_a), a / nn, bz / nn, c / nn)
+    };
+    for (rr, zz) in [(0.0, 1.2), (0.0, 2.0), (0.0, 3.0), (0.0, -1.2), (0.0, -2.0), (0.6, 1.2), (1.0, 1.0), (1.3, 0.0), (2.0, 0.0), (3.0, 0.0), (1.5, 1.5), (2.5, 2.5)] {
+        println!("probe {}", probe(rr, zz));
+    }
+    let mut js = String::new();
+    js += &format!(
+        "{{\"layout\":\"{layout}\",\"sep\":{sep},\"lambda\":{lambda},\"n_a\":{n_a},\"phi\":{phi},\"r_d\":{r_d},\"hole\":{hole},\"snaps\":{snaps},\"dr\":{DR},\"r_max\":{r_max},\"nr\":{nr},\"nz\":{nz},"
+    );
+    js += &format!(
+        "\"bodies\":[{}],",
+        (0..centers.len()).map(|b| format!("{{\"class\":\"{}\",\"z\":{},\"axis_z\":{}}}", classes[b], centers[b].z, (orients[b] * DVec3::Z).z)).collect::<Vec<_>>().join(",")
+    );
+    let col = |f: &dyn Fn(usize) -> f64| -> String { (0..cells).map(|i| format!("{:.4}", f(i))).collect::<Vec<_>>().join(",") };
+    js += &format!("\"dens\":[{}],", col(&|i| cnt[i] / (snaps as f64 * vol(i / nz) * n_a)));
+    js += &format!("\"count\":[{}],", col(&|i| cnt[i]));
+    js += &format!("\"vr\":[{}],", col(&|i| s_vr[i] / cnt[i].max(1.0)));
+    js += &format!("\"vz\":[{}],", col(&|i| s_vz[i] / cnt[i].max(1.0)));
+    js += &format!("\"vphi\":[{}],", col(&|i| s_vp[i] / cnt[i].max(1.0)));
+    js += &format!("\"tag_amb\":[{}],", col(&|i| tags[i][0] / cnt[i].max(1.0)));
+    js += &format!("\"tag_b0\":[{}],", col(&|i| tags[i][1] / cnt[i].max(1.0)));
+    js += &format!("\"tag_b1\":[{}],", col(&|i| tags[i][2] / cnt[i].max(1.0)));
+    js += &format!("\"plus\":[{}]}}", col(&|i| plus[i] / cnt[i].max(1.0)));
+    std::fs::write(&out, js).unwrap();
+    println!("wrote {out} ({nr} x {nz} cells, index = iR * nz + iz)");
+}

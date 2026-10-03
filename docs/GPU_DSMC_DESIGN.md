@@ -2886,6 +2886,78 @@ proton's force toward the other (+ = together).
   through the axis, with arrival sources by emitter tag) for one proton and
   for a pole-on pair, to see whether a return cone exists.
 
+### 15.26 Flow maps: what the gas does around held bodies (2026-10-03)
+
+**Why:** the user cannot see inside the simulation and asked how the field
+actually flows. Their picture: the disc outflow swirls back to the poles as a
+cone vortex whose ±30° wall turns a partner's stream aside, so pole-on
+protons should never push apart.
+
+**Build:** `report_flowmap` (CFM_M_LAYOUT p | n | pp_par | pp_nn | pp_ss).
+- Bodies are held on the z axis.
+- After a 250 time unit warm-up, 80 photon snapshots are binned by (R, z),
+  averaged over azimuth, 0.1 cells.
+- Per cell: density, mean v_R / v_z / swirl, and the share last emitted by
+  each body vs never emitted.
+- The page is the "Proton Flow Map" artifact. scratchpad/build_flowmap.py
+  turns the JSON into the page; preview_fm.py makes a PNG check.
+- Runs at λ 0.1, n_a 8000, R_D 6 (43 MAX_CELL warnings at the core over
+  the proton run).
+
+**Single proton.** Net flow per unit time through a shell at r 1.3:
+
+| band | net flow |
+|---|---|
+| equator ±30° | +3007 out |
+| south cap | −1388 in |
+| south 30-60° | −443 in |
+| north 30-60° | −707 in |
+| north cap | +35 |
+
+- Net flow through any shell balances to < 1% of the 17 340 captures per
+  unit time.
+- In net terms this is Mathis's recycling: in at the poles (south about 2×
+  north), out at the equator. The circulation closes within about 2 radii.
+- Density is about half of ambient at the surface and 0.8 at r = 3.
+- The south pole is a converging drain (up to +0.3 c into the pole; ~25%
+  of it is the proton's own earlier emission).
+- The north cap hides a narrow axial jet out (+0.11 c just outside;
+  inside the envelope the core ejects up the axis) inside a sheath of
+  inflow.
+- The disc swirls with the spin (up to 0.15 c) and tilts south.
+
+**Parallel pair (sep 3):**
+- The gap is a channel: density ~0.34, upward flow ~0.3 c on the axis.
+- Gap composition: ambient 35-40%, lower body 30-47%, upper body 20-28%.
+- The lower proton's north becomes a net outflow (+390 at r 1.3, +1260
+  at r 2), absorbed by the upper proton's south intake (−1200).
+- The upper proton's north cap stays ≈ 0, so nothing balances the
+  stream. This is the frozen-screen push (−643).
+
+**North faces north (sep 3):**
+- The two axial jets meet head-on: v_z goes +0.54 → 0 at the midpoint →
+  −2.2 near the upper body.
+- They spray sideways in the mid-plane (v_R up to +0.1 at R 0.4-1.0).
+- Each jet reaches the far proton (16-23% far-body photons next to each
+  north pole), hence the mutual repulsion.
+
+**Neutron:**
+- It emits a hollow cone around its north pole near 45° (north 30-60°
+  band +3271), swirling at 0.15 c.
+- Both polar axes draw in (north axis −0.16 c).
+- South intake comes mostly through 30-60° (−1437 to −1915); the equator
+  is quiet.
+
+**Reading:**
+- The pole-on repulsion between protons comes from the proton's narrow
+  north axial jet, which the partner absorbs.
+- The neutron already emits a cone, the shape of the user's vortex wall;
+  the proton does not.
+- Candidate fix to discuss: where the proton's maze emission puts photons
+  along the north axis, and whether Mathis's proton should have any axial
+  emission at all ("taking them in at their poles and emitting them (most
+  heavily) at their equators", diatom.pdf).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
