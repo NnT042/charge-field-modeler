@@ -2822,6 +2822,38 @@ seeds, residence in time units:
 - Every ejection leaves the same way, by wandering down the cap past
   −40° to −55° into the emission edge (§15.23).
 
+### 15.25 Density holds the hydrogen atom; a second free H2 (2026-10-03)
+
+**Hydrogen, denser field.** Electron started at the pole (r 1.3), 300 time
+units free, seeds matched to §15.24's no-hole runs.
+
+| field | seed 777 | seed 49344 |
+|---|---|---|
+| λ 0.3, n_a 8000 (§15.24) | lost ~130 | lost ~75 |
+| λ 0.3, n_a 12000 | held 300 (one excursion to r 1.94, pulled back) | lost ~62 (via −52°) |
+| **λ 0.1, n_a 8000** | **held 300**, polar cap 95% | **held 300**, polar cap 100% |
+
+- At λ 0.1 the electron stays pressed to the proton (r 1.20-1.23, mean
+  1.21) for the whole run. It never lifts off as it does at λ 0.3.
+- When it wanders to −55° it comes back.
+- Pull: −190 to −240 per unit time. Hits: ~600 per unit time against
+  ~700 at λ 0.3, a deeper shadow.
+- More photons alone (n_a ×1.5) helped one seed of two. A more
+  collisional field (λ 0.3 → 0.1) made the well hold in both. This fits
+  Mathis: denser charge (higher temperature) strengthens the minima and
+  maxima.
+- Caveat: two seeds, held proton.
+
+**Second free H2 at λ 0.3** (seed 777, same layout as §15.24):
+- Each electron stayed on its own proton for ~260 time units, then one
+  escaped (run stopped at 267).
+- The protons drifted apart again: 3.98 → 4.38.
+- This confirms seed 49344: the electrons hold; the pair does not bind at
+  λ 0.3.
+
+**Next:** the same free H2 at λ 0.1 (running; it calibrates the proton's
+λ 0.1 self-force first).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
