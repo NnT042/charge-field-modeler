@@ -2851,8 +2851,16 @@ units free, seeds matched to §15.24's no-hole runs.
 - This confirms seed 49344: the electrons hold; the pair does not bind at
   λ 0.3.
 
-**Next:** the same free H2 at λ 0.1 (running; it calibrates the proton's
-λ 0.1 self-force first).
+**Free H2 at λ 0.1** (p↓ e · e p↑, rotation on, 300 time units free):
+- Proton self-force at λ 0.1, R_D 6: (−357, −98, −663); self-torque
+  (852, 10, −9659).
+- Each electron stays on its own proton the whole run (r 1.20-1.28,
+  latitude −54° to −80°): two stable hydrogen atoms.
+- The atoms push apart steadily and faster as they go: proton distance
+  4.00 → 4.47 (t 120) → 5.55 (t 210) → 7.33 (t 300).
+- This layout does not bond at λ 0.1. Its λ 0.3 frozen screen (+85,
+  compressive) does not carry over to the denser field.
+- Next: frozen screens of the other layouts at λ 0.1.
 
 ## 12. Out of scope for this step
 
