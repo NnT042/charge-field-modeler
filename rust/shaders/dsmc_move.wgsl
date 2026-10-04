@@ -361,7 +361,14 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if (!escaped) {
         out_l = vec3<f32>(0.0, 0.0, h);
     }
-    let out_w = maze_world(oq, th, out_l);
+    var out_w = maze_world(oq, th, out_l);
+    // Doc §15.32: bit 12 = through release. A trapped photon leaves by the
+    // pole it was heading toward on entry (the neutron as a pipe: in one
+    // side, out the other, in its own direction of travel).
+    if (!escaped && ((params.maze_mode >> 12u) & 1u) != 0u) {
+        let axw = bodies[b].axis.xyz;
+        out_w = axw * select(-1.0, 1.0, dot(v_in, axw) >= 0.0);
+    }
     let k = (*p).c[3];
     if (k > 0u) {
         var q = arc_rot(dl, d0, maze_local(oq, th, (*p).e.xyz));

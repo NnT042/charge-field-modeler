@@ -2122,7 +2122,7 @@ fn report_deuteron() {
         }
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
-        config.rough = RoughParams { intake: d_intake, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial") == "normal", ..config.rough };
+        config.rough = RoughParams { intake: d_intake, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2682,7 +2682,7 @@ fn report_flowmap() {
     // inner ball) | ejectc (§15.14).
     let mspeed = match env("CFM_M_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("maze speed {mspeed:?}");
-    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, polar_release_normal: env("CFM_M_POLAR", "axial") == "normal", ..config.rough };
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, polar_release_normal: env("CFM_M_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_M_POLAR", "axial").contains("through"), ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };

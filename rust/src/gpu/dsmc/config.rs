@@ -203,6 +203,9 @@ pub struct RoughParams {
     /// the surface normal at its exit point on the polar opening (a cone of
     /// half-angle 19.5 deg) instead of parallel to the axis.
     pub polar_release_normal: bool,
+    /// Doc §15.32: a trapped release leaves by the pole the photon was
+    /// heading toward on entry (instead of the maze's helicity pole).
+    pub polar_release_through: bool,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -210,7 +213,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, body_law: None }
     }
 }
 
