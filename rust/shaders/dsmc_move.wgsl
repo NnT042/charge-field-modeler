@@ -392,6 +392,23 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if (((params.maze_mode >> 10u) & 1u) != 0u) {
         xe = bodies[b].center.xyz + out_w * bodies[b].center.w * (1.0 + 1e-3);
         v_out = out_w;
+        if (!escaped) {
+            // A trapped photon leaves along the pole. Spread its exit point
+            // uniformly over the polar opening (radius 1/3 of the envelope,
+            // the measured trace hole) instead of the single pole point,
+            // which would make an infinitely thin beam.
+            let ax = out_w;
+            var e1 = normalize(cross(ax, vec3<f32>(1.0, 0.0, 0.0)));
+            if (abs(ax.x) > 0.9) {
+                e1 = normalize(cross(ax, vec3<f32>(0.0, 1.0, 0.0)));
+            }
+            let e2 = cross(ax, e1);
+            let rr = (1.0 / 3.0) * sqrt(rand01(params.seed_hi, params.seed_lo, key, 300u));
+            let pa = TAU * rand01(params.seed_hi, params.seed_lo, key, 301u);
+            let off = e1 * (rr * cos(pa)) + e2 * (rr * sin(pa));
+            let R = bodies[b].center.w;
+            xe = bodies[b].center.xyz + (off + ax * sqrt(max(1.0 - rr * rr, 0.0))) * R * (1.0 + 1e-3);
+        }
     }
     // Doc §15.27: bit 9 = MazeSpeed::EjectRest, at c in the body frame.
     if (((params.maze_mode >> 9u) & 1u) != 0u) {
