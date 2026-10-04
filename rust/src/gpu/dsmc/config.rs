@@ -116,6 +116,10 @@ pub enum MazeMode {
 pub enum MazeSpeed {
     Relative,
     EjectC,
+    /// Doc §15.27 experiment: eject at c in the body's rest frame, without
+    /// the ball's centre velocity or spin (the ball's poloidal loop is then
+    /// not imprinted on the emission).
+    EjectRest,
 }
 
 /// Doc §15.11: where a maze body takes photons in (scaffolding toward the

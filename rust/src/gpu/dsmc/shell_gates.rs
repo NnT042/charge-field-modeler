@@ -2107,7 +2107,9 @@ fn report_deuteron() {
     let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
     let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
-    println!("intake {d_intake:?}, through hole {d_hole}");
+    // CFM_D_SPEED: ejectc (default) | rest (doc §15.27).
+    let d_speed = if env("CFM_D_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    println!("intake {d_intake:?}, through hole {d_hole}, maze speed {d_speed:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2117,7 +2119,7 @@ fn report_deuteron() {
                 bc.class = GpuClass::Electron;
             }
         }
-        config.rough = RoughParams { intake: d_intake, maze_speed: MazeSpeed::EjectC, through_hole: d_hole, ..config.rough };
+        config.rough = RoughParams { intake: d_intake, maze_speed: d_speed, through_hole: d_hole, ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2509,7 +2511,10 @@ fn report_hydrogen() {
     let intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     let hole: f64 = env("CFM_H_HOLE", "0").parse().unwrap();
     println!("intake {intake:?}, through hole {hole}");
-    config.rough = RoughParams { intake, maze_speed: MazeSpeed::EjectC, through_hole: hole, ..config.rough };
+    // CFM_H_SPEED: ejectc (default) | rest (doc §15.27).
+    let mspeed = if env("CFM_H_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    println!("maze speed {mspeed:?}");
+    config.rough = RoughParams { intake, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };
@@ -2648,7 +2653,10 @@ fn report_flowmap() {
     let ctx = GpuContext::new().expect("GPU");
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
     let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt);
-    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: MazeSpeed::EjectC, through_hole: hole, ..config.rough };
+    // CFM_M_SPEED: ejectc (default) | rest (doc §15.27).
+    let mspeed = if env("CFM_M_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    println!("maze speed {mspeed:?}");
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };

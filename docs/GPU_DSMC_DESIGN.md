@@ -2985,6 +2985,54 @@ protons should never push apart.
   the equator. Mathis: "taking them in at their poles and emitting them
   (most heavily) at their equators" (diatom.pdf).
 
+### 15.27 Body-frame emission: polar lows, a dense disc, and pole-on attraction (2026-10-03)
+
+**Experiment switch:** `MazeSpeed::EjectRest` (maze_mode bit 9; knobs
+CFM_M_SPEED / CFM_D_SPEED / CFM_H_SPEED = rest).
+- The maze emits at c along its exit direction in the body frame. The
+  ball's centre velocity and spin are not added.
+- Default stays EjectC. Adopting this switch is the user's decision.
+- Mathis: c is "the speed at which it is ejected by the baryon"
+  (charge3.html). EjectRest reads that as relative to the baryon; EjectC
+  reads it as relative to the inner ball's surface.
+
+**Single proton, λ 0.1** (same run as §15.26 otherwise):
+- Ball kinematics are unchanged (the ±0.95 c loop). The emission latitude
+  at the ball is still 100% within ±30°.
+- Captures: 24 724 per unit time (17 340 with EjectC).
+- Net flow by band at r 1.3:
+
+| band | net flow |
+|---|---|
+| north cap | −2200 |
+| north 30-60° | −4158 |
+| equator | +14 759 |
+| south 30-60° | −4125 |
+| south cap | −2232 |
+
+  It is north-south symmetric, about 5× the EjectC circulation.
+- Density: equator 1.15 (r 1.3), 1.08 (r 2); over the poles ~0.71-0.73.
+- Inflow into each pole at 0.24-0.30 c. Mathis's polar lows and equatorial
+  disc, emergent.
+- Self-force (λ 0.1, R_D 6): (+300, −18, +30), self-torque (−91, −54, +138).
+  The axial rocket is gone (EjectC: (−357, −98, −663)); a sideways
+  residual remains.
+
+**Frozen pole-on pairs, λ 0.1, sep 3** (no electrons, + = together):
+
+| layout | EjectC | EjectRest |
+|---|---|---|
+| p↑ · p↑ parallel | +385, −643 (with electrons, §15.25) | **+773, +820** |
+| p↑ · p↓ north faces north | about −440 each (with electrons) | **+852, +834** |
+
+- Pole-on protons attract in both orientations, as the user expected
+  (2026-10-03: pole-on protons should essentially never push apart).
+
+**Running:**
+- Hydrogen at λ 0.1 with EjectRest, electron started at the south pole,
+  north pole and equator. diatom.pdf says either pole can capture.
+- Flow map of the parallel pair.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

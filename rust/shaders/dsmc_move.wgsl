@@ -387,6 +387,10 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     }
     let xe = ch + out_w * rb * (1.0 + 1e-3);
     var v_out = vcen + cross(om, xe - ch) + out_w * s_rel;
+    // Doc §15.27: bit 9 = MazeSpeed::EjectRest, at c in the body frame.
+    if (((params.maze_mode >> 9u) & 1u) != 0u) {
+        v_out = out_w;
+    }
     if (params.speed_mode == 1u) {
         v_out = normalize(v_out);
     }
