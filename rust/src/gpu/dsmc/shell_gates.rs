@@ -2107,8 +2107,9 @@ fn report_deuteron() {
     let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
     let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
-    // CFM_D_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let d_speed = match env("CFM_D_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
+    // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
+    // inner ball) | ejectc (§15.14).
+    let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("intake {d_intake:?}, through hole {d_hole}, maze speed {d_speed:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
@@ -2513,8 +2514,9 @@ fn report_hydrogen() {
     let intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     let hole: f64 = env("CFM_H_HOLE", "0").parse().unwrap();
     println!("intake {intake:?}, through hole {hole}");
-    // CFM_H_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let mspeed = match env("CFM_H_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
+    // CFM_H_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
+    // inner ball) | ejectc (§15.14).
+    let mspeed = match env("CFM_H_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
@@ -2670,8 +2672,9 @@ fn report_flowmap() {
     let ctx = GpuContext::new().expect("GPU");
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
     let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt);
-    // CFM_M_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let mspeed = match env("CFM_M_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
+    // CFM_M_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
+    // inner ball) | ejectc (§15.14).
+    let mspeed = match env("CFM_M_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
