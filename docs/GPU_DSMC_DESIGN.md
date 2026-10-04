@@ -3215,6 +3215,45 @@ self-force, electrons r 0.2 / m 3800; 0 MAX_CELL warnings in each).
 - The free runs decide (queued: outside, then both bottom; rotation on,
   300 time units).
 
+### 15.32 A bound H2 molecule; the neutron as a pipe (2026-10-04)
+
+**Free H2, electrons outside** (e p↑ · p↓ e, diatom.pdf combinations 1/6):
+- λ 0.1, R_D 6, EjectSurface, rotation on (I 2.8e6, L_s 8.75e5), protons
+  M 7e6, electrons r 0.2 / m 3800.
+- 250 time units held, then 300 free; 0 MAX_CELL warnings.
+
+| distance | range | last-quarter mean |
+|---|---|---|
+| proton-proton | 2.00 .. 3.00 | 2.43 |
+| each electron to its own proton | 1.200 .. 1.300 | 1.200 |
+| electron-electron | 4.37 .. 5.60 | 4.80 |
+
+- **The molecule is bound.** The proton distance oscillates with a period
+  of about 150 time units: 2.98 → 2.02 (envelopes touching) → 2.83 → 2.07
+  → 2.57 at t 270.
+- Each electron rides its own proton's outer pole the whole run (latitude
+  −70° to −82° in that proton's frame).
+- No drift apart; the same layout under EjectC pushed the protons apart
+  (−440 each).
+- First self-held H2 in the DSMC engine. The free run of the both-bottom
+  layout (comb. 2) is running.
+
+**Neutron, user's picture (2026-10-04):** "not a high-powered laser beam,
+more akin to a wide, leaky pipe".
+- Cone release (polar_release_normal, 19.5°):
+  - neutron self-force −10 546 (axial: −11 353);
+  - deuteron screen: proton −4037, neutron +1489 (axial: −6978 / +878);
+  - neutron map: in at the equator (−16 724), out north +19 804 / south
+    +8 368.
+  - The spread helps a little; the north-south imbalance remains.
+- **Through release** (`polar_release_through`, maze_mode bit 12): a
+  trapped photon leaves by the pole it was heading toward on entry: in one
+  side, out the other, in its own direction of travel.
+  - With the cone, the neutron's self-force falls to (−15.7, −5.7, +18.1),
+    from −10 546.
+  - The rocket is gone; intake and release balance by themselves.
+  - The deuteron screen and neutron flow map with it are running.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
