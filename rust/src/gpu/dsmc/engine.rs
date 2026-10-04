@@ -877,6 +877,7 @@ impl DsmcEngine {
             } | match c.rough.maze_speed {
                 super::config::MazeSpeed::EjectC => 256,
                 super::config::MazeSpeed::EjectRest => 256 | 512,
+                super::config::MazeSpeed::EjectSurface => 256 | 1024,
                 super::config::MazeSpeed::Relative => 0,
             },
         };

@@ -2108,7 +2108,7 @@ fn report_deuteron() {
     // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
     let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
     // CFM_D_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let d_speed = if env("CFM_D_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    let d_speed = match env("CFM_D_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
     println!("intake {d_intake:?}, through hole {d_hole}, maze speed {d_speed:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
@@ -2514,7 +2514,7 @@ fn report_hydrogen() {
     let hole: f64 = env("CFM_H_HOLE", "0").parse().unwrap();
     println!("intake {intake:?}, through hole {hole}");
     // CFM_H_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let mspeed = if env("CFM_H_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    let mspeed = match env("CFM_H_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
@@ -2671,7 +2671,7 @@ fn report_flowmap() {
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
     let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt);
     // CFM_M_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
-    let mspeed = if env("CFM_M_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    let mspeed = match env("CFM_M_SPEED", "rest").as_str() { "ejectc" => MazeSpeed::EjectC, "surface" => MazeSpeed::EjectSurface, _ => MazeSpeed::EjectRest };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;

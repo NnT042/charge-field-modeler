@@ -385,8 +385,14 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if (((params.maze_mode >> 8u) & 1u) != 0u) {
         s_rel = 1.0;
     }
-    let xe = ch + out_w * rb * (1.0 + 1e-3);
+    var xe = ch + out_w * rb * (1.0 + 1e-3);
     var v_out = vcen + cross(om, xe - ch) + out_w * s_rel;
+    // Doc §15.29: bit 10 = MazeSpeed::EjectSurface, at c from the envelope
+    // (center.w = envelope radius) along the exit direction.
+    if (((params.maze_mode >> 10u) & 1u) != 0u) {
+        xe = bodies[b].center.xyz + out_w * bodies[b].center.w * (1.0 + 1e-3);
+        v_out = out_w;
+    }
     // Doc §15.27: bit 9 = MazeSpeed::EjectRest, at c in the body frame.
     if (((params.maze_mode >> 9u) & 1u) != 0u) {
         v_out = out_w;

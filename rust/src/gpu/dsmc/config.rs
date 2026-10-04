@@ -120,6 +120,10 @@ pub enum MazeSpeed {
     /// the ball's centre velocity or spin (the ball's poloidal loop is then
     /// not imprinted on the emission).
     EjectRest,
+    /// Doc §15.29: eject at c from the body surface (the envelope) along the
+    /// maze exit direction. Same as EjectRest without the inner ball
+    /// overtaking (and recapturing) its own emission.
+    EjectSurface,
 }
 
 /// Doc §15.11: where a maze body takes photons in (scaffolding toward the

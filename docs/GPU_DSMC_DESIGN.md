@@ -3083,6 +3083,41 @@ fraction of c, default 1), env CFM_LEVEL_SPEEDS in the reports.
   built. That is a design discussion: which level absorbs a hit's torque,
   and what restores c.
 
+### 15.29 Caveat on §15.27: the core recaptures its own body-frame emission (2026-10-04)
+
+**Found while rescreening:** EjectRest runs log a "dense cell" warning
+(a cell above MAX_CELL = 2048 photons, ~250× ambient) almost every step.
+
+| run | MAX_CELL warnings |
+|---|---|
+| EjectC proton flow map | 43 |
+| EjectRest proton flow map | 9 321 |
+| EjectRest parallel screen | 24 789 |
+| EjectRest neutron calibration (killed) | ~14 cells per step; it crawled |
+
+**Cause:** the ball runs over its own emission.
+- EjectRest emits at c in the lab from the ball surface, but the ball moves
+  at 1.6-2 c.
+- The ball overtakes and recaptures its fresh photons through the
+  ball-contact capture path, and re-emits them.
+- The core handles 81 800 maze emissions per unit time against 24 700
+  envelope captures (×3.3). With EjectC the ratio is ≈1.0 (λ 0.3:
+  20 400 vs 19 800).
+- So a dense cloud rides with the ball. It inflates the recycling (the 5×
+  circulation) and may shape the dense disc.
+- The §15.27 results (pole-on attraction, the either-pole electron) stand
+  as observations but carry this caveat until rechecked.
+
+**Fix under test:** `MazeSpeed::EjectSurface` (maze_mode bit 10; knob
+value "surface").
+- The photon leaves from the envelope (r = 1) along the maze exit
+  direction at c, so the ball never meets it.
+- It reads "c relative to the baryon" as leaving the baryon's surface.
+- Running: proton flow map, parallel and N-N screens at λ 0.1, each with
+  its warning count.
+- The rescreen queue of the earlier negatives was stopped until this is
+  settled.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
