@@ -3195,6 +3195,26 @@ value "surface").
 - How the neutron releases its trapped charge (axis, cone, opposite pole
   only as in neutron.pdf) is a modelling choice for the user.
 
+### 15.31 H2 under surface emission: every layout compresses (2026-10-04)
+
+Frozen screens (λ 0.1, R_D 6, EjectSurface, protons with their surface
+self-force, electrons r 0.2 / m 3800; 0 MAX_CELL warnings in each).
+"p→p" is each proton's push toward the other (+ = together).
+
+| layout (diatom.pdf) | sep | p→p, EjectC (§15.25) | **p→p, EjectSurface** | electrons |
+|---|---|---|---|---|
+| e p↑ · e p↑ both bottom, same spin (comb. 2) | 3 | +385, −643 | **+477, +727** | held +180 (outer), +100 (between, on the upper proton) |
+| e p↑ · p↓ e outside (comb. 1/6) | 3 | −449, −437 | **+561, +556** | held +176, +178 |
+| p↓ e · e p↑ between (comb. 7/8) | 4 | −50, −42 | **+372, +393** | held +160 each |
+
+- Every layout is compressive on every body. Mathis's two bonding
+  layouts are among them.
+- Tilt torques are 14-24.
+- The between layout (Mathis: no bond) also compresses, but at sep 4. The
+  separations differ, so these are not a ranking.
+- The free runs decide (queued: outside, then both bottom; rotation on,
+  300 time units).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
