@@ -2136,8 +2136,10 @@ fn report_deuteron() {
         }
         for (b, cl) in cls.iter().enumerate() {
             if *cl == "electron" {
-                apply_level_speeds(&mut engine);
-        engine.make_lepton(&ctx, b, r_e);
+                engine.make_lepton(&ctx, b, r_e);
+                // CFM_E_DISC (doc §15.32): recycling electron, disc
+                // half-width in degrees (0 = off, photons bounce off it).
+                engine.shell_bodies[b].lepton_disc_deg = env("CFM_E_DISC", "0").parse().unwrap();
             }
         }
         apply_level_speeds(&mut engine);
@@ -2528,6 +2530,8 @@ fn report_hydrogen() {
     engine.shell_bodies[0].depth = 0;
     let q_e = if spin < 0.0 { DQuat::from_rotation_arc(DVec3::Z, -DVec3::Z) } else { DQuat::IDENTITY };
     engine.make_lepton(&ctx, 1, r_e);
+    // CFM_E_DISC (doc §15.32): recycling electron, disc half-width degrees.
+    engine.shell_bodies[1].lepton_disc_deg = env("CFM_E_DISC", "0").parse().unwrap();
     apply_level_speeds(&mut engine);
     engine.set_body_poses(&ctx, &[DVec3::ZERO, start], Some(&[DQuat::IDENTITY, q_e]));
     for _ in 0..fix {

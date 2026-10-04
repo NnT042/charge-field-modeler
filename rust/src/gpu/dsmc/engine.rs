@@ -947,7 +947,8 @@ impl DsmcEngine {
                 super::config::Intake::Polar { aperture } => (2.0, aperture),
             };
             data[b * BALLKEY_STRIDE + 47] = [if open { 1.0 } else { 0.0 }, (hold / self.config.dt).round() as f32, par as f32, mode];
-            data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, 0.0, 0.0, 0.0];
+            let lrec = body.lepton && body.lepton_disc_deg > 0.0;
+            data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, if lrec { 1.0 } else { 0.0 }, body.lepton_disc_deg.to_radians() as f32, 0.0];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

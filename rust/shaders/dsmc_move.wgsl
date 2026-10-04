@@ -1055,7 +1055,39 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let ik = ballkeys[b * BALLKEY_STRIDE + 47u];
                 var take = false;
                 let ekey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0xE17Eu));
-                if (ik.x > 0.5 && ik.w > 0.5 && ik.w < 1.5) {
+                let lk = ballkeys[b * BALLKEY_STRIDE + 48u];
+                if (lk.y > 0.5) {
+                    // Doc §15.32: a recycling electron. Every photon that
+                    // reaches it is taken in and re-emitted at once from its
+                    // surface, at c, into its equatorial disc (half-width
+                    // lk.z radians about the spin axis), random azimuth.
+                    let v_before = ph.b.xyz * ph.d.w;
+                    let pos_in = pos;
+                    let ce = bodies[b].center.xyz;
+                    let ax = bodies[b].axis.xyz;
+                    var e1 = normalize(cross(ax, vec3<f32>(1.0, 0.0, 0.0)));
+                    if (abs(ax.x) > 0.9) {
+                        e1 = normalize(cross(ax, vec3<f32>(0.0, 1.0, 0.0)));
+                    }
+                    let e2 = cross(ax, e1);
+                    let phe = TAU * rand01(params.seed_hi, params.seed_lo, ekey, 400u);
+                    let late = (2.0 * rand01(params.seed_hi, params.seed_lo, ekey, 401u) - 1.0) * lk.z;
+                    let dir = (e1 * cos(phe) + e2 * sin(phe)) * cos(late) + ax * sin(late);
+                    pos = ce + dir * bodies[b].center.w * (1.0 + 1e-3);
+                    ph.b = vec4<f32>(dir, axial_helicity(&ph, ph.d.xyz, dir));
+                    ph.d = vec4<f32>(ph.d.xyz, 1.0);
+                    ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+                    let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                    let v_after = dir;
+                    let dp = -(v_after - v_before) * m;
+                    let tqe = cross(pos_in - ce, v_before * m) - cross(pos - ce, v_after * m);
+                    for (var a = 0u; a < 3u; a = a + 1u) {
+                        atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dp[a] * TALLY_SCALE));
+                        atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqe[a] * TALLY_SCALE));
+                    }
+                    atomicAdd(&tallies[TALLY_ENV_CAPT + b], 1);
+                    atomicAdd(&tallies[TALLY_SH_CONTACTS + b], 1);
+                } else if (ik.x > 0.5 && ik.w > 0.5 && ik.w < 1.5) {
                     take = rand01(params.seed_hi, params.seed_lo, ekey, 0u) < ik.z;
                     // Doc §15.24: the through-charge hole passes polar
                     // entries straight through.

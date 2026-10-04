@@ -113,11 +113,15 @@ pub struct ShellBody {
     /// 1 = every level at c). Spin mode's sub-c outer level (user, 2026-10-04:
     /// at 0.5c or 0.05c the loop precesses round the axis like a fan blade).
     pub speeds: [f64; 4],
+    /// Doc §15.32: a lepton that recycles. 0 = off (photons bounce off it);
+    /// > 0 = it takes in every photon that reaches it and re-emits it at c
+    /// from its surface into its equatorial disc of this half-width (degrees).
+    pub lepton_disc_deg: f64,
 }
 
 impl ShellBody {
     pub fn new(center: DVec3, orient: DQuat, radius: f64, signs: [f64; 4]) -> Self {
-        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4], lepton: false, speeds: [1.0; 4] }
+        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4], lepton: false, speeds: [1.0; 4], lepton_disc_deg: 0.0 }
     }
 
     /// Angular rate of electron-tier level `8 - m` at edge speed c.
