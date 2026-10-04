@@ -3113,10 +3113,40 @@ value "surface").
 - The photon leaves from the envelope (r = 1) along the maze exit
   direction at c, so the ball never meets it.
 - It reads "c relative to the baryon" as leaving the baryon's surface.
-- Running: proton flow map, parallel and N-N screens at λ 0.1, each with
-  its warning count.
-- The rescreen queue of the earlier negatives was stopped until this is
-  settled.
+
+**EjectSurface results, λ 0.1** (0 MAX_CELL warnings in every run):
+
+- Proton flow map: core emissions equal envelope captures (23 900 per unit
+  time each, ratio 1.0).
+- Net flow by band at r 1.3:
+
+| band | net flow |
+|---|---|
+| north cap | −2121 |
+| north 30-60° | −4178 |
+| equator | +15 425 |
+| south 30-60° | −4284 |
+| south cap | −2173 |
+
+- Density: polar lows 0.73-0.76; equatorial ring 1.30 at r 1.3, 1.06 at
+  r 2.
+- So the strong symmetric circulation and the disc are real, not the
+  recapture cloud.
+- Proton self-force (−10.4, −14.1, +63.8), self-torque (9.5, 14.0, −7.6):
+  essentially zero. No rocket, no residual sideways push.
+
+| frozen pair (sep 3) | EjectC | EjectRest | **EjectSurface** |
+|---|---|---|---|
+| parallel p↑ · p↑ | +385, −643 (with e) | +773, +820 | **+591, +641** |
+| north faces north | ≈ −440 each (with e) | +852, +834 | **+633, +638** |
+
+- Tilt torques are 6-18 (EjectC: 100-900).
+- Pole-on attraction survives without the artifact.
+- **Default changed to EjectSurface** (2c22f58). EjectRest stays available
+  but is flawed.
+- The rescreen of the earlier negatives restarted with it (redo2.sh).
+- The EjectRest hydrogen runs (§15.27) still need repeating with
+  EjectSurface.
 
 ## 12. Out of scope for this step
 
