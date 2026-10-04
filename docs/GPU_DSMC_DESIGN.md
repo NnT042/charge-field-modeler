@@ -3033,6 +3033,45 @@ CFM_M_SPEED / CFM_D_SPEED / CFM_H_SPEED = rest).
   north pole and equator. diatom.pdf says either pole can capture.
 - Flow map of the parallel pair.
 
+### 15.28 Default switched to body-frame emission; sub-c levels (2026-10-04)
+
+**User decision:** keep EjectRest on and revisit the earlier negative
+results with it (66741fc).
+- CFM_M_SPEED / CFM_D_SPEED / CFM_H_SPEED now default to rest; pass ejectc
+  for the old behaviour.
+- Gates keep their explicit settings.
+
+**Sub-c levels:** `ShellBody::speeds` (edge speed of levels 9-12 as a
+fraction of c, default 1), env CFM_LEVEL_SPEEDS in the reports.
+- User question: Spin mode showed that a sub-c outer level turns the wide
+  loop into one that precesses round the axis like a fan blade (the source
+  of the early Atom-mode trace maps). Can the engine do that, or let the
+  rates follow the field hits?
+- Before this, every level ran at exactly c with fixed rates; hits do not
+  feed back into the spin rates.
+- `report_ball_loop` (CPU only) maps where the core ball spends its time
+  and its axial velocity there.
+
+| speeds (levels 9-12) | cov(v_z, distance from axis) | sweeps round the axis in 400 time units | loop shape |
+|---|---|---|---|
+| 1, 1, 1, 1 | −0.137 | 127 | up at r 0.25-0.5, down at r 0.5-0.75, \|z\| < 0.5 |
+| 1, 1, 1, 0.5 | −0.137 | 64 | identical |
+| 1, 1, 1, 0.05 | −0.137 | 6 | identical |
+| 1, 0.5, 1, 1 | −0.137 | 127 | loop reshaped, top-bottom asymmetric |
+| 1, 1, 0.5, 1 | −0.069 | 127 | correlation halved, more bands |
+| 1, 0.05, 1, 1 | −0.138 | 127 | loop smeared over r 0.125-0.875 |
+
+- Level 12 (the spin about the pole) only sets how fast the loop sweeps
+  round the axis. The model's core already runs the fan blade: a vertical
+  loop carried round the pole.
+- The loop itself (up near the axis, down farther out) comes from levels
+  10-11, and its sense survives every speed tried.
+- With body-frame emission the loop no longer imprints its velocity on the
+  emission. Sub-c levels now only move where photons are emitted from.
+- Hit-driven spin rates (torque from field hits on each level) are not
+  built. That is a design discussion: which level absorbs a hit's torque,
+  and what restores c.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

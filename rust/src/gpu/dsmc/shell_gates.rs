@@ -2813,3 +2813,74 @@ fn report_flowmap() {
     std::fs::write(&out, js).unwrap();
     println!("wrote {out} ({nr} x {nz} cells, index = iR * nz + iz)");
 }
+
+/// Report (doc §15.28): the core ball's path in the body frame for sub-c
+/// outer levels (CPU only). The user's Spin-mode observation: with the
+/// outermost level at c the core runs a wide loop that avoids whole
+/// regions; at 0.5c or 0.05c the loop precesses round the axis like a fan
+/// blade. Prints, per level-12 speed: where the ball spends its time
+/// (distance from axis x height), its mean axial velocity there, and the
+/// azimuth drift of the loop. Env: CFM_BL_SPEEDS (";"-separated sets of
+/// "s9,s10,s11,s12" fractions), CFM_BL_T (time span, 400), CFM_BL_DT (0.002).
+#[test]
+#[ignore]
+fn report_ball_loop() {
+    use crate::baryon_shells::{ShellBody, PROTON_STATES};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let span: f64 = env("CFM_BL_T", "400").parse().unwrap();
+    let dt: f64 = env("CFM_BL_DT", "0.002").parse().unwrap();
+    for sp in env("CFM_BL_SPEEDS", "1,1,1,1;1,1,1,0.5;1,1,1,0.05").split(';') {
+        let v: Vec<f64> = sp.split(',').map(|q| q.parse().unwrap()).collect();
+        let mut b = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, PROTON_STATES[0]);
+        b.speeds = [v[0], v[1], v[2], v[3]];
+        // [r band 0.125 wide, 8 bands][z band 0.25 wide, 8 bands]: n, sum vz
+        let mut grid = vec![[0f64; 2]; 64];
+        let mut az_prev: Option<f64> = None;
+        let mut az_unwrap = 0.0;
+        let mut lz = 0.0; // mean angular momentum of the ball path about z
+        let mut vz_r: [f64; 2] = [0.0; 2]; // correlation sum(vz * (r - mean r)) pieces
+        let mut sum_r = 0.0;
+        let mut n = 0.0;
+        let steps = (span / dt) as usize;
+        for _ in 0..steps {
+            b.advance(dt);
+            let bs = b.ball();
+            let p = bs.center;
+            let v = bs.velocity;
+            let r = (p.x * p.x + p.y * p.y).sqrt();
+            let ir = ((r / 0.125) as usize).min(7);
+            let iz = (((p.z + 1.0) / 0.25).max(0.0) as usize).min(7);
+            grid[ir * 8 + iz][0] += 1.0;
+            grid[ir * 8 + iz][1] += v.z;
+            let az = p.y.atan2(p.x);
+            if let Some(a0) = az_prev {
+                let mut d = az - a0;
+                if d > std::f64::consts::PI {
+                    d -= std::f64::consts::TAU;
+                }
+                if d < -std::f64::consts::PI {
+                    d += std::f64::consts::TAU;
+                }
+                az_unwrap += d;
+            }
+            az_prev = Some(az);
+            lz += p.x * v.y - p.y * v.x;
+            vz_r[0] += v.z * r;
+            vz_r[1] += v.z;
+            sum_r += r;
+            n += 1.0;
+        }
+        let cov = vz_r[0] / n - (vz_r[1] / n) * (sum_r / n);
+        println!("=== level 9-12 speeds {v:?} (fraction of c): mean axial velocity {:+.3}, cov(v_z, distance from axis) {:+.4}, mean L_z of path {:+.3}, net azimuth turns {:+.1} in {span} time units", vz_r[1] / n, cov, lz / n, az_unwrap / std::f64::consts::TAU);
+        println!("  time share by distance from axis (rows, 0.125 bands) x height (cols -1..1, 0.25 bands); mean v_z in brackets");
+        for ir in 0..8 {
+            let row: Vec<String> = (0..8)
+                .map(|iz| {
+                    let c = grid[ir * 8 + iz];
+                    if c[0] > 0.0 { format!("{:5.3}({:+.2})", c[0] / n, c[1] / c[0]) } else { "     -      ".to_string() }
+                })
+                .collect();
+            println!("  r {:.3}-{:.3}: {}", ir as f64 * 0.125, ir as f64 * 0.125 + 0.125, row.join(" "));
+        }
+    }
+}
