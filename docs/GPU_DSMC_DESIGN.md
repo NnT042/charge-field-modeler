@@ -3028,10 +3028,21 @@ CFM_M_SPEED / CFM_D_SPEED / CFM_H_SPEED = rest).
 - Pole-on protons attract in both orientations, as the user expected
   (2026-10-03: pole-on protons should essentially never push apart).
 
-**Running:**
-- Hydrogen at λ 0.1 with EjectRest, electron started at the south pole,
-  north pole and equator. diatom.pdf says either pole can capture.
-- Flow map of the parallel pair.
+**Hydrogen, λ 0.1, EjectRest** (r_e 0.2, m_e 3800, held proton, 300 time
+units free):
+
+| start | result |
+|---|---|
+| south pole (r 1.3) | Held 300; pinned at r 1.20, latitude −77° to −88°; south cap 1.00 of the time. |
+| **north pole (r 1.3)** | **Held 300**; r 1.20, +71° to +84°, pull ~ −215; north cap 1.00. With EjectC the north pole pushed electrons away. |
+| equator (r 1.3) | Pushed out by the disc to r 2.47, worked down to the south pole, captured at t ≈ 80 (pull −69 → −217); held at r 1.20 from t ≈ 105 to the end (last-half mean r 1.200). |
+
+- Either pole now captures. diatom.pdf: "the right spinning proton can
+  capture at either pole".
+- The equator start is the pingpong ball circling the drain: driven off
+  the equator by emitted charge, drawn to a pole by incoming charge.
+- The §15.23 leak (drifting down the cap into the emission edge) no longer
+  appears in these runs.
 
 ### 15.28 Default switched to body-frame emission; sub-c levels (2026-10-04)
 
