@@ -3148,6 +3148,53 @@ value "surface").
 - The EjectRest hydrogen runs (§15.27) still need repeating with
   EjectSurface.
 
+### 15.30 The neutron under surface emission: twin polar beams (2026-10-04)
+
+**First attempt** (the neutron's calibration with EjectSurface): bursts of
+19-50 overflowing cells.
+- Every neutron emission is "trapped" by the maze and released along the
+  pole.
+- With EjectSurface they all left from the single pole point in exactly
+  the axis direction: a pencil beam into one column of cells.
+- Fix (1dd52e5): the exit point is spread uniformly over the polar opening
+  (radius 1/3 of the envelope, the measured trace hole). The proton never
+  takes this path (100% escaped).
+
+**Neutron flow map, λ 0.1, EjectSurface** (0 warnings):
+- Captures 30 415 per unit time.
+- Maze outcomes are 100% trapped (128 940 upright, 357 759 flipped).
+- Net flow by band at r 1.3:
+
+| band | net flow |
+|---|---|
+| north cap | +15 317 out |
+| north 30-60° | −3305 in |
+| equator | −16 111 in |
+| south 30-60° | −4290 in |
+| south cap | +9453 out |
+
+- In at the equator, out at both poles as collimated beams along the axis.
+  The south beam is 4-6× ambient density at v_z ≈ −0.95.
+- The neutron's self-force is (−2, −1, **−11 353**): the north beam is
+  stronger, so the neutron is a rocket.
+- Under EjectC the ball's motion smeared the release into a ~45° north
+  cone.
+
+**Deuteron screen** (p↑ below, n↑ above, sep 3.05, λ 0.1, EjectSurface):
+- Proton −6978 (blown away from the neutron); neutron +878.
+- The neutron's south beam goes straight into the proton's north pole.
+- The deuteron, bound under EjectC (§15.17), is broken here.
+- The remaining neutron rescreens (n-p-p-n, sandwiches) were stopped; they
+  would be dominated by the same beams.
+
+**Option under test:** `RoughParams::polar_release_normal` (maze_mode bit
+11; CFM_D_POLAR / CFM_M_POLAR = normal).
+- A trapped release leaves along the surface normal at its exit point on
+  the polar opening: a cone of half-angle 19.5° instead of a parallel beam.
+- Running after the H2 screens: deuteron screen and neutron flow map.
+- How the neutron releases its trapped charge (axis, cone, opposite pole
+  only as in neutron.pdf) is a modelling choice for the user.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

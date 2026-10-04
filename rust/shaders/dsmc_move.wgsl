@@ -407,7 +407,14 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
             let pa = TAU * rand01(params.seed_hi, params.seed_lo, key, 301u);
             let off = e1 * (rr * cos(pa)) + e2 * (rr * sin(pa));
             let R = bodies[b].center.w;
-            xe = bodies[b].center.xyz + (off + ax * sqrt(max(1.0 - rr * rr, 0.0))) * R * (1.0 + 1e-3);
+            let nrm = off + ax * sqrt(max(1.0 - rr * rr, 0.0));
+            xe = bodies[b].center.xyz + nrm * R * (1.0 + 1e-3);
+            // Doc §15.30: bit 11 = leave along the surface normal there (a
+            // cone of half-angle asin(1/3) = 19.5 deg) instead of parallel
+            // to the axis.
+            if (((params.maze_mode >> 11u) & 1u) != 0u) {
+                v_out = nrm;
+            }
         }
     }
     // Doc §15.27: bit 9 = MazeSpeed::EjectRest, at c in the body frame.
