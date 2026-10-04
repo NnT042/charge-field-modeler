@@ -109,11 +109,15 @@ pub struct ShellBody {
     /// `center`, spinning about the axis at edge speed c, with no orbiting
     /// levels. It takes nothing in (too big to be recycled, diatom.pdf).
     pub lepton: bool,
+    /// Doc §15.28: edge speed of levels 9-12 as a fraction of c (default
+    /// 1 = every level at c). Spin mode's sub-c outer level (user, 2026-10-04:
+    /// at 0.5c or 0.05c the loop precesses round the axis like a fan blade).
+    pub speeds: [f64; 4],
 }
 
 impl ShellBody {
     pub fn new(center: DVec3, orient: DQuat, radius: f64, signs: [f64; 4]) -> Self {
-        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4], lepton: false }
+        ShellBody { center, orient, radius, signs, angles: [0.0; 4], depth: 0, inner_signs: [1.0; 4], inner_angles: [0.0; 4], tier1_signs: [1.0; 4], lepton: false, speeds: [1.0; 4] }
     }
 
     /// Angular rate of electron-tier level `8 - m` at edge speed c.
@@ -122,9 +126,10 @@ impl ShellBody {
     }
 
     /// Angular rate of level i at edge speed c (spin_stack `advance` with
-    /// v = +-1): sign / orbit radius, in world units.
+    /// v = +-1): sign / orbit radius, in world units, times the level's
+    /// speed fraction (§15.28).
     pub fn rate(&self, i: usize) -> f64 {
-        self.signs[i] / (shell_orbit_radius(i) * self.radius)
+        self.signs[i] * self.speeds[i] / (shell_orbit_radius(i) * self.radius)
     }
 
     pub fn advance(&mut self, dt: f64) {

@@ -2107,8 +2107,8 @@ fn report_deuteron() {
     let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
     let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
-    // CFM_D_SPEED: ejectc (default) | rest (doc §15.27).
-    let d_speed = if env("CFM_D_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    // CFM_D_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
+    let d_speed = if env("CFM_D_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
     println!("intake {d_intake:?}, through hole {d_hole}, maze speed {d_speed:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
@@ -2133,9 +2133,11 @@ fn report_deuteron() {
         }
         for (b, cl) in cls.iter().enumerate() {
             if *cl == "electron" {
-                engine.make_lepton(&ctx, b, r_e);
+                apply_level_speeds(&mut engine);
+        engine.make_lepton(&ctx, b, r_e);
             }
         }
+        apply_level_speeds(&mut engine);
         engine
     };
     // 1. Self-force per class, body alone at the domain centre.
@@ -2511,8 +2513,8 @@ fn report_hydrogen() {
     let intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
     let hole: f64 = env("CFM_H_HOLE", "0").parse().unwrap();
     println!("intake {intake:?}, through hole {hole}");
-    // CFM_H_SPEED: ejectc (default) | rest (doc §15.27).
-    let mspeed = if env("CFM_H_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    // CFM_H_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
+    let mspeed = if env("CFM_H_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
@@ -2522,6 +2524,7 @@ fn report_hydrogen() {
     engine.shell_bodies[0].depth = 0;
     let q_e = if spin < 0.0 { DQuat::from_rotation_arc(DVec3::Z, -DVec3::Z) } else { DQuat::IDENTITY };
     engine.make_lepton(&ctx, 1, r_e);
+    apply_level_speeds(&mut engine);
     engine.set_body_poses(&ctx, &[DVec3::ZERO, start], Some(&[DQuat::IDENTITY, q_e]));
     for _ in 0..fix {
         engine.step_flux(&ctx);
@@ -2603,6 +2606,20 @@ fn report_hydrogen() {
 }
 
 
+/// Doc §15.28: CFM_LEVEL_SPEEDS = "s9,s10,s11,s12", the edge speed of each
+/// baryon level as a fraction of c (default all 1). Applied to every
+/// non-lepton shell body.
+fn apply_level_speeds(engine: &mut DsmcEngine) {
+    let v: Vec<f64> = std::env::var("CFM_LEVEL_SPEEDS").unwrap_or("1,1,1,1".into()).split(',').map(|q| q.trim().parse().unwrap()).collect();
+    assert_eq!(v.len(), 4, "CFM_LEVEL_SPEEDS needs 4 values (levels 9-12)");
+    for sb in engine.shell_bodies.iter_mut().filter(|b| !b.lepton) {
+        sb.speeds = [v[0], v[1], v[2], v[3]];
+    }
+    if v.iter().any(|&q| q != 1.0) {
+        println!("level speeds (9-12, fraction of c): {v:?}");
+    }
+}
+
 /// Report (doc §15.26): the meridional flow map. Bodies are held on the z
 /// axis through the domain centre; after the warm-up, photon snapshots are
 /// binned by (R, z), R = distance from the axis (an average over azimuth,
@@ -2653,8 +2670,8 @@ fn report_flowmap() {
     let ctx = GpuContext::new().expect("GPU");
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
     let mut config = two_body_config(&centers, &classes, n_a, lambda, cap, seed, dt);
-    // CFM_M_SPEED: ejectc (default) | rest (doc §15.27).
-    let mspeed = if env("CFM_M_SPEED", "ejectc") == "rest" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
+    // CFM_M_SPEED: rest (default since 2026-10-04, user) | ejectc (doc §15.27).
+    let mspeed = if env("CFM_M_SPEED", "rest") != "ejectc" { MazeSpeed::EjectRest } else { MazeSpeed::EjectC };
     println!("maze speed {mspeed:?}");
     config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, ..config.rough };
     config.h = h;
@@ -2668,6 +2685,7 @@ fn report_flowmap() {
             b.tier1_signs = NEUTRON_INNER_SIGNS;
         }
     }
+    apply_level_speeds(&mut engine);
     engine.set_body_poses(&ctx, &centers, Some(&orients));
     for _ in 0..fix {
         engine.step_flux(&ctx);
