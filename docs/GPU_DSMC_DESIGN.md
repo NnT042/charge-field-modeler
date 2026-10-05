@@ -3346,6 +3346,59 @@ settings as §15.32; 0 warnings):
 - Electrons stay on their outer poles throughout (r 1.200-1.300).
 - The H2 bond reproduces on a second seed and over twice the time.
 
+### 15.34 Neutron orientation screens: the user's sideways-neutron alpha (2026-10-05)
+
+Frozen stability screens (CFM_D_FREEZE, custom layouts), λ 0.1, n_a 8000,
+h 0.1, R_D 6, 250 time units held + 150 measured, surface emission,
+neutron release = pass-through cone (CFM_D_POLAR=normal_through, self-force
+≈ 0: (-15.7, -5.7, +18.1), self-torque (-4.1, -12.4, +3.3)). One seed each,
+0 MAX_CELL warnings. "Toward" = force along the line to the partner
+(+ = pushed together). Screens now also print the torque vector and the
+direction it turns the spin axis (torque × axis). Untilted bodies read
+6-42 (noise).
+
+Mathis background (re-read): the neutron takes in at its poles and leaves
+by the opposite pole, never the equator (neutron.pdf, deut.pdf); it
+channels at most 0.685 of a proton, ~0.34 per neutron in He4 (deut.pdf);
+in He4 the neutrons are posts that stop same-spin, hole-to-hole protons
+turning (stack.html, oxygen.pdf); neutrons turned pole-along-axis overload
+the through channel and blow the cap protons off (deut.pdf, heavy water).
+In our engine the neutron takes in mostly at its equator (the envelope
+takes everything; its polar beams sweep the polar inflow away) and runs at
+about a proton's throughput through ~6% of its surface, so it acts as a
+reversed proton: drain at the equator, sprayers at the poles.
+
+| screen | layout | result |
+|---|---|---|
+| ppT | proton edge into proton hole (Mathis's plug), centres 3 apart | socket proton pushed off −673, plug drawn in +484: drifts apart slowly |
+| npT_eq | neutron equator faces proton pole (user), 3 apart | **both pulled together**: p +915, n +731 |
+| npT_pole | neutron pole into proton equator, 3 apart | proton driven off −2458 (beam), n +82 |
+| alphaU | user's alpha: same-spin protons at z ±1.8, neutrons at x ±1.25 with axes ±y (beams out through the mid-plane) | **compressive on all four**: p +3595 / +3692, n +4018 / +4064 |
+| alphaU_tilt | same, top proton tilted 15° toward +x | still compressive; top proton **turned back upright**, torque 220 (axis pushed toward −x) |
+| pp_tilt | bare proton pair, pole-on, 3.6 apart, top tilted 15° | weakly together (+259 / +338); torque 32 = noise, no restoring |
+| alphaM | Mathis's sandwich: same positions, neutron axes ±z (antiparallel) | protons pushed **out** (−444 / −312) and sideways off the neutrons; neutrons in (~+4000) |
+| alphaM_tilt | same, top proton tilted 15° | top proton **tipped further**: torque 1904, axis pushed toward +x |
+
+Reading:
+- The engine's neutron binds a proton where drain faces drain: neutron
+  equator to proton pole. Pointing either neutron beam at a proton drives
+  it away (npT_pole here, the axial deuteron of §15.30-15.33).
+- The user's sideways-neutron alpha is the first helium candidate that is
+  compressive on every body, and it stiffens the protons against tilt
+  (220 vs 32 bare): Mathis's post argument (stack.html), reproduced with
+  the neutrons turned 90° from his drawing. With his drawing the neutron
+  beams hit the tilted disc and tip it over (1904): his own overloaded
+  case (deut.pdf), since our neutron runs at full rather than 0.34 strength.
+- Mathis's basic edge-into-hole plug does not hold here: the plug is drawn
+  in but the socket is pushed harder. Absorbing a stream pushes the
+  absorber; the larger-nucleus architecture depends on this plug, so it
+  stays an open question for later.
+- Next: free runs with rotation (CFM_D_INERTIA, CFM_D_LSPIN) of the
+  equator-to-pole deuteron and the sideways alpha; then the
+  neutron-strength tests (polar-only neutron intake, per Mathis), He3 as
+  p-n-p (wig.pdf), bare pp/nn free runs (should come apart), and an
+  emitted-angular-momentum tally as a magnetic-moment check (n/p = −0.685).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
