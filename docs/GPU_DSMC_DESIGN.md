@@ -3337,6 +3337,15 @@ warnings):
   "electrons passing near the equator of the proton will be driven off by
   emitted charge".
 
+**Long free H2** (electrons outside, seed 777, 600 time units free, same
+settings as §15.32; 0 warnings):
+- Proton distance stays within 2.00-3.00 for all 600 time units (mean
+  2.39 over the last quarter).
+- The oscillation is damping: swings 2.0 ↔ 2.9 early, 2.25 ↔ 2.6 by
+  t 450-570, around ~2.4.
+- Electrons stay on their outer poles throughout (r 1.200-1.300).
+- The H2 bond reproduces on a second seed and over twice the time.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
