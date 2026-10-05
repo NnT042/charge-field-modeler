@@ -3271,6 +3271,57 @@ more akin to a wide, leaky pipe".
   ride", water2.pdf). An electron caught between two bonded protons is
   expelled.
 
+### 15.33 The recycling electron; the pass-through neutron map (2026-10-05)
+
+**User idea (2026-10-04):** the electron should be "a tiny proton with its
+own flow in and out", a weaker recycling field. Two electrons between the
+protons might break H2 if their disc outputs collide or scatter charge out
+of the proton vortex.
+
+**Build:** `ShellBody::lepton_disc_deg` (CFM_E_DISC, degrees; 0 = off).
+- A recycling lepton takes in every photon reaching its surface.
+- It re-emits each at c from its surface into its equatorial disc of that
+  half-width, random azimuth.
+- Momentum and torque are tallied like an envelope capture.
+- Run with 5°.
+- Self-force (λ 0.1, R_D 6): (+0.8, +2.0, −0.3), zero torque.
+
+**Hydrogen** (λ 0.1, surface emission, recycling electron):
+- South start: held 300, r 1.20, south cap 1.00.
+- Equator start: driven off and escaped at t ≈ 171; it never reached a
+  pole (the plain electron under EjectRest worked round to the south pole;
+  one seed each).
+
+**H2 frozen screens with recycling electrons** (protons' push toward each
+other):
+
+| layout | plain electrons (§15.31) | recycling electrons |
+|---|---|---|
+| between (sep 4) | +372, +393 | +403, +383 |
+| outside (sep 3) | +561, +556 | +577, +553 |
+| both bottom (sep 3) | +477, +727 | +447, +740 |
+
+- No effect. At r_e 0.2 the electron's cross-section, and so its recycled
+  flow, is ~4% of the proton's.
+- The electrons-between bond is not broken by electron discs at this
+  strength.
+- The free both-bottom run (§15.32) did expel the electron caught between
+  the protons, so the in-between position is dynamically unstable even
+  though the frozen forces compress.
+
+**Pass-through neutron flow map** (polar_release_normal + through, λ 0.1):
+
+| band | net flow at r 1.3 |
+|---|---|
+| north cap | +14 189 |
+| equator | −16 718 |
+| south cap | +14 145 |
+| north / south 30-60° | −4724 / −4678 |
+
+- The beams are exactly balanced, hence the zero self-force.
+- Equatorial intake splits evenly between the poles: a reversed proton (in
+  at the equator, out at both poles), not yet a south-in / north-out pipe.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
