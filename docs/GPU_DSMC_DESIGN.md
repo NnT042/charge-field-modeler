@@ -3252,7 +3252,24 @@ more akin to a wide, leaky pipe".
   - With the cone, the neutron's self-force falls to (−15.7, −5.7, +18.1),
     from −10 546.
   - The rocket is gone; intake and release balance by themselves.
-  - The deuteron screen and neutron flow map with it are running.
+  - But the deuteron screen gets worse: proton −10 254, neutron −178.
+  - The neutron now funnels the field's southward-moving photons out of
+    its south pole, straight into the proton's north drain, with nothing
+    balancing them from below. The hose-into-the-drain problem, with the
+    neutron as the hose.
+  - Open for the user: the neutron release rule. The H2 and proton results
+    do not depend on it.
+
+**Free H2, both bottom** (e p↑ · e p↑, comb. 2; same settings):
+- The protons stay bound, oscillating 2.98 → 2.05 → 2.43 → 2.05 (range
+  2.00-3.00, last-quarter mean 2.22).
+- The outer electron stays on its pole (r 1.200).
+- The middle electron (between the protons, on the upper one's south pole)
+  is squeezed out into the mid-plane (latitude −3°) and driven off
+  sideways. It reached the domain edge at t 223, which stopped the run.
+- So the proton bond does not need the electrons ("mainly along for the
+  ride", water2.pdf). An electron caught between two bonded protons is
+  expelled.
 
 ## 12. Out of scope for this step
 
