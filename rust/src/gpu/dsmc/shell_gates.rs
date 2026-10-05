@@ -2465,12 +2465,15 @@ fn report_deuteron() {
             }
         }
         println!(
-            "screen body {b} {:<7} at ({:+.2},{:+.2},{:+.2}) axis ({:+.2},{:+.2},{:+.2}): force ({:+.0},{:+.0},{:+.0}) |{:.0}| inward {inward:+.0} | toward neighbours{nb} | tilt torque {:.0}",
+            "screen body {b} {:<7} at ({:+.2},{:+.2},{:+.2}) axis ({:+.2},{:+.2},{:+.2}): force ({:+.0},{:+.0},{:+.0}) |{:.0}| inward {inward:+.0} | toward neighbours{nb} | tilt torque {:.0} ({:+.0},{:+.0},{:+.0}), axis pushed toward ({:+.0},{:+.0},{:+.0})",
             classes[b],
             x[b].x, x[b].y, x[b].z,
             (q[b] * DVec3::Z).x, (q[b] * DVec3::Z).y, (q[b] * DVec3::Z).z,
             f.x, f.y, f.z, f.length(),
-            (tsum[b] / time).length()
+            (tsum[b] / time).length(),
+            (tsum[b] / time).x, (tsum[b] / time).y, (tsum[b] / time).z,
+            // Rigid turning: the spin axis moves along torque x axis.
+            (tsum[b] / time).cross(q[b] * DVec3::Z).x, (tsum[b] / time).cross(q[b] * DVec3::Z).y, (tsum[b] / time).cross(q[b] * DVec3::Z).z
         );
     }
 }
