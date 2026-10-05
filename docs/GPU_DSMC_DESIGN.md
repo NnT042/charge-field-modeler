@@ -3322,6 +3322,21 @@ other):
 - Equatorial intake splits evenly between the poles: a reversed proton (in
   at the equator, out at both poles), not yet a south-in / north-out pipe.
 
+**Hydrogen, plain electron, surface emission** (λ 0.1, 300 time units; 0
+warnings):
+
+| start | result |
+|---|---|
+| south pole (r 1.3) | held 300; r 1.20, south cap 1.00 |
+| north pole (r 1.3) | held 300; r 1.20, latitude +77° to +88°, pull ~ −215; north cap 1.00 |
+| equator (r 1.3) | driven out by the disc to r 3.3 within 15 time units, past the capture reach; escaped at t ≈ 99 |
+
+- Either-pole capture survives the move from EjectRest to EjectSurface.
+- The surface disc is stronger, so an equatorial electron is thrown
+  beyond the poles' reach instead of curling round to a pole. diatom.pdf:
+  "electrons passing near the equator of the proton will be driven off by
+  emitted charge".
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
