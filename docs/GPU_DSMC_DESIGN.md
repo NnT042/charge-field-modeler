@@ -3447,6 +3447,15 @@ free; seed 49344; 0 warnings):
   +2284 / +2400, neutrons only lightly together (+279 / +221). The bare
   n-n screens failed on a script error (proton self-force given for a
   neutron-only run) and are re-queued (q12, after q11).
+- Parallel-neutron alpha, free (q11, seeds 49344 / 777): compact to
+  ~t 200, then the neutrons shear apart in OPPOSITE directions along y
+  (n1 +y, n2 −y on both seeds), tilt ~0.1-0.25, and the cluster breaks
+  (stopped t 395 / 351). The screens above shifted both neutrons the
+  same way (the stable, common mode); the failing mode is the
+  antisymmetric shear of the two sideways neutrons past each other, and
+  it does not depend on whether their axes are parallel or antiparallel.
+  Next (q13, after q12): free runs of the head-to-tail alpha, whose
+  neutron axes lie along the n-n line, so no beam runs along the shear.
 
 ## 12. Out of scope for this step
 
