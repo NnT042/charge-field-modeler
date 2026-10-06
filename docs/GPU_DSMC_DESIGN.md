@@ -3442,6 +3442,11 @@ free; seed 49344; 0 warnings):
   (q11), after the user's head-to-tail neutron screens (q10: n-n head to
   tail vs north-north, and the alpha with the neutron pair along x; the
   user's spin-cancel idea).
+- Head-to-tail alpha (q10; neutrons at x ±1.0 with both axes +x, north of
+  one facing south of the other): compressive on all four, protons
+  +2284 / +2400, neutrons only lightly together (+279 / +221). The bare
+  n-n screens failed on a script error (proton self-force given for a
+  neutron-only run) and are re-queued (q12, after q11).
 
 ## 12. Out of scope for this step
 
