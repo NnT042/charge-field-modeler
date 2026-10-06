@@ -3456,6 +3456,14 @@ free; seed 49344; 0 warnings):
   it does not depend on whether their axes are parallel or antiparallel.
   Next (q13, after q12): free runs of the head-to-tail alpha, whose
   neutron axes lie along the n-n line, so no beam runs along the shear.
+- Bare neutron pairs, poles facing across a 2.5 gap (q12, frozen):
+  head to tail (north of one facing south of the other) +136 / +168;
+  north facing north +207 / +208 (both pushed together). Facing neutron
+  beams do not push the pair apart: they meet in the gap and spray
+  sideways, as the EjectC proton jets did (§15.26). The user's
+  spin-cancel idea (2026-10-06) predicts head to tail binds better; here
+  north-north is slightly stronger, a difference near the noise of one
+  seed, so no spin-pairing effect is resolved.
 
 ## 12. Out of scope for this step
 
