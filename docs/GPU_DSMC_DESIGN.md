@@ -3399,6 +3399,25 @@ Reading:
   p-n-p (wig.pdf), bare pp/nn free runs (should come apart), and an
   emitted-angular-momentum tally as a magnetic-moment check (n/p = −0.685).
 
+**Free runs** (same field, release and self-forces; rotation on: mass 7e6,
+CFM_D_INERTIA 2.8e6, CFM_D_LSPIN 8.75e5; 250 time units held, then 600
+free; seed 49344; 0 warnings):
+- *Deuteron, neutron equator facing the proton pole*: **bound for all 600
+  time units**. Distance 2.00-3.00 (last-quarter mean 2.34), oscillating
+  with 5 contacts; both axes hold (proton +z, neutron +x). Watch: a
+  sideways (x, along the neutron axis) force on the proton grows
+  steadily, ~0 to +1380 by t 600, with its torque 20 → 290.
+- *Sideways-neutron alpha*: closes to contact (neutrons touching, n-n
+  2.0-2.3; each neutron touching both protons; p-p 3.5-4.0) and **holds
+  compact for ~250 time units**. Then the neutrons slide out of the stack
+  along their own axes (max |y| 0.03 at t 150 → 0.22 at 240 → 1.18 at 300
+  → 1.96 at 330, e-folding ~30 time units). The neutrons' inward force
+  reverses at t 330, their torques jump to ~2500, they tilt (axis z 0.1),
+  and the cluster comes apart (stopped at t 426, n-n 8.9).
+- Reading: the sideways alpha is compressive and tilt-stiff, but has no
+  restoring force along the neutron axes, and a slide along them grows.
+  Second seed running (777, positions now logged per body).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

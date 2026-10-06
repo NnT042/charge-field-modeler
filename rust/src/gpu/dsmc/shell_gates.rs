@@ -2397,6 +2397,10 @@ fn report_deuteron() {
                 }
                 line += " | max lateral y";
                 line += &format!(" {:.3}", x.iter().map(|p| p.y.abs()).fold(0.0, f64::max));
+                line += " | pos";
+                for b in 0..n {
+                    line += &format!(" ({:+.2},{:+.2},{:+.2})", x[b].x, x[b].y, x[b].z);
+                }
             } else {
                 line += " | gap rates";
                 for k in 0..n - 1 {
