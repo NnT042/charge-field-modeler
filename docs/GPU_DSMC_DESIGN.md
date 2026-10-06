@@ -3464,6 +3464,21 @@ free; seed 49344; 0 warnings):
   spin-cancel idea (2026-10-06) predicts head to tail binds better; here
   north-north is slightly stronger, a difference near the noise of one
   seed, so no spin-pairing effect is resolved.
+- Head-to-tail alpha, free (q13, seeds 49344 / 777, nearly identical):
+  comes apart fast. Released compressive (p +2305 / −2471, neutrons
+  lightly in), the protons fall onto the touching neutrons and the
+  elastic contacts wedge the neutrons apart along x (n-n 2.0 → 2.58 by
+  t 60). Once the gap opens the neutrons are pushed apart (+650, then
+  +1170 at n-n 3.5) and the protons too (−1760 / +1630 at t 90): the
+  facing beams now meet in the open gap and spray up and down into the
+  protons' poles. Stopped t 228 (p-p 9.6).
+- Alpha status: all three free alphas fail (sideways antiparallel ~t 250
+  and parallel ~t 200 by neutron shear; head to tail ~t 60-90 by wedge
+  and spray). Common factor: our neutron runs at a full proton's
+  throughput through two narrow beams; Mathis has 0.685 at most, ~0.34
+  per neutron in He4. Candidate levers (user decision): neutron strength
+  (polar-only neutron intake per neutron.pdf, or a per-neutron capture
+  fraction), inelastic body contacts, whole-nucleus spin about the axis.
 
 ## 12. Out of scope for this step
 
