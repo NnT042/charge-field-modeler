@@ -3424,9 +3424,24 @@ free; seed 49344; 0 warnings):
   then the two neutrons slide out in OPPOSITE directions, each backward
   along its own axis (toward its own south pole: n1 axis +y → y −1.0 at
   t 240, n2 axis −y → y +0.9), torques ~1500-4700, apart by t 358.
-- Queued (q9): frozen screens of the compact alpha sheared that way, unsheared,
-  and with parallel neutron axes shifted together, to tell a field-driven
-  slide (force grows with the shear) from amplified noise.
+- Slide screens (frozen, compact alpha: protons z ±1.9, neutrons x ±1.0
+  touching; q9):
+
+| layout | neutron shift along axis | y-force on neutrons | protons |
+|---|---|---|---|
+| antiparallel, unshifted | — | −20 / +9 | in +3857 / +3936 |
+| antiparallel, sheared (each toward its own south, ±0.5) | opposite | **−1553 / +1548: further out** | in +3750 / +3824 |
+| parallel (both +y), both shifted −0.5 | same | −703 / −692 | in; **pulled after the neutrons −1777 / −1763**, both tilting their facing poles toward them (torque ~400) |
+
+  The antiparallel shear is field-driven (stiffness ≈ −3100 per unit
+  shift): each neutron in the cluster is pushed toward its own south. With
+  parallel axes the protons follow faster than the neutrons run, so the
+  neutrons are pushed back relative to the protons (≈ +2100 per unit) and
+  the protons re-centre on them; only the cluster as a whole is pushed
+  (common mode, removed by FIXCOM). Next: free runs of the parallel alpha
+  (q11), after the user's head-to-tail neutron screens (q10: n-n head to
+  tail vs north-north, and the alpha with the neutron pair along x; the
+  user's spin-cancel idea).
 
 ## 12. Out of scope for this step
 
