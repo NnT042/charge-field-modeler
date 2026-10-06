@@ -3416,7 +3416,17 @@ free; seed 49344; 0 warnings):
   and the cluster comes apart (stopped at t 426, n-n 8.9).
 - Reading: the sideways alpha is compressive and tilt-stiff, but has no
   restoring force along the neutron axes, and a slide along them grows.
-  Second seed running (777, positions now logged per body).
+- Seed 777 (positions logged): the deuteron is again **bound for 600
+  time units** (2.00-3.00, last-quarter mean 2.55); the pair shears along
+  the neutron axis (relative offset 1.7 by t 510), with a restoring
+  x-force building on the proton (−1700) and the pull along the line
+  fading to ~0 at the largest offset. The alpha holds compact to ~t 180,
+  then the two neutrons slide out in OPPOSITE directions, each backward
+  along its own axis (toward its own south pole: n1 axis +y → y −1.0 at
+  t 240, n2 axis −y → y +0.9), torques ~1500-4700, apart by t 358.
+- Queued (q9): frozen screens of the compact alpha sheared that way, unsheared,
+  and with parallel neutron axes shifted together, to tell a field-driven
+  slide (force grows with the shear) from amplified noise.
 
 ## 12. Out of scope for this step
 
