@@ -1108,11 +1108,38 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                             atomicAdd(&tallies[TALLY_HOLE_PASS + b], 1);
                         }
                     }
-                } else if (ik.x > 0.5 && ik.w > 1.5) {
+                } else if (ik.x > 0.5 && ik.w > 1.5 && ik.w < 2.5) {
                     let rel = pos - bodies[b].center.xyz;
                     let ax = bodies[b].axis.xyz;
                     let perp = rel - dot(rel, ax) * ax;
                     take = dot(perp, perp) <= ik.z * ik.z;
+                } else if (ik.w > 2.5) {
+                    // Doc §15.35 PolarDeflect: in through the polar opening;
+                    // anywhere else the photon is batted off the outer spin,
+                    // a sphere of the envelope radius turning about the axis
+                    // with signed equatorial surface speed lk.w (rough
+                    // contact law, as for the core ball), and stays outside.
+                    let ce = bodies[b].center.xyz;
+                    let rr = bodies[b].center.w;
+                    let rel = pos - ce;
+                    let ax = bodies[b].axis.xyz;
+                    let perp = rel - dot(rel, ax) * ax;
+                    if (ik.x > 0.5 && dot(perp, perp) <= ik.z * ik.z * rr * rr) {
+                        take = true;
+                    } else {
+                        let n = -normalize(rel);
+                        let om_env = ax * (lk.w / rr);
+                        let tw = om_env * ballkeys[b * BALLKEY_STRIDE + 36u].y;
+                        let dpd = wall_contact_general(&ph, vec3<f32>(0.0), om_env * rr, tw, n);
+                        pos = ce + normalize(rel) * rr * (1.0 + 1e-3);
+                        ph.c[2] = 0u;
+                        let tqd = cross(pos - ce, dpd);
+                        for (var a = 0u; a < 3u; a = a + 1u) {
+                            atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dpd[a] * TALLY_SCALE));
+                            atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqd[a] * TALLY_SCALE));
+                        }
+                        atomicAdd(&tallies[TALLY_HOLE_PASS + b], 1);
+                    }
                 }
                 if (take) {
                     let lat_in = body_lat_deg(b, pos);

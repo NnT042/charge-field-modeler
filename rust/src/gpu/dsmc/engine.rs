@@ -962,14 +962,18 @@ impl DsmcEngine {
             let hold = r.hold_time * if neutron { r.hold_time_neutron } else { 1.0 };
             // Doc §15.22: lepton bodies never take photons in.
             let open = !body.lepton && (r.hold_cap == 0 || self.held.get(b).copied().unwrap_or(0) < r.hold_cap as i64);
-            let (mode, par) = match r.intake {
+            let intake = if neutron { r.intake_neutron.unwrap_or(r.intake) } else { r.intake };
+            let (mode, par) = match intake {
                 super::config::Intake::Ball => (0.0, 0.0),
                 super::config::Intake::Envelope { p } => (1.0, p),
                 super::config::Intake::Polar { aperture } => (2.0, aperture),
+                super::config::Intake::PolarDeflect { aperture } => (3.0, aperture),
             };
             data[b * BALLKEY_STRIDE + 47] = [if open { 1.0 } else { 0.0 }, (hold / self.config.dt).round() as f32, par as f32, mode];
             let lrec = body.lepton && body.lepton_disc_deg > 0.0;
-            data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, if lrec { 1.0 } else { 0.0 }, body.lepton_disc_deg.to_radians() as f32, 0.0];
+            // [48].w (doc §15.35): the outer spin's signed equatorial surface
+            // speed (level-12 sign x speed fraction), for PolarDeflect.
+            data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, if lrec { 1.0 } else { 0.0 }, body.lepton_disc_deg.to_radians() as f32, (body.signs[3] * body.speeds[3]) as f32];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

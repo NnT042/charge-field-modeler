@@ -133,11 +133,16 @@ pub enum MazeSpeed {
 /// p anywhere on it, so any polar focus of the captures must come from the
 /// field, not the rule. `Polar { aperture }`: captured only when it enters
 /// within `aperture` (fraction of the radius) of the spin axis.
+/// `PolarDeflect { aperture }` (doc §15.35): as Polar, but a photon that
+/// reaches the envelope outside the opening is batted off the outer spin
+/// (a sphere turning about the axis at surface speed c x the level-12 speed
+/// fraction at the equator, rough contact law), pushing the body.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Intake {
     Ball,
     Envelope { p: f64 },
     Polar { aperture: f64 },
+    PolarDeflect { aperture: f64 },
 }
 
 /// Contact law for `ExchangeRule::RoughSphere` (doc §13.2;
@@ -190,6 +195,8 @@ pub struct RoughParams {
     /// through the maze. While a body holds `hold_cap` photons (0 = no cap)
     /// it takes no more in (they pass or bounce as without the maze).
     pub intake: Intake,
+    /// Doc §15.35: neutrons use this intake instead of `intake` when set.
+    pub intake_neutron: Option<Intake>,
     pub hold_time: f64,
     pub hold_time_neutron: f64,
     pub hold_cap: u32,
@@ -213,7 +220,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, body_law: None }
     }
 }
 

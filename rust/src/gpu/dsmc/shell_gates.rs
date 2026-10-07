@@ -2040,6 +2040,19 @@ fn report_pair_force() {
     }
 }
 
+/// Intake spec (doc §15.23, §15.35): env<p> | polar<aperture> |
+/// deflect<aperture> (polar opening, outer spin bats the rest away).
+fn parse_intake(s: &str) -> super::config::Intake {
+    use super::config::Intake;
+    if let Some(a) = s.strip_prefix("deflect") {
+        Intake::PolarDeflect { aperture: a.parse().unwrap() }
+    } else if let Some(a) = s.strip_prefix("polar") {
+        Intake::Polar { aperture: a.parse().unwrap() }
+    } else {
+        Intake::Envelope { p: s.trim_start_matches("env").parse().unwrap() }
+    }
+}
+
 /// Report (doc §15.17): a free deuteron. A proton and a neutron start pole
 /// to pole and move under the photon traffic alone. Self-force rule (user
 /// decision (b), 2026-10-01): each body's own isolated self-force, measured
@@ -2059,7 +2072,7 @@ fn report_pair_force() {
 #[test]
 #[ignore]
 fn report_deuteron() {
-    use super::config::{Intake, MazeSpeed};
+    use super::config::MazeSpeed;
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
     let pair = env("CFM_F_PAIR", "pn");
     let geom = env("CFM_F_GEOM", "axial");
@@ -2104,13 +2117,15 @@ fn report_deuteron() {
     let ctx = GpuContext::new().expect("GPU");
     // CFM_D_INTAKE: env<p> (default env1) | polar<aperture> (doc §15.23).
     let intake_s = env("CFM_D_INTAKE", "env1");
-    let d_intake = if let Some(a) = intake_s.strip_prefix("polar") { Intake::Polar { aperture: a.parse().unwrap() } } else { Intake::Envelope { p: intake_s.trim_start_matches("env").parse().unwrap() } };
+    let d_intake = parse_intake(&intake_s);
+    // CFM_D_INTAKE_N (doc §15.35): the neutrons' own intake (same syntax).
+    let d_intake_n = std::env::var("CFM_D_INTAKE_N").ok().map(|v| parse_intake(&v));
     // CFM_D_HOLE (doc §15.24): through-charge hole radius, 0 = off.
     let d_hole: f64 = env("CFM_D_HOLE", "0").parse().unwrap();
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, through hole {d_hole}, maze speed {d_speed:?}");
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}");
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2122,7 +2137,7 @@ fn report_deuteron() {
         }
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
-        config.rough = RoughParams { intake: d_intake, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ..config.rough };
+        config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2689,7 +2704,10 @@ fn report_flowmap() {
     // inner ball) | ejectc (§15.14).
     let mspeed = match env("CFM_M_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("maze speed {mspeed:?}");
-    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, maze_speed: mspeed, through_hole: hole, polar_release_normal: env("CFM_M_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_M_POLAR", "axial").contains("through"), ..config.rough };
+    // CFM_M_INTAKE_N (doc §15.35): the neutrons' own intake.
+    let intake_n = std::env::var("CFM_M_INTAKE_N").ok().map(|v| parse_intake(&v));
+    println!("neutron intake {intake_n:?}");
+    config.rough = RoughParams { intake: Intake::Envelope { p: 1.0 }, intake_neutron: intake_n, maze_speed: mspeed, through_hole: hole, polar_release_normal: env("CFM_M_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_M_POLAR", "axial").contains("through"), ..config.rough };
     config.h = h;
     config.photon_fraction = phi;
     config.boundary = Boundary::SphereEscape { r_d };
@@ -2768,6 +2786,10 @@ fn report_flowmap() {
     let steps = (snaps * every) as f64;
     let caps: Vec<String> = (0..centers.len()).map(|b| format!("{:.0}", t.env_capt[b] as f64 / (steps * dt))).collect();
     println!("envelope captures per unit time: {}", caps.join(", "));
+    // Doc §15.35: with PolarDeflect the hole-pass tally counts photons
+    // batted off the outer spin (through-hole passes otherwise).
+    let defl: Vec<String> = (0..centers.len()).map(|b| format!("{:.0}", t.hole_pass[b] as f64 / (steps * dt))).collect();
+    println!("deflected off the outer spin / through-hole passes per unit time: {}", defl.join(", "));
     // Body 0 maze outcomes [escaped upright, escaped flipped, trapped
     // upright, trapped flipped, patch fallbacks] and the emission direction
     // latitude at the ball (before the ball's own velocity is added).
