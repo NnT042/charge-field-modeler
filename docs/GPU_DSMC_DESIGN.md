@@ -3480,6 +3480,48 @@ free; seed 49344; 0 warnings):
   (polar-only neutron intake per neutron.pdf, or a per-neutron capture
   fraction), inelastic body contacts, whole-nucleus spin about the axis.
 
+### 15.35 A weaker neutron: the outer spin bats charge away at the equator (2026-10-07)
+
+User decision (2026-10-07): weaken the neutron mechanically, by contact,
+not by a capture probability. Mathis: the neutron draws charge in at its
+poles (neutron.pdf) and channels at most 0.685 of a proton (deut.pdf,
+from the magnetic moments).
+
+Built `Intake::PolarDeflect { aperture }` (CFM_D_INTAKE_N / CFM_M_INTAKE_N
+= deflect<a>, neutrons only via `RoughParams::intake_neutron`). A photon
+reaching the envelope within distance `a` of the spin axis goes in (to the
+maze, as before). Anywhere else it is batted off the outer spin: a sphere
+of the envelope radius turning about the axis with signed equatorial
+surface speed = level-12 sign × speed fraction (ballkeys [48].w), using
+the rough contact law the core ball uses; the momentum and torque go to
+the body and the photon is put back outside. Deflections are counted in
+the through-hole tally (`hole_pass`). Everything that gets in still runs
+the maze and leaves by the polar release (pass-through cone).
+
+Lone neutron flow maps (λ 0.1, surface emission, pass-through cone,
+0 warnings). A lone proton takes in 23 892 per unit time; the old neutron
+(whole-surface intake) 28 719 (1.20 × proton). Net flow just outside the
+envelope (r 1.3):
+
+| opening a | intake | / proton | deflected | N cap | equator ±30 | S cap |
+|---|---|---|---|---|---|---|
+| 1/3 | 1 260 | 0.05 | 22 399 | +108 | −41 | +149 |
+| 0.6 | 4 596 | 0.19 | 19 057 | +1 259 | −329 | +1 206 |
+| 0.8 | 10 286 | 0.43 | 14 010 | +4 359 | −1 790 | +4 426 |
+| 0.95 | 19 210 | 0.80 | 6 684 | +9 230 | −7 728 | +9 168 |
+| old (whole surface) | 28 719 | 1.20 | — | +14 189 | −16 718 | +14 145 |
+
+- Intake follows the openings' share of the surface (1 − √(1 − a²):
+  0.057 / 0.20 / 0.40 / 0.69) times the ~24 000 photons reaching the body.
+- Mathis's 0.685 falls at a ≈ 0.915: the outer spin bats charge away
+  within ~24° of the equator. With openings the size of the release holes
+  (1/3) the neutron is nearly inert (density 0.93-0.99 of ambient around it).
+- The beams scale with intake; the shape stays the pass-through neutron's
+  (both poles out, in mostly at mid-latitudes).
+- Running (q16): confirming map at 0.915, then the screens of §15.34
+  repeated with that neutron (equator-to-pole deuteron, on-axis deuteron,
+  sideways alpha upright and sheared, Mathis's sandwich).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
