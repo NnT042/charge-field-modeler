@@ -3518,9 +3518,28 @@ envelope (r 1.3):
   (1/3) the neutron is nearly inert (density 0.93-0.99 of ambient around it).
 - The beams scale with intake; the shape stays the pass-through neutron's
   (both poles out, in mostly at mid-latitudes).
-- Running (q16): confirming map at 0.915, then the screens of §15.34
-  repeated with that neutron (equator-to-pole deuteron, on-axis deuteron,
-  sideways alpha upright and sheared, Mathis's sandwich).
+- Opening 0.915 confirmed: intake 16 362 = **0.685 × proton**; deflected
+  8 955; beams +7 620 per pole at r 1.3 (equator −5 360, mid-latitudes
+  −4 100 each); self-force ≈ 0 (−1.5, −11.7, +15.6), self-torque ≈ 0.
+
+Screens with the 0.685 neutron (q16; frozen, λ 0.1, one seed; compact
+alpha = protons z ±1.9, neutrons x ±1.0 touching):
+
+| screen | full-strength neutron (§15.34) | 0.685 neutron |
+|---|---|---|
+| deuteron, neutron equator to proton pole (3 apart) | p +915, n +731 | **p +401, n +588** (together) |
+| deuteron on axis (neutron beam into proton pole) | p −10 254 (pass-through cone) | p −4 385, n −89 (apart) |
+| sideways alpha, compact | p ~+3 900, n ~+5 100 | p +2 502 / +2 566, n +3 576 / +3 581 (all in) |
+| same, neutrons sheared ±0.5 along y | neutrons pushed further out ±1 550 | **±435 further out** (3.5× weaker); neutrons turned about z (torque ~390) |
+| Mathis's sandwich, compact | (§15.34 at x ±1.25: p −444 / −312) | p −2 771 / −2 724 (out), n ~+3 550 |
+
+- The weaker neutron keeps everything that held (equator-to-pole
+  deuteron, compressive sideways alpha) and cuts the shear drive 3.5×,
+  but does not remove it. Mathis's layouts (on-axis deuteron, sandwich)
+  still push the protons away: a beam into a proton pushes it, at any
+  strength.
+- Next (q17): free runs of the sideways alpha (two seeds) and the
+  equator-to-pole deuteron with the 0.685 neutron.
 
 ## 12. Out of scope for this step
 
