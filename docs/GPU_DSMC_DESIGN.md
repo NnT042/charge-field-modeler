@@ -3538,8 +3538,29 @@ alpha = protons z ±1.9, neutrons x ±1.0 touching):
   but does not remove it. Mathis's layouts (on-axis deuteron, sandwich)
   still push the protons away: a beam into a proton pushes it, at any
   strength.
-- Next (q17): free runs of the sideways alpha (two seeds) and the
-  equator-to-pole deuteron with the 0.685 neutron.
+- Free runs with the 0.685 neutron (q17; rotation on, 600 time units):
+  - Sideways alpha, seeds 49344 / 777: compact to ~t 180, then the same
+    antisymmetric slide (n1 −y, n2 +y, drifting outward), protons
+    squeezed to p-p ~2.3 as the neutrons leave, apart at t 416 / 410
+    (full strength: 426 / 358). Weakening the neutron 1.75× does not
+    delay the failure.
+  - Read with positions: the two neutrons move opposite ways on opposite
+    sides of the axis, i.e. the pair starts to turn about the nuclear
+    axis (sense set by the neutron orientation: antiparallel and parallel
+    turn opposite ways) while nothing holds them on a circle, so they
+    spiral out. The user's point (2026-10-07): the polar vortex and the
+    nucleus as a whole should be free to rotate about the axis; in the
+    model each body's spin rate is driven (the axial torque is measured
+    and dropped) and the cluster has no co-rotating frame.
+  - Equator-to-pole deuteron: **bound for 600 time units** (2.00-3.00,
+    last-quarter mean 2.38), pulled together throughout (+400 to
+    +1 800); the same slow shear along the neutron axis (relative offset
+    1.5 by t 600) with a restoring force building (−1 200 on the proton).
+- Next (q18): torque screens (each body's spin-up torque about its own
+  axis and the cluster's torque about z, now printed) for the sideways
+  alpha and Mathis's sandwich; and the user's channel-fed sandwich:
+  narrow-opening neutrons (deflect 1/3, ~0.05 × proton alone) fed by the
+  protons' through-holes (CFM_D_HOLE 1/3), upright and tilted 15°.
 
 ## 12. Out of scope for this step
 

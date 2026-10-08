@@ -2298,6 +2298,9 @@ fn report_deuteron() {
     let mut twin = vec![DVec3::ZERO; n];
     let mut fsum = vec![DVec3::ZERO; n];
     let mut tsum = vec![DVec3::ZERO; n];
+    // Doc §15.36: the axial part of each body's torque (spin-up of its own
+    // spin; dropped from the motion because spin rates are driven).
+    let mut asum = vec![0.0f64; n];
     let mut steps_done = 0u32;
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
@@ -2361,6 +2364,7 @@ fn report_deuteron() {
                 let tq = DVec3::new(t.sh_torque[b][0], t.sh_torque[b][1], t.sh_torque[b][2]);
                 let jr = tq - (q[b] * t_self[classes[b]]) * dt;
                 tsum[b] += jr - a * jr.dot(a);
+                asum[b] += jr.dot(a);
             }
         }
         if inertia > 0.0 && !freeze {
@@ -2474,6 +2478,16 @@ fn report_deuteron() {
     // toward each touching neighbour; mean tilting torque.
     let time = steps_done.max(1) as f64 * dt;
     let cen = x.iter().sum::<DVec3>() / n as f64;
+    if freeze {
+        // Doc §15.36: does the field turn the whole cluster about the
+        // nuclear axis (z)? Orbital part sum (x - cen) x F, plus the bodies'
+        // own torques (tilt part + axial part), each about z.
+        let orb: f64 = (0..n).map(|b| ((x[b] - cen).cross(fsum[b] / time)).z).sum();
+        let own: f64 = (0..n).map(|b| (tsum[b] / time).z + (q[b] * DVec3::Z).z * asum[b] / time).sum();
+        let ax: Vec<String> = (0..n).map(|b| format!("{}{b} {:+.0}", &classes[b][..1], asum[b] / time)).collect();
+        println!("spin torque about each body's own axis (+ = spins it up along its axis): {}", ax.join(", "));
+        println!("cluster torque about z: orbital {orb:+.0}, bodies' own {own:+.0}, total {:+.0}", orb + own);
+    }
     for b in 0..n {
         let f = fsum[b] / time;
         let inward = (cen - x[b]).try_normalize().map(|u| f.dot(u)).unwrap_or(0.0);
