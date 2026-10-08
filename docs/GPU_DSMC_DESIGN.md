@@ -3562,6 +3562,45 @@ alpha = protons z ±1.9, neutrons x ±1.0 touching):
   narrow-opening neutrons (deflect 1/3, ~0.05 × proton alone) fed by the
   protons' through-holes (CFM_D_HOLE 1/3), upright and tilted 15°.
 
+### 15.36 Rotation torques; the channel-fed sandwich (2026-10-08)
+
+User ideas (2026-10-07): (1) the polar vortex and the whole nucleus
+should be free to turn about the axis, maybe driven by the incoming
+photons' spin (photons in one pole, antiphotons in the other, same sense
+in absolute terms); (2) in Mathis's sandwich the neutron posts should be
+fed only by what passes through the protons' poles minus the disc, so a
+neutron can never blow a proton off with another proton's leftovers.
+In the model: each body's spin rate is driven (the axial torque was
+measured and dropped); a captured photon gives the body its momentum
+(lever arm r × p) but not its own spin; intake is not species-selective;
+and our protons pass nothing through (everything leaves by the disc), so
+the sandwich's neutrons fed themselves from the ambient field.
+
+Screens now print each body's spin-up torque about its own axis and the
+cluster's torque about z (orbital + bodies' own). Frozen, λ 0.1, compact
+alpha (protons z ±1.9, neutrons x ±1.0), one seed (q18):
+
+| screen | spin-up torques | cluster torque about z | forces |
+|---|---|---|---|
+| sideways alpha, 0.685 neutron | +6 / −1 / +4 / +7 | −19 | all in (p ~+2 530, n ~+3 580) |
+| Mathis's sandwich, 0.685 neutron | +8 / −1 / +5 / −6 | −2 | p out (−2 771 / −2 724), n in |
+| **channel-fed sandwich**: neutrons deflect 1/3 (narrow openings), protons' through-hole 1/3 | +6 / −1 / −1 / −8 | +8 | **all in: p +799 / +828**, n +2 579 / +2 572 |
+| same, top proton tilted 15° | −8 / 0 / −1 / −5 | −6 | all in (p +747 / +814); **tilt pushed back** (torque 44, axis toward −x) |
+
+Self-forces for the channel-fed run: proton with hole (+2.6, −4.0, +45.4),
+neutron with narrow openings (+2.8, +3.3, +21.0); torques ~0.
+
+- No net drive to spin any body or turn the symmetric cluster (all
+  within noise): the turning of the neutron pair in the free alphas is an
+  instability, not a driven rotation. (Photon spin is not handed to the
+  bodies, so the user's spin mechanism is untested.)
+- With the neutrons fed through the protons instead of from the ambient
+  field, Mathis's sandwich is compressive on every body and turns a tilted
+  proton back: the first time his layout holds in a screen. Two changes
+  at once (narrow neutrons, proton holes); control queued.
+- Next (q19): free runs of the channel-fed sandwich (two seeds) and a
+  frozen control with narrow neutrons but no proton holes.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
