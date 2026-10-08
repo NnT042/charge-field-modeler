@@ -3598,8 +3598,25 @@ neutron with narrow openings (+2.8, +3.3, +21.0); torques ~0.
   field, Mathis's sandwich is compressive on every body and turns a tilted
   proton back: the first time his layout holds in a screen. Two changes
   at once (narrow neutrons, proton holes); control queued.
-- Next (q19): free runs of the channel-fed sandwich (two seeds) and a
-  frozen control with narrow neutrons but no proton holes.
+- **Channel-fed sandwich, free** (q19; rotation on, 600 time units,
+  seeds 49344 / 777, 0 warnings): **HOLDS on both seeds**, the first alpha
+  of any layout to survive a free run. Neutrons stay touching (n-n
+  2.00-2.05 throughout) and in contact with the protons (p-n 2.0-3.4);
+  protons stacked at p-p 3.5-4.1; all axes within ~4° of upright. The
+  only motion is a slow rocking of the neutron pair along z between the
+  protons (seed 49344: n1 z −0.33 / n2 z +0.92 at t 390, back by t 600),
+  which does not grow. Intakes: protons ~20 500-21 300, neutrons 480-1 310
+  each (a lone narrow neutron takes 1 260).
+- Control (frozen, narrow neutrons, **no** proton hole): also all in,
+  p +1 015 / +1 090, n ~+2 800. So the protons' through-hole is not what
+  makes it compressive, and the neutrons are fed little beyond a lone
+  narrow neutron. What holds Mathis's sandwich is posts that do not fire
+  strong beams into the protons (the user's "a neutron should never blow
+  a proton off"); the channel feeding is not yet doing work.
+- Next (q20): the no-hole control as a free run; the sandwich with
+  neutrons at about Mathis's per-neutron He4 strength (~0.34 alone,
+  opening 0.72) plus the hole, two seeds, to find whether stronger posts
+  still hold.
 
 ## 12. Out of scope for this step
 
