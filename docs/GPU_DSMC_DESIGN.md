@@ -3632,6 +3632,28 @@ neutron with narrow openings (+2.8, +3.3, +21.0); torques ~0.
   neutron as a hub per wig.pdf, axis along z and sideways) and the
   deuteron with the narrow neutron.
 
+### 15.37 Slice flow maps of the alpha; result pages on the user's server (2026-10-08)
+
+report_flowmap now takes CFM_M_LAYOUT=custom (CFM_M_CLASSES, CFM_M_POS,
+CFM_M_AXES) and CFM_M_SLICE = w: instead of averaging round z it bins the
+slab |y| < w on (x, z) (vr holds v_x, vphi holds v_y; bodies carry x and
+axis_x/y). The page draws slices unmirrored. Built pages are copied to the
+user's home server (futaba, Caddy, https://mathis.nnt042.com/cfm/,
+Authelia-gated; scratchpad publish.sh).
+
+Maps (bodies held, protons z ±1.9, neutrons x ±1.0 touching, Mathis's
+sandwich axes, slab 0.4, 240 snapshots, 0 warnings):
+- **Holding alpha** (neutrons deflect 1/3 + proton hole): protons take in
+  20 800 each and keep their own recycling (disc lobes at the equator,
+  outer-pole drains); neutrons take in ~960 and deflect ~20 200 each (a
+  thin low-density rim round each). Nothing streams between bodies.
+- **0.685 neutrons**: each neutron takes in 13 400 and fires it from both
+  poles; the dense beams (to ~2× ambient) run up and down into the facing
+  halves of the protons, which now absorb 26 300 each (+5 500) and are
+  pushed off. The proton discs are weaker.
+- Into-page velocity: noise everywhere (no coherent swirl, no braiding of
+  the two neutron beams) with the bodies held and not turning.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
