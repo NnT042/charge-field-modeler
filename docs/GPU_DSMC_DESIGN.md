@@ -3678,7 +3678,22 @@ Frozen screens with the neutron that holds the alpha (deflect 1/3,
   outer spin bats the rest away) now gives an alpha that holds, a
   compressive He3 and a closing deuteron in either orientation. Its
   throughput (~0.05 × proton) is far below Mathis's 0.685.
-- Next (q24): free runs of He3 (hub, two seeds) and both deuterons.
+- Free runs (q24; rotation on, 600 time units, 0 warnings):
+  - **He3 (hub), seeds 49344 / 777: holds** on both. Neutron in contact
+    with both protons the whole run (p-n 2.00-2.08), p-p 4.00-4.10, all
+    axes within ~1° of upright, lateral drift ≤ 0.06.
+  - **Deuteron on axis: bound** (2.00-3.00, last-quarter mean 2.37),
+    axes upright.
+  - **Deuteron equator to pole: bound** (2.00-3.00, mean 2.32); the slow
+    shear along the neutron axis seen with stronger neutrons is gone
+    (lateral ≤ 0.15).
+- With the near-inert neutron every light nucleus tried so far holds:
+  deuteron (both orientations), He3, alpha (Mathis's sandwich). Next:
+  flow maps of He3 and the deuteron (q25); then candidates the user can
+  pick from: tritium (Mathis: two neutrons feeding one proton from
+  opposite sides should be unstable), bare p-p and n-n (should come
+  apart), He3/alpha with a bound electron, and lifting the 4-body limit
+  for lithium and up.
 
 ## 12. Out of scope for this step
 
