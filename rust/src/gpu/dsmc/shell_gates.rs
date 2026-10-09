@@ -2708,8 +2708,25 @@ fn report_flowmap() {
         "pp_nn" => (vec![DVec3::new(0.0, 0.0, -s2), DVec3::new(0.0, 0.0, s2)], vec!["proton", "proton"], vec![up, down]),
         // South faces south.
         "pp_ss" => (vec![DVec3::new(0.0, 0.0, -s2), DVec3::new(0.0, 0.0, s2)], vec!["proton", "proton"], vec![down, up]),
-        _ => panic!("CFM_M_LAYOUT: p | n | pp_par | pp_nn | pp_ss"),
+        // Doc §15.37: any layout, CFM_M_POS "x,y,z;..." and CFM_M_AXES
+        // "x,y,z;..." (spin axes), CFM_M_CLASSES "pnnp".
+        "custom" => {
+            let v3s = |k: &str| -> Vec<DVec3> {
+                env(k, "").split(';').filter(|q| !q.is_empty()).map(|q| { let c: Vec<f64> = q.split(',').map(|v| v.trim().parse().unwrap()).collect(); DVec3::new(c[0], c[1], c[2]) }).collect()
+            };
+            let pos = v3s("CFM_M_POS");
+            let axes = v3s("CFM_M_AXES");
+            let cls: Vec<&str> = env("CFM_M_CLASSES", "").chars().map(|c| if c == 'n' { "neutron" } else { "proton" }).collect::<Vec<_>>();
+            assert!(pos.len() == cls.len() && axes.len() == cls.len(), "CFM_M_POS, CFM_M_AXES, CFM_M_CLASSES must agree");
+            let ors = axes.iter().map(|a| DQuat::from_rotation_arc(DVec3::Z, a.normalize())).collect();
+            (pos, cls, ors)
+        }
+        _ => panic!("CFM_M_LAYOUT: p | n | pp_par | pp_nn | pp_ss | custom"),
     };
+    // CFM_M_SLICE = w > 0 (doc §15.37): instead of averaging round the z
+    // axis, bin the slab |y| < w on (x, z), for layouts that are not
+    // symmetric about z. vr then holds v_x and vphi holds v_y.
+    let slab: f64 = env("CFM_M_SLICE", "0").parse().unwrap();
     println!("=== flow map: {layout}, sep {sep}, lambda {lambda}, n_a {n_a}, h {h}, dt {dt}, phi {phi:.3}, r_d {r_d}, hole {hole}, {snaps} snapshots every {every} steps ===");
     let ctx = GpuContext::new().expect("GPU");
     let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
@@ -2741,7 +2758,7 @@ fn report_flowmap() {
     // Grid: R in [0, r_max), z in [-r_max, r_max), square cells DR.
     const DR: f64 = 0.1;
     let r_max = (r_d - 1.0).min(5.0);
-    let nr = (r_max / DR).round() as usize;
+    let nr = ((if slab > 0.0 { 2.0 } else { 1.0 }) * r_max / DR).round() as usize;
     let nz = (2.0 * r_max / DR).round() as usize;
     let cells = nr * nz;
     let mut cnt = vec![0f64; cells];
@@ -2776,13 +2793,20 @@ fn report_flowmap() {
             }
             let (x, y, z) = (p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
             let r = (x * x + y * y).sqrt();
-            if r >= r_max || z.abs() >= r_max {
-                continue;
-            }
-            let i = ((r / DR) as usize) * nz + ((z + r_max) / DR) as usize;
             let sp = p.d[3] as f64;
             let (vx, vy, vz) = (p.b[0] as f64 * sp, p.b[1] as f64 * sp, p.b[2] as f64 * sp);
-            let (vr, vp) = if r > 1e-9 { ((x * vx + y * vy) / r, (x * vy - y * vx) / r) } else { (0.0, 0.0) };
+            let (i, vr, vp) = if slab > 0.0 {
+                if y.abs() >= slab || x.abs() >= r_max || z.abs() >= r_max {
+                    continue;
+                }
+                (((x + r_max) / DR) as usize * nz + ((z + r_max) / DR) as usize, vx, vy)
+            } else {
+                if r >= r_max || z.abs() >= r_max {
+                    continue;
+                }
+                let (vr, vp) = if r > 1e-9 { ((x * vx + y * vy) / r, (x * vy - y * vx) / r) } else { (0.0, 0.0) };
+                (((r / DR) as usize) * nz + ((z + r_max) / DR) as usize, vr, vp)
+            };
             cnt[i] += 1.0;
             s_vr[i] += vr;
             s_vz[i] += vz;
@@ -2822,9 +2846,9 @@ fn report_flowmap() {
         );
     }
     // Text digest: density and mean flow on a few probe points (2x2 cells).
-    let vol = |ir: usize| 2.0 * std::f64::consts::PI * (ir as f64 + 0.5) * DR * DR * DR;
+    let vol = |ir: usize| if slab > 0.0 { 2.0 * slab * DR * DR } else { 2.0 * std::f64::consts::PI * (ir as f64 + 0.5) * DR * DR * DR };
     let probe = |rr: f64, zz: f64| -> String {
-        let ir = (rr / DR) as usize;
+        let ir = (if slab > 0.0 { (rr + r_max) / DR } else { rr / DR }) as usize;
         let iz = ((zz + r_max) / DR) as usize;
         let (mut n, mut a, mut bz, mut c, mut v) = (0.0, 0.0, 0.0, 0.0, 0.0);
         for dr in 0..2 {
@@ -2846,11 +2870,11 @@ fn report_flowmap() {
     }
     let mut js = String::new();
     js += &format!(
-        "{{\"layout\":\"{layout}\",\"sep\":{sep},\"lambda\":{lambda},\"n_a\":{n_a},\"phi\":{phi},\"r_d\":{r_d},\"hole\":{hole},\"snaps\":{snaps},\"dr\":{DR},\"r_max\":{r_max},\"nr\":{nr},\"nz\":{nz},"
+        "{{\"layout\":\"{layout}\",\"slice\":{slab},\"sep\":{sep},\"lambda\":{lambda},\"n_a\":{n_a},\"phi\":{phi},\"r_d\":{r_d},\"hole\":{hole},\"snaps\":{snaps},\"dr\":{DR},\"r_max\":{r_max},\"nr\":{nr},\"nz\":{nz},"
     );
     js += &format!(
         "\"bodies\":[{}],",
-        (0..centers.len()).map(|b| format!("{{\"class\":\"{}\",\"z\":{},\"axis_z\":{}}}", classes[b], centers[b].z, (orients[b] * DVec3::Z).z)).collect::<Vec<_>>().join(",")
+        (0..centers.len()).map(|b| format!("{{\"class\":\"{}\",\"x\":{},\"z\":{},\"axis_x\":{},\"axis_y\":{},\"axis_z\":{}}}", classes[b], centers[b].x, centers[b].z, (orients[b] * DVec3::Z).x, (orients[b] * DVec3::Z).y, (orients[b] * DVec3::Z).z)).collect::<Vec<_>>().join(",")
     );
     let col = |f: &dyn Fn(usize) -> f64| -> String { (0..cells).map(|i| format!("{:.4}", f(i))).collect::<Vec<_>>().join(",") };
     js += &format!("\"dens\":[{}],", col(&|i| cnt[i] / (snaps as f64 * vol(i / nz) * n_a)));

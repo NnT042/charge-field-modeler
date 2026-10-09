@@ -3613,10 +3613,24 @@ neutron with narrow openings (+2.8, +3.3, +21.0); torques ~0.
   narrow neutron. What holds Mathis's sandwich is posts that do not fire
   strong beams into the protons (the user's "a neutron should never blow
   a proton off"); the channel feeding is not yet doing work.
-- Next (q20): the no-hole control as a free run; the sandwich with
-  neutrons at about Mathis's per-neutron He4 strength (~0.34 alone,
-  opening 0.72) plus the hole, two seeds, to find whether stronger posts
-  still hold.
+- Free runs (q20, 600 time units, rotation on):
+  - Narrow neutrons, **no** proton hole (seed 49344): **holds** like the
+    fed sandwich (n-n 2.00-2.06, p-p 3.5-4.0, axes within ~4°; neutron
+    intakes 420-1 360). The hole is not needed.
+  - Neutrons with opening 0.72 (self-force (−20.7, −6.4, +56.3)), plus
+    the hole, seeds 49344 / 777: neutron intake in the cluster
+    6 000-7 000 each (~0.3 × proton, Mathis's per-neutron He4 figure).
+    The neutrons stay locked together (n-n 2.00) but both protons are
+    driven straight off along the axis (p-p 3.85 → 5.3 at t 150 → 8.7 at
+    t 270), symmetric, no shear or tilt; stopped t 289 / 291.
+  - So the sandwich holds only with near-inert posts (~0.05 × proton);
+    between 0.05 and 0.3 a post's beams turn from holding the protons to
+    driving them off. Mathis has the He4 neutrons channeling ~0.34; in
+    this engine a beam into a proton pushes it at that strength.
+- Next: flow maps of the holding and the 0.685 sandwich (slice, q21,
+  published to the user's server), then He3 screens (q23: p-n-p with the
+  neutron as a hub per wig.pdf, axis along z and sideways) and the
+  deuteron with the narrow neutron.
 
 ## 12. Out of scope for this step
 
