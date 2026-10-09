@@ -3687,6 +3687,16 @@ Frozen screens with the neutron that holds the alpha (deflect 1/3,
   - **Deuteron equator to pole: bound** (2.00-3.00, mean 2.32); the slow
     shear along the neutron axis seen with stronger neutrons is gone
     (lateral ≤ 0.15).
+- Flow maps (q25, bodies held, azimuthal; published to the user's page):
+  - He3: protons take in 23 150 each and keep disc + both polar drains;
+    the inner poles draw from the gap round the neutron (inflow toward
+    the contact points); the neutron takes in only ~400 (lone: 1 260) and
+    deflects ~19 800. No stream along the axis between the protons.
+  - Deuteron on axis (centres 2.5): the proton's north pole drains the gap
+    past the neutron (north cap −1 960, south −1 590 per unit time at
+    r 1.3); the neutron (intake 1 080, deflects 21 450) sits in that
+    inflow and is carried in. Mathis's "baryons carried into the charge
+    stream like debris in wind" (deut.pdf), literally.
 - With the near-inert neutron every light nucleus tried so far holds:
   deuteron (both orientations), He3, alpha (Mathis's sandwich). Next:
   flow maps of He3 and the deuteron (q25); then candidates the user can
