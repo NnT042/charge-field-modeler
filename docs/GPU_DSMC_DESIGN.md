@@ -3654,6 +3654,32 @@ sandwich axes, slab 0.4, 240 snapshots, 0 warnings):
 - Into-page velocity: noise everywhere (no coherent swirl, no braiding of
   the two neutron beams) with the bodies held and not turning.
 
+### 15.38 He3 and the deuteron with the near-inert neutron (2026-10-09)
+
+Frozen screens with the neutron that holds the alpha (deflect 1/3,
+~0.05 × proton alone; self-force (+2.8, +3.3, +21.0)), λ 0.1, one seed
+(q23). "Toward" = along the line to the partner (+ = together).
+
+| screen | proton(s) | neutron | spin / cluster torques |
+|---|---|---|---|
+| He3 per wig.pdf: same-spin protons z ±2.05, neutron between, axis along z (the hub) | **+636 / +720** toward the neutron | 19 (squeezed evenly) | all ≤ 4 |
+| He3, neutron lying sideways (axis x) | **+712 / +785** | 44 | all ≤ 1 |
+| deuteron, neutron equator to proton pole (3 apart) | −8 | **+578** | ≤ 13 |
+| deuteron on axis (Mathis's layout) | −87 | **+408** | ≤ 2 |
+
+- He3 is compressive in both orientations: each proton is pushed onto the
+  middle neutron.
+- With the near-inert neutron the deuteron closes in **both** orientations
+  (net closing force +570 equator-to-pole, +321 on axis): the neutron is
+  carried into the proton's polar drain while the proton barely notices
+  it. Mathis's on-axis deuteron, which every stronger neutron pushed apart,
+  now pulls together.
+- So one neutron model (polar openings the size of its release holes,
+  outer spin bats the rest away) now gives an alpha that holds, a
+  compressive He3 and a closing deuteron in either orientation. Its
+  throughput (~0.05 × proton) is far below Mathis's 0.685.
+- Next (q24): free runs of He3 (hub, two seeds) and both deuterons.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
