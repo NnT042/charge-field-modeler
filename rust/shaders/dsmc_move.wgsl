@@ -113,6 +113,16 @@ const TALLY_HOLD: u32 = 1943u;     // [b*2 + (0 in, 1 out)], len 8
 const TALLY_CAPT_LAT: u32 = 1951u; // [(tag != 0)*180 + bin], body 0 envelope captures only, len 360
 const TALLY_ENV_CAPT: u32 = 2311u; // [b], len 4
 const TALLY_HOLE_PASS: u32 = 2316u; // [b], len 4 (doc §15.24)
+// Doc §15.40: photon spin angular momentum exchanged with body b. In:
+// [(b*4 + cat)*3 + axis], cat = (entry north of the equator)*2 + (species
+// plus), spin of photons taken in or deflected; out: [b*3 + axis], spin of
+// the photons sent back out. Scaled by SPIN_SCALE.
+const TALLY_SPIN_IN: u32 = 2320u;
+const TALLY_SPIN_OUT: u32 = 2368u;
+const SPIN_SCALE: f32 = 4194304.0;
+// Photon radius in world units: level-1 over level-12 amplitude (1/512) of
+// a body of radius 1 (baryon_shells::photon_radius).
+const PHOTON_R_WORLD: f32 = 0.001953125;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -591,6 +601,26 @@ fn wall_contact_general(p: ptr<function, GpuPhoton>, gv: vec3<f32>, sw: vec3<f32
     return -(v - v_in) * m;
 }
 
+// Doc §15.40: a photon's own spin angular momentum in world units:
+// kappa m (r R_ph)^2 x angular velocity, with the spin vector w in photon
+// spin units (edge speed r|w| in c), so L = kappa m r^2 R_ph w.
+fn photon_spin_am(p: ptr<function, GpuPhoton>) -> vec3<f32> {
+    let r = exp2(f32((*p).c[3]));
+    let m = select(r, 1.0, params.stacking != 0u);
+    return params.rough_kappa * m * r * r * PHOTON_R_WORLD * (*p).d.xyz;
+}
+
+fn tally_spin(base: u32, l: vec3<f32>) {
+    for (var a = 0u; a < 3u; a = a + 1u) {
+        atomicAdd(&tallies[base + a], i32(l[a] * SPIN_SCALE));
+    }
+}
+
+fn spin_cat(b: u32, x: vec3<f32>, p: ptr<function, GpuPhoton>) -> u32 {
+    let north = dot(x - bodies[b].center.xyz, bodies[b].axis.xyz) >= 0.0;
+    return select(0u, 2u, north) + select(0u, 1u, ((*p).c[0] & FLAG_SPECIES_PLUS) != 0u);
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
     let linear_wg = wid.x + wid.y * nwg.x;
@@ -778,7 +808,11 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 // §15.9/§15.11: capture, then the tank or the maze.
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
+                tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, xh, &ph)) * 3u, photon_spin_am(&ph));
                 x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held);
+                if (!now_held) {
+                    tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
+                }
                 let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
                 let bcm = bodies[b].center.xyz;
                 if (now_held) {
@@ -1130,7 +1164,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         let n = -normalize(rel);
                         let om_env = ax * (lk.w / rr);
                         let tw = om_env * ballkeys[b * BALLKEY_STRIDE + 36u].y;
+                        tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, pos, &ph)) * 3u, photon_spin_am(&ph));
                         let dpd = wall_contact_general(&ph, vec3<f32>(0.0), om_env * rr, tw, n);
+                        tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                         pos = ce + normalize(rel) * rr * (1.0 + 1e-3);
                         ph.c[2] = 0u;
                         let tqd = cross(pos - ce, dpd);
@@ -1143,6 +1179,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 }
                 if (take) {
                     let lat_in = body_lat_deg(b, pos);
+                    tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, pos, &ph)) * 3u, photon_spin_am(&ph));
                     let ch8 = bk(b, 8u, 0u).xyz;
                     let rb8 = bk(b, 8u, 0u).w;
                     var eheld = false;
@@ -1166,6 +1203,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         pos = ch8;
                     } else {
                         pos = maze_contact(&ph, b, xh8, ch8, rb8, bk(b, 8u, 1u).xyz, bk(b, 8u, 2u).xyz, params.dt, ekey);
+                        tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                         ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     }
                     let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);

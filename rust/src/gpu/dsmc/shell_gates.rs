@@ -2053,6 +2053,22 @@ fn parse_intake(s: &str) -> super::config::Intake {
     }
 }
 
+/// Doc §15.40: photon spin exchanged with a body, per unit time, in its own
+/// frame (axis a): net delivered (in - out) along the axis and across it;
+/// incoming along the axis by entry pole and species; and Mathis's
+/// selective poles (photons in at the south, antiphotons at the north:
+/// categories S+ and N-) along the axis.
+fn spin_line(sin: &[[f64; 3]; 4], sout: &[f64; 3], a: DVec3, time: f64) -> String {
+    let v = |x: &[f64; 3]| DVec3::new(x[0], x[1], x[2]) / time;
+    let tot_in = (0..4).map(|c| v(&sin[c])).sum::<DVec3>();
+    let net = tot_in - v(sout);
+    let ax = |w: DVec3| w.dot(a);
+    format!(
+        "photon spin torque: net along axis {:+.2}, across {:.2} | in along axis: S- {:+.2} S+ {:+.2} N- {:+.2} N+ {:+.2} | out along axis {:+.2} | selective in (S+ and N-) {:+.2}",
+        ax(net), (net - a * ax(net)).length(), ax(v(&sin[0])), ax(v(&sin[1])), ax(v(&sin[2])), ax(v(&sin[3])), ax(v(sout)), ax(v(&sin[1])) + ax(v(&sin[2]))
+    )
+}
+
 /// Report (doc §15.17): a free deuteron. A proton and a neutron start pole
 /// to pole and move under the photon traffic alone. Self-force rule (user
 /// decision (b), 2026-10-01): each body's own isolated self-force, measured
@@ -2201,6 +2217,7 @@ fn report_deuteron() {
         let tq = DVec3::new(t.sh_torque[0][0], t.sh_torque[0][1], t.sh_torque[0][2]) / (cal as f64 * dt);
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
+        println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], DVec3::Z, cal as f64 * dt));
         f_self.insert(cl, f);
         t_self.insert(cl, tq);
     }
@@ -2303,6 +2320,8 @@ fn report_deuteron() {
     // Doc §15.36: the axial part of each body's torque (spin-up of its own
     // spin; dropped from the motion because spin rates are driven).
     let mut asum = vec![0.0f64; n];
+    let mut spin_in = vec![[[0.0f64; 3]; 4]; n];
+    let mut spin_out = vec![[0.0f64; 3]; n];
     let mut steps_done = 0u32;
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
@@ -2312,6 +2331,14 @@ fn report_deuteron() {
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
         steps_done = s;
+        for b in 0..n {
+            for a in 0..3 {
+                for c in 0..4 {
+                    spin_in[b][c][a] += t.spin_in[b][c][a];
+                }
+                spin_out[b][a] += t.spin_out[b][a];
+            }
+        }
         for b in 0..n {
             let dp = DVec3::new(t.sh_dp[b][0], t.sh_dp[b][1], t.sh_dp[b][2]);
             let mut j = dp - (q[b] * f_self[classes[b]]) * dt;
@@ -2489,6 +2516,9 @@ fn report_deuteron() {
         let ax: Vec<String> = (0..n).map(|b| format!("{}{b} {:+.0}", &classes[b][..1], asum[b] / time)).collect();
         println!("spin torque about each body's own axis (+ = spins it up along its axis): {}", ax.join(", "));
         println!("cluster torque about z: orbital {orb:+.0}, bodies' own {own:+.0}, total {:+.0}", orb + own);
+        for b in 0..n {
+            println!("body {b} {:<7} {}", classes[b], spin_line(&spin_in[b], &spin_out[b], q[b] * DVec3::Z, time));
+        }
     }
     for b in 0..n {
         let f = fsum[b] / time;

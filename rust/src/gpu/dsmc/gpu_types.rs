@@ -502,7 +502,14 @@ pub const TALLY_PAR_CELLS: usize = 2315;
 /// Doc §15.24: photons passed through the through-charge hole, per body, len 4.
 pub const TALLY_HOLE_PASS: usize = 2316;
 
-pub const TALLY_LEN: usize = 2320;
+/// Doc §15.40: photon spin angular momentum taken in, per body and
+/// (north entry, species plus) category, len 48; sent out, per body, len 12.
+/// Scaled by SPIN_SCALE.
+pub const TALLY_SPIN_IN: usize = 2320;
+pub const TALLY_SPIN_OUT: usize = 2368;
+pub const SPIN_SCALE: f64 = 4194304.0;
+
+pub const TALLY_LEN: usize = 2380;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],

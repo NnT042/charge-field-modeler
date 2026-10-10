@@ -156,6 +156,10 @@ pub struct Totals {
     pub env_capt: [i64; 4],
     /// Doc §15.24: photons passed through the through-charge hole.
     pub hole_pass: [i64; 4],
+    /// Doc §15.40: photon spin angular momentum taken in by body b, by
+    /// category (north entry)*2 + (species plus), and sent out.
+    pub spin_in: [[[f64; 3]; 4]; 4],
+    pub spin_out: [[f64; 3]; 4],
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
 }
@@ -289,6 +293,12 @@ impl Totals {
             self.hold[b][1] += other.hold[b][1];
             self.env_capt[b] += other.env_capt[b];
             self.hole_pass[b] += other.hole_pass[b];
+            for a in 0..3 {
+                for c in 0..4 {
+                    self.spin_in[b][c][a] += other.spin_in[b][c][a];
+                }
+                self.spin_out[b][a] += other.spin_out[b][a];
+            }
         }
         add_vec(&mut self.capt_lat, &other.capt_lat);
         self.par_cells += other.par_cells;
@@ -478,6 +488,13 @@ impl Totals {
             self.hold[b][1] += raw[TALLY_HOLD + b * 2 + 1] as i64;
             self.env_capt[b] += raw[TALLY_ENV_CAPT + b] as i64;
             self.hole_pass[b] += raw[super::gpu_types::TALLY_HOLE_PASS + b] as i64;
+            use super::gpu_types::{SPIN_SCALE, TALLY_SPIN_IN, TALLY_SPIN_OUT};
+            for a in 0..3 {
+                for c in 0..4 {
+                    self.spin_in[b][c][a] += raw[TALLY_SPIN_IN + (b * 4 + c) * 3 + a] as f64 / SPIN_SCALE;
+                }
+                self.spin_out[b][a] += raw[TALLY_SPIN_OUT + b * 3 + a] as f64 / SPIN_SCALE;
+            }
         }
         let cl: Vec<i64> = raw[TALLY_CAPT_LAT..TALLY_CAPT_LAT + 360].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.capt_lat, &cl);
