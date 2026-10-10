@@ -3771,6 +3771,47 @@ L_s 8.75e5), near-inert neutron (deflect 1/3), one seed unless noted (q26):
   every attraction found so far is a shadow (two drains facing, a gap
   emptied); the diproton's facing poles are exactly that.
 
+### 15.40 Photon spin torque (the user's vortex idea): measured (2026-10-10)
+
+User option 1 (2026-10-10): does the photons' own spin, handed to the
+body that takes them in, turn the protons (Mathis: photons in at the
+south, antiphotons at the north spin the same way in absolute terms)?
+Built a tally: per body, the spin angular momentum of photons taken in or
+deflected, by entry hemisphere and species, and of the photons sent out
+(TALLY_SPIN_IN / _OUT; L = kappa m r^2 R_ph w with R_ph = 1/512, the
+level-1 photon of a radius-1 body). Bodies held; it moves nothing.
+
+Frozen screens (q30, λ 0.1, level-1 photons only, near-inert neutron),
+per unit time, in each body's frame:
+
+| body | net spin torque along own axis | across the axis |
+|---|---|---|
+| lone proton | +11.9 | 0.05 |
+| p-p pole to pole | +17.9 / +10.5 | 0.03 / 0.06 |
+| p-p north to north | +10.3 / +10.1 | 0.08 / 0.14 |
+| deuteron, proton (axis / equator-to-pole) | +13.7 / +13.7 | 0.02 / 0.18 |
+| deuteron, neutron | −1.4 / −0.1 | 0.05 / 1.06 |
+| lone neutron | +0.1 | 0.05 |
+
+- The pair-minus-alone part is a few units in every case, and the part
+  that could tilt a body is ≤ 1. The aligning torque that holds the bare
+  proton pair upright is 135-200 (§15.39). Photon spin, as modelled, cannot
+  tip it, and it does not tell p-p from p-n.
+- Incoming spin along the axis is positive in every entry/species category
+  (S−, S+, N−, N+): most photons near a proton were last emitted by it, so
+  their spins carry the body's own imprint, not the ambient helicity.
+  Mathis's selective poles (S+ and N− only) would give +15 to +17 along
+  the axis, the same size.
+- Ceiling: L per photon = kappa R_ph |w| ≈ 8e-4 at level 1, so even
+  ~23 000 captures per unit time all aligned give ≤ ~18. User's point
+  (2026-10-10): the field should hold a mix of photon tiers (axial-only up
+  to z-spinning); a level-k photon carries ~4^k times the spin (r 2^k,
+  m 2^k), 64× at level 3, which would reach the aligning torque. Against
+  that, Mathis puts the charge photon ~G (10^-10) times smaller than the
+  nucleon (bbody.pdf, led.pdf), far smaller than our 1/512. Ambient
+  photons are injected at level 0 today (emit_stiffness_level for
+  emission); a tier-mix test needs the mean free path held fixed.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
