@@ -2173,7 +2173,9 @@ fn report_deuteron() {
     for item in env("CFM_D_FSELF", "").split(';').filter(|q| !q.is_empty()) {
         let (cl, f) = item.split_once(':').unwrap();
         let c: Vec<f64> = f.split(',').map(|q| q.parse().unwrap()).collect();
-        let key = *uniq.iter().find(|u| **u == cl).expect("CFM_D_FSELF class not in the stack");
+        // A class not in this stack is skipped (one FSELF string can serve
+        // several layouts).
+        let Some(key) = uniq.iter().find(|u| **u == cl).copied() else { continue };
         println!("self-force {key:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time (given)", c[0], c[1], c[2]);
         f_self.insert(key, DVec3::new(c[0], c[1], c[2]));
         if c.len() >= 6 {

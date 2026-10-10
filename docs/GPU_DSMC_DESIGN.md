@@ -3752,6 +3752,24 @@ L_s 8.75e5), near-inert neutron (deflect 1/3), one seed unless noted (q26):
   does that for polar entries and was on in the alpha that held.
   Prediction: with the hole, the diproton weakens or parts and the
   edge-into-hole plug holds. Running (q28).
+- Through-hole result (q28/q29; proton hole 1/3, self-force (+2.6, −4.0,
+  +45.4)): **prediction refuted.**
+
+| pair | without hole | with hole |
+|---|---|---|
+| p-p pole to pole, frozen | +591 / +641 | +479 / +502 (together) |
+| p-p pole to pole, free 600 tu | bound, mean 2.45 | **still bound**, 2.0-3.0, mean 2.41, axes upright |
+| edge into hole, frozen | socket −673, plug +484 | socket −456, plug +427 (near neutral, still not bound) |
+| deuteron on axis, frozen | p −87, n +408 | p −52, n +400 |
+
+  Passing polar entries through trims the facing-drain pull ~20% and the
+  socket's push ~30%, but changes no sign. The diproton stays bound.
+- Open for the user: the remaining candidates are agitation (mass, I,
+  L_s), force-vs-distance ordering (deuteron vs diproton), species-
+  selective poles (photons in south, antiphotons in north), and photon
+  spin handed to the bodies (the user's vortex torque). In this gas model
+  every attraction found so far is a shadow (two drains facing, a gap
+  emptied); the diproton's facing poles are exactly that.
 
 ## 12. Out of scope for this step
 
