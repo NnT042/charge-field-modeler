@@ -3732,7 +3732,26 @@ L_s 8.75e5), near-inert neutron (deflect 1/3), one seed unless noted (q26):
   vs distance (nature: deuteron weakly bound, diproton not at all);
   species-selective poles (photons in south, antiphotons in north); photon
   spin handed to the bodies (the user's vortex torque).
-- Running (q27): the pole-on pair with the top proton tilted 30°, 60°, 90°.
+- Tilt sweep (q27, frozen, pole-on pair 3 apart, top proton tilted toward +x):
+
+| tilt | torque on the tilted proton | along the line |
+|---|---|---|
+| 15° (§15.34) | 32 (noise) | together |
+| 30° | **135, back toward upright** | together +467 / +663 |
+| 60° | **203, back toward upright** | top +581; bottom pushed sideways (−468 x), −33 |
+| 90° (= edge into hole, §15.34 ppT) | 18 | bottom −673, top +484 (apart) |
+
+  No tipping point: the field turns a tilted proton back into line, so the
+  bare pole-on pair is genuinely stable here.
+- Reading: the engine binds drain facing drain and pushes emitter into
+  drain apart, nearly the reverse of Mathis's architecture (edge into hole
+  is his main bond; hole to hole holds only under pressure). The specific
+  cause: a body that absorbs a stream is pushed by it. Mathis's sockets
+  pass charge through (venus2 through charge, "water down the drain"), so
+  the momentum passes on. The proton through-hole (§15.24, CFM_D_HOLE)
+  does that for polar entries and was on in the alpha that held.
+  Prediction: with the hole, the diproton weakens or parts and the
+  edge-into-hole plug holds. Running (q28).
 
 ## 12. Out of scope for this step
 
