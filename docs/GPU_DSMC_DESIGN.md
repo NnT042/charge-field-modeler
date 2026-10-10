@@ -3705,6 +3705,35 @@ Frozen screens with the neutron that holds the alpha (deflect 1/3,
   apart), He3/alpha with a bound electron, and lifting the 4-body limit
   for lithium and up.
 
+### 15.39 Engine check: bare pairs and tritium (2026-10-10)
+
+The user's gate: if the engine pushes every pair together, stop and
+brainstorm. Free runs, 600 time units, rotation on (mass 7e6, I 2.8e6,
+L_s 8.75e5), near-inert neutron (deflect 1/3), one seed unless noted (q26):
+
+| pair | result | nature |
+|---|---|---|
+| p-p side by side (centres 3) | **apart**, 3 → 7.9 | right |
+| p-p pole to pole, parallel (centres 3) | **bound 600 time units**, 2.0-3.0 (mean 2.45), pulled together +1 000 to +1 960, axes never tip | **wrong**: no diproton |
+| n-n pole to pole (antiparallel, 2.5) | ~+12 (noise), drifts 2.5 → 2.26 | roughly neutral |
+| n-n side by side (2.5) | ~+25, drifts to ~2.1-2.3 | roughly neutral |
+| tritium n-p-n on axis, seeds 49344 / 777 | **holds** both: neutrons pulled onto the proton +700 to +1 300, proton nearly unforced | bound (radioactive, 12 y) |
+
+- **The diproton fails the check.** Facing drains pull two bare protons
+  together as hard as the deuteron, so H2's bond (§15.32) does not need
+  its electrons here. Mathis (stack.html): two protons hole to hole are
+  held only under pressure and are "free to turn"; turned, "the two charge
+  fields hit eachother and we have repulsion". Ours never turn: no torque
+  at the aligned pose, a 15° tilt shows none either (§15.34 pp_tilt), and
+  the gyroscopic spin keeps them upright.
+- Brainstorm list (for the user): a tipping point at larger tilt
+  (metastable pair needing a kick); agitation (bodies very heavy and stiff
+  next to the field's hits: mass, I, L_s are our choices); bond strength
+  vs distance (nature: deuteron weakly bound, diproton not at all);
+  species-selective poles (photons in south, antiphotons in north); photon
+  spin handed to the bodies (the user's vortex torque).
+- Running (q27): the pole-on pair with the top proton tilted 30°, 60°, 90°.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
