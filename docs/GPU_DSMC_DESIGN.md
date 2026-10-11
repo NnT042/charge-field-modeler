@@ -3812,6 +3812,126 @@ per unit time, in each body's frame:
   photons are injected at level 0 today (emit_stiffness_level for
   emission); a tier-mix test needs the mean free path held fixed.
 
+### 15.41 Where the push comes from; disc-on-disc collisions (2026-10-11)
+
+User (2026-10-10): two facing polar drains should not pull each other
+("two shop vacs hose to hose: only so much air to go around"); tilted
+protons should run away, because more disc faces disc, the deflection
+hits rise, and the altered momentum feeds back into the neighbour's core.
+Two measurements, nothing moved (frozen screens, q31, λ 0.1, n_a 8000,
+R_D 6, centres 3 apart, 150 time units after 250 of settling):
+
+- TALLY_SRC_IN / _N / _OUT: the momentum and torque each body takes in,
+  split by who emitted the photon last (0 never captured = fresh field,
+  own, the partner), by entry hemisphere, and by whether the photon has
+  hit a photon of the other body's emission since it was last emitted
+  (FLAG_XHIT); plus the recoil of what the body sends out. The same table
+  for the lone body (CFM_D_SRCCAL=1, saved in CFM_D_SRCDIR) is turned into
+  the body's frame and subtracted. The rows add up to the net force the
+  screen already printed.
+- TALLY_XCOLL: photon-photon collisions by the two photons' emitters.
+
+**The bare proton pair, pole to pole.** Lower proton, push toward the
+partner per unit time, pair minus alone (the upper one mirrors it):
+
+| source | photons, pair / alone | push |
+|---|---|---|
+| fresh field, inner side | 2037 / 3908 | +1167 |
+| fresh field, outer side | 4261 / 3971 | +163 |
+| the partner's photons (inner + outer) | 1683 + 167 / 0 | −871 |
+| own recycled charge, inner side | 7436 / 8011 | +383 |
+| own recycled charge, outer side | 7527 / 8026 | −258 |
+| recoil of what it sends out | | +6 |
+| total | | +591 |
+
+- The inner side takes in half the fresh field it gets alone. The
+  partner hands back almost the same number of photons (1850 for 1871
+  missing) at the same push per photon (0.57), so that trade leaves only
+  ~+300. All told the inner face takes in 6.4% fewer photons than alone
+  (11 156 vs 11 919), the outer face 0.4% fewer: the bond is that 6%
+  starvation of the facing side, a small leftover of flows of ±5400.
+- The deficit is far larger than the partner's geometric shadow (its
+  envelope covers 5.7% of the facing hemisphere): at λ 0.1 the partner
+  drains the fresh field of the whole gap, and relabels it as its own.
+- The emission recoil is nil (+6) and carries no torque (emission is
+  radial). The proton's push is all in what it takes in, and it takes in
+  over its whole surface (the lone proton: 3908 fresh photons per
+  hemisphere, even).
+
+**The rule, in numbers.** A body that takes in N photons and sends out N
+at the same speed is neutral summed over all directions: it shadows where
+it is dark and pushes where it is bright. The proton is dark along its
+poles and bright along its disc, so the pole-on pull is the mirror image
+of the equatorial push. Lower proton, as the top one tilts:
+
+| top proton | fresh field (inner + outer) | partner's photons | own recycled | total |
+|---|---|---|---|---|
+| upright | +1330 | −871 | +125 | +591 |
+| tilt 15° | +1339 | −935 | +149 | +556 |
+| tilt 30° | +1379 | −1130 | +216 | +467 |
+| tilt 60° | +1433 | −1959 | +489 | −33 |
+| tilt 90° (disc at the pole) | +1429 | −2662 | +557 | −673 |
+| side by side | +426 | −661 | −17 | −256 |
+
+The shadow hardly changes; the partner's stream triples as its disc
+swings round. Stream / shadow = 0.65 pole to pole, 1.55 side by side, and
+passes 1 just under 60°.
+
+**Axial deuteron (narrow neutron).** The proton is not starved (fresh
+field inner side 3530 vs 3908; own recycled 7941 vs 8011): net −87, a
+slight push away. The neutron is pushed in by +408: fresh field +2100 on
+the facing side against −602 on the far side, the proton's photons −1946
+facing and +845 on the far side, own +144, recoil −133.
+
+**Disc-on-disc collisions and the tilt.**
+
+| top proton | collisions between the two protons' emissions, per unit time |
+|---|---|
+| upright | 884 000 |
+| tilt 15° | 886 000 |
+| tilt 30° | 890 000 |
+| tilt 60° | 867 000 |
+| tilt 90° | 818 000 |
+| side by side | 939 000 |
+
+(of 45.9 million in all, 30.8 million fresh on fresh; deuteron p-n
+71 000.) The count does not rise with tilt. It is taken over the whole
+domain, and the crossed mark is set anywhere: more than half of each
+proton's recaptured own photons carry it even on the far side, so neither
+singles out the gap between the discs.
+
+Torque on the tilted proton, + = turning its axis back into line, pair
+minus alone:
+
+| tilt | fresh field, facing side | own recycled, facing side | partner's photons | far side (fresh + own) | total |
+|---|---|---|---|---|---|
+| 15° | +30 | +35 | +9 | −10 | +64 |
+| 30° | +57 | +70 | +23 | −15 | +135 |
+| 60° | +86 | +133 | +36 | −53 | +202 |
+
+Every large term restores. About half of the "own recycled, facing side"
+torque is carried by photons that had hit the partner's emission (+17,
++39, +77 of the pair values): the deflected returns the user pointed to
+do exist and do turn the body, but back into line. The untilted proton
+is turned so that its facing pole follows the tilted one's (torque 48,
+88, 63; from the partner's photons and its own deflected returns).
+
+**Against Mathis.** stack.html: two protons hole to hole "align naturally
+under pressure"; with the pressure off they "are again free to turn", and
+if the discs turn "the two charge fields hit eachother and we have
+repulsion"; the pair is not stable "since there is nothing to prevent
+them from drifting and turning", and the neutrons are the posts that stop
+it. So Mathis has the pole-to-pole pair seated (as the engine has), free
+to turn (the engine restores it: 64, 135, 202), and repelling once turned
+(the engine: past ~55°). The disagreement is the restoring torque, not
+the pole-on pull. Note the free diproton run (§15.39) could not test
+turning: with L_spin 8.75e5 a torque of 135 moves the axis 1.5e-4 rad per
+time unit, 5° in 600.
+
+Not yet known: why the intake torque restores (a body that absorbs over
+its whole surface and emits radially gets its torque only from the
+impact offsets of what arrives).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
