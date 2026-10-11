@@ -123,6 +123,18 @@ const SPIN_SCALE: f32 = 4194304.0;
 // Photon radius in world units: level-1 over level-12 amplitude (1/512) of
 // a body of radius 1 (baryon_shells::photon_radius).
 const PHOTON_R_WORLD: f32 = 0.001953125;
+// Doc §15.41: where each body's push comes from. Momentum and torque (about
+// the body centre) brought in by the photons it takes in or deflects:
+// [(b*20 + cat)*6 + (0..2 momentum, 3..5 torque)], cat = (emitter tag
+// 0 never captured / 1 + last emitting body)*4 + (entry north of the
+// equator)*2 + (hit a photon of another body's emission since it was last
+// emitted); counts [b*20 + cat]; recoil of what it sends out [b*6 + ...].
+const TALLY_SRC_IN: u32 = 2380u;
+const TALLY_SRC_N: u32 = 2860u;
+const TALLY_SRC_OUT: u32 = 2940u;
+// Set by dsmc_collide when two photons last emitted by different bodies
+// collide; cleared when a body emits the photon.
+const FLAG_XHIT: u32 = 1u << 21u;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -482,7 +494,7 @@ fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb
     }
     *held = false;
     let xe = maze_contact(p, b, xh, ch, rb, om, vcen, t_step, key);
-    (*p).c[0] = ((*p).c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+    (*p).c[0] = ((*p).c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
     return xe;
 }
 
@@ -621,6 +633,30 @@ fn spin_cat(b: u32, x: vec3<f32>, p: ptr<function, GpuPhoton>) -> u32 {
     return select(0u, 2u, north) + select(0u, 1u, ((*p).c[0] & FLAG_SPECIES_PLUS) != 0u);
 }
 
+// Doc §15.41 source category of a photon reaching body b at x (read before
+// the body re-tags it).
+fn src_cat(b: u32, x: vec3<f32>, p: ptr<function, GpuPhoton>) -> u32 {
+    let north = dot(x - bodies[b].center.xyz, bodies[b].axis.xyz) >= 0.0;
+    let tag = min(((*p).c[0] >> FLAG_EMIT_SHIFT) & 7u, 4u);
+    return tag * 4u + select(0u, 2u, north) + select(0u, 1u, ((*p).c[0] & FLAG_XHIT) != 0u);
+}
+
+fn tally_src_in(b: u32, cat: u32, mom: vec3<f32>, tq: vec3<f32>) {
+    let base = TALLY_SRC_IN + (b * 20u + cat) * 6u;
+    for (var a = 0u; a < 3u; a = a + 1u) {
+        atomicAdd(&tallies[base + a], i32(mom[a] * TALLY_SCALE));
+        atomicAdd(&tallies[base + 3u + a], i32(tq[a] * TALLY_SCALE));
+    }
+    atomicAdd(&tallies[TALLY_SRC_N + b * 20u + cat], 1);
+}
+
+fn tally_src_out(b: u32, mom: vec3<f32>, tq: vec3<f32>) {
+    for (var a = 0u; a < 3u; a = a + 1u) {
+        atomicAdd(&tallies[TALLY_SRC_OUT + b * 6u + a], i32(mom[a] * TALLY_SCALE));
+        atomicAdd(&tallies[TALLY_SRC_OUT + b * 6u + 3u + a], i32(tq[a] * TALLY_SCALE));
+    }
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
     let linear_wg = wid.x + wid.y * nwg.x;
@@ -647,7 +683,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             ph.c[0] = ph.c[0] & ~FLAG_HELD;
             ph.c[1] = 0u;
             let xe = maze_contact(&ph, hb, ch0 - ph.b.xyz * rb0, ch0, rb0, bk(hb, 0u, 1u).xyz, bk(hb, 0u, 2u).xyz, 0.0, rkey);
-            ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((hb + 1u) << FLAG_EMIT_SHIFT);
+            ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((hb + 1u) << FLAG_EMIT_SHIFT);
             ph.a = vec4<f32>(xe, ph.a.w);
             atomicAdd(&tallies[TALLY_HOLD + hb * 2u + 1u], 1);
         } else {
@@ -809,18 +845,21 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let v_before = ph.b.xyz * ph.d.w;
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
                 tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, xh, &ph)) * 3u, photon_spin_am(&ph));
+                let scat = src_cat(b, xh, &ph);
                 x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held);
                 if (!now_held) {
                     tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                 }
                 let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
                 let bcm = bodies[b].center.xyz;
+                tally_src_in(b, scat, v_before * m, cross(xh - bcm, v_before * m));
                 if (now_held) {
                     dp = v_before * m;
                     tq_maze = cross(xh - bcm, v_before * m);
                 } else {
                     dp = -(ph.b.xyz * ph.d.w - v_before) * m;
                     tq_maze = cross(xh - bcm, v_before * m) - cross(x_next - bcm, ph.b.xyz * ph.d.w * m);
+                    tally_src_out(b, -ph.b.xyz * ph.d.w * m, -cross(x_next - bcm, ph.b.xyz * ph.d.w * m));
                 }
                 has_tq_maze = true;
                 touched = true;
@@ -1117,7 +1156,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     pos = ce + dir * bodies[b].center.w * (1.0 + 1e-3);
                     ph.b = vec4<f32>(dir, axial_helicity(&ph, ph.d.xyz, dir));
                     ph.d = vec4<f32>(ph.d.xyz, 1.0);
-                    ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+                    ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
                     let v_after = dir;
                     let dp = -(v_after - v_before) * m;
@@ -1165,11 +1204,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         let om_env = ax * (lk.w / rr);
                         let tw = om_env * ballkeys[b * BALLKEY_STRIDE + 36u].y;
                         tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, pos, &ph)) * 3u, photon_spin_am(&ph));
+                        let scat_d = src_cat(b, pos, &ph);
                         let dpd = wall_contact_general(&ph, vec3<f32>(0.0), om_env * rr, tw, n);
                         tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                         pos = ce + normalize(rel) * rr * (1.0 + 1e-3);
                         ph.c[2] = 0u;
                         let tqd = cross(pos - ce, dpd);
+                        tally_src_in(b, scat_d, dpd, tqd);
                         for (var a = 0u; a < 3u; a = a + 1u) {
                             atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dpd[a] * TALLY_SCALE));
                             atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqd[a] * TALLY_SCALE));
@@ -1188,6 +1229,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     // Tally the capture at the envelope entry latitude.
                     let xh8 = ch8 - ph.b.xyz * rb8;
                     let tag = (ph.c[0] >> FLAG_EMIT_SHIFT) & 7u;
+                    let scat = src_cat(b, pos, &ph);
                     if (b == 0u) {
                         atomicAdd(&tallies[TALLY_CAPT_LAT + select(0u, 180u, tag != 0u) + fine_lat_bin(lat_in)], 1);
                         atomicAdd(&tallies[TALLY_HIT_LAT + fine_lat_bin(lat_in)], 1);
@@ -1204,7 +1246,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     } else {
                         pos = maze_contact(&ph, b, xh8, ch8, rb8, bk(b, 8u, 1u).xyz, bk(b, 8u, 2u).xyz, params.dt, ekey);
                         tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
-                        ph.c[0] = (ph.c[0] & ~FLAG_EMIT_MASK) | ((b + 1u) << FLAG_EMIT_SHIFT);
+                        ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     }
                     let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
                     let v_after = select(ph.b.xyz * ph.d.w, vec3<f32>(0.0), (ph.c[0] & FLAG_HELD) != 0u);
@@ -1214,6 +1256,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     // re-emitted from the core surface (pos).
                     let bce = bodies[b].center.xyz;
                     let tqe = cross(pos_in - bce, v_before * m) - cross(pos - bce, v_after * m);
+                    tally_src_in(b, scat, v_before * m, cross(pos_in - bce, v_before * m));
+                    tally_src_out(b, -v_after * m, -cross(pos - bce, v_after * m));
                     for (var a = 0u; a < 3u; a = a + 1u) {
                         atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dp[a] * TALLY_SCALE));
                         atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqe[a] * TALLY_SCALE));

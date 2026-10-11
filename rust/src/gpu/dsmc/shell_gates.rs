@@ -2069,6 +2069,126 @@ fn spin_line(sin: &[[f64; 3]; 4], sout: &[f64; 3], a: DVec3, time: f64) -> Strin
     )
 }
 
+/// Doc §15.41: one body's push by source, per unit time: force and torque
+/// (about the body centre) brought in by the photons it takes in or
+/// deflects, by the 20 categories of TALLY_SRC_IN (emitter tag*4 + north
+/// entry*2 + crossed another body's emission), their counts, and the recoil
+/// of what it sends out.
+#[derive(Clone)]
+struct SrcTab {
+    f: [DVec3; 20],
+    t: [DVec3; 20],
+    n: [f64; 20],
+    fo: DVec3,
+    to: DVec3,
+}
+
+fn src_tab(t: &Totals, b: usize, time: f64) -> SrcTab {
+    let s = super::gpu_types::TALLY_SCALE * time;
+    let v = |x: &[i64]| DVec3::new(x[0] as f64, x[1] as f64, x[2] as f64) / s;
+    let mut o = SrcTab { f: [DVec3::ZERO; 20], t: [DVec3::ZERO; 20], n: [0.0; 20], fo: DVec3::ZERO, to: DVec3::ZERO };
+    if t.src_in.is_empty() {
+        return o;
+    }
+    for c in 0..20 {
+        let i = (b * 20 + c) * 6;
+        o.f[c] = v(&t.src_in[i..i + 3]);
+        o.t[c] = v(&t.src_in[i + 3..i + 6]);
+        o.n[c] = t.src_n[b * 20 + c] as f64 / time;
+    }
+    o.fo = v(&t.src_out[b * 6..b * 6 + 3]);
+    o.to = v(&t.src_out[b * 6 + 3..b * 6 + 6]);
+    o
+}
+
+fn src_tab_save(path: &std::path::Path, s: &SrcTab) {
+    let mut v: Vec<f64> = Vec::new();
+    for c in 0..20 {
+        v.extend([s.f[c].x, s.f[c].y, s.f[c].z, s.t[c].x, s.t[c].y, s.t[c].z, s.n[c]]);
+    }
+    v.extend([s.fo.x, s.fo.y, s.fo.z, s.to.x, s.to.y, s.to.z]);
+    std::fs::write(path, v.iter().map(|q| format!("{q:e}")).collect::<Vec<_>>().join(" ")).unwrap();
+}
+
+fn src_tab_load(path: &std::path::Path) -> Option<SrcTab> {
+    let v: Vec<f64> = std::fs::read_to_string(path).ok()?.split_whitespace().map(|q| q.parse().unwrap()).collect();
+    if v.len() != 146 {
+        return None;
+    }
+    let d = |i: usize| DVec3::new(v[i], v[i + 1], v[i + 2]);
+    let mut o = SrcTab { f: [DVec3::ZERO; 20], t: [DVec3::ZERO; 20], n: [0.0; 20], fo: d(140), to: d(143) };
+    for c in 0..20 {
+        o.f[c] = d(c * 7);
+        o.t[c] = d(c * 7 + 3);
+        o.n[c] = v[c * 7 + 6];
+    }
+    Some(o)
+}
+
+/// Doc §15.41: print body b's push by source. `u` = unit vector toward the
+/// cluster centre, `a` = the body's axis, `alone` = the lone body's table
+/// (pole up; turned here by the body frame `q`).
+fn src_print(b: usize, classes: &[&str], s: &SrcTab, alone: Option<&SrcTab>, q: glam::DQuat, u: DVec3, a: DVec3) {
+    // Restoring direction for a tilted axis: toward the nearer of +-u.
+    let au = a.dot(u);
+    let target = if au >= 0.0 { u } else { -u };
+    let perp = target - a * target.dot(a);
+    let th = if perp.length() > 0.05 && au.abs() > 0.05 { Some(perp.normalize()) } else { None };
+    let tp = |t: DVec3| match th {
+        Some(h) => t.cross(a).dot(h),
+        None => (t - a * t.dot(a)).length(),
+    };
+    println!(
+        "push by source, body {b} {} (pole facing the centre: {}); per unit time: photons | force toward the centre, pair / alone / difference | torque {}, pair / alone / difference",
+        classes[b],
+        if au > 0.05 { "north" } else if au < -0.05 { "south" } else { "neither" },
+        if th.is_some() { "turning the axis back into line (+)" } else { "across the axis (size)" }
+    );
+    let mut tot_f = DVec3::ZERO;
+    let mut tot_t = DVec3::ZERO;
+    let mut tot_fa = DVec3::ZERO;
+    let mut tot_ta = DVec3::ZERO;
+    for tag in 0..5 {
+        let name = if tag == 0 { "ambient (never captured)".to_string() } else if tag == b + 1 { "own emission".to_string() } else if tag - 1 < classes.len() { format!("from {}{}", &classes[tag - 1][..1], tag - 1) } else { continue };
+        // The lone body: tag 0 ambient, tag 1 its own emission.
+        let atag = if tag == 0 { Some(0) } else if tag == b + 1 { Some(1) } else { None };
+        for north in [1usize, 0] {
+            let c0 = tag * 4 + north * 2;
+            let (f, t, n) = (s.f[c0] + s.f[c0 + 1], s.t[c0] + s.t[c0 + 1], s.n[c0] + s.n[c0 + 1]);
+            let (fa, ta, na) = match (alone, atag) {
+                (Some(al), Some(at)) => {
+                    let k = at * 4 + north * 2;
+                    (q * (al.f[k] + al.f[k + 1]), q * (al.t[k] + al.t[k + 1]), al.n[k] + al.n[k + 1])
+                }
+                _ => (DVec3::ZERO, DVec3::ZERO, 0.0),
+            };
+            if n == 0.0 && na == 0.0 {
+                continue;
+            }
+            tot_f += f;
+            tot_t += t;
+            tot_fa += fa;
+            tot_ta += ta;
+            println!(
+                "  {name:<24} {} entry: {:>7.0} / {:>7.0} | {:>+9.1} / {:>+9.1} / {:>+8.1} | {:>+8.1} / {:>+8.1} / {:>+8.1} | crossed part: {:>6.0} photons, force {:+.1}, torque {:+.1}",
+                if north == 1 { "N" } else { "S" },
+                n, na, f.dot(u), fa.dot(u), (f - fa).dot(u), tp(t), tp(ta), tp(t - ta),
+                s.n[c0 + 1], s.f[c0 + 1].dot(u), tp(s.t[c0 + 1])
+            );
+        }
+    }
+    let (foa, toa) = alone.map(|al| (q * al.fo, q * al.to)).unwrap_or((DVec3::ZERO, DVec3::ZERO));
+    println!(
+        "  {:<33}: {:>17} | {:>+9.1} / {:>+9.1} / {:>+8.1} | {:>+8.1} / {:>+8.1} / {:>+8.1}",
+        "recoil of what it sends out", "", s.fo.dot(u), foa.dot(u), (s.fo - foa).dot(u), tp(s.to), tp(toa), tp(s.to - toa)
+    );
+    let (f, fa, t, ta) = (tot_f + s.fo, tot_fa + foa, tot_t + s.to, tot_ta + toa);
+    println!(
+        "  {:<33}: {:>17} | {:>+9.1} / {:>+9.1} / {:>+8.1} | {:>+8.1} / {:>+8.1} / {:>+8.1}",
+        "total", "", f.dot(u), fa.dot(u), (f - fa).dot(u), tp(t), tp(ta), tp(t - ta)
+    );
+}
+
 /// Report (doc §15.17): a free deuteron. A proton and a neutron start pole
 /// to pole and move under the photon traffic alone. Self-force rule (user
 /// decision (b), 2026-10-01): each body's own isolated self-force, measured
@@ -2199,10 +2319,26 @@ fn report_deuteron() {
             t_self.insert(key, DVec3::new(c[3], c[4], c[5]));
         }
     }
+    // Doc §15.41: lone-body push-by-source tables, saved by a calibration
+    // and reused by later runs through CFM_D_SRCDIR.
+    let src_dir = env("CFM_D_SRCDIR", "");
+    let src_path = |cl: &str| std::path::Path::new(&src_dir).join(format!("src_alone_{cl}.txt"));
+    let mut src_alone: std::collections::HashMap<&str, SrcTab> = std::collections::HashMap::new();
+    if !src_dir.is_empty() {
+        for cl in uniq.iter() {
+            if let Some(s) = src_tab_load(&src_path(cl)) {
+                println!("lone {cl} push-by-source table loaded");
+                src_alone.insert(*cl, s);
+            }
+        }
+    }
     let inertia: f64 = env("CFM_D_INERTIA", "0").parse().unwrap();
     for cl in uniq.clone() {
         let want_torque = inertia > 0.0 || env("CFM_D_FREEZE", "0") == "1";
-        if f_self.contains_key(cl) && (!want_torque || t_self.contains_key(cl)) {
+        // CFM_D_SRCCAL=1: run the lone body anyway when its push-by-source
+        // table is missing (given self-forces are kept).
+        let need_src = env("CFM_D_SRCCAL", "0") == "1" && !src_alone.contains_key(cl);
+        if f_self.contains_key(cl) && (!want_torque || t_self.contains_key(cl)) && !need_src {
             continue;
         }
         let mut engine = make(&[DVec3::ZERO], &[cl], &[GpuOrient::PoleOn]);
@@ -2218,8 +2354,14 @@ fn report_deuteron() {
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
         println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], DVec3::Z, cal as f64 * dt));
-        f_self.insert(cl, f);
-        t_self.insert(cl, tq);
+        let st = src_tab(&t, 0, cal as f64 * dt);
+        if !src_dir.is_empty() {
+            src_tab_save(&src_path(cl), &st);
+        }
+        src_print(0, &[cl], &st, None, glam::DQuat::IDENTITY, DVec3::Z, DVec3::Z);
+        src_alone.insert(cl, st);
+        f_self.entry(cl).or_insert(f);
+        t_self.entry(cl).or_insert(tq);
     }
     // 2. The stack, held while the field settles, then free. Bodies sit on
     // the axis e in CFM_F_PAIR order with gaps CFM_D_SEPS (default all
@@ -2322,6 +2464,7 @@ fn report_deuteron() {
     let mut asum = vec![0.0f64; n];
     let mut spin_in = vec![[[0.0f64; 3]; 4]; n];
     let mut spin_out = vec![[0.0f64; 3]; n];
+    let mut src_tot = Totals::default();
     let mut steps_done = 0u32;
     let mut caps = vec![0i64; n];
     let mut n_contacts = 0u64;
@@ -2331,6 +2474,9 @@ fn report_deuteron() {
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
         steps_done = s;
+        if freeze {
+            src_tot.add(&t);
+        }
         for b in 0..n {
             for a in 0..3 {
                 for c in 0..4 {
@@ -2518,6 +2664,24 @@ fn report_deuteron() {
         println!("cluster torque about z: orbital {orb:+.0}, bodies' own {own:+.0}, total {:+.0}", orb + own);
         for b in 0..n {
             println!("body {b} {:<7} {}", classes[b], spin_line(&spin_in[b], &spin_out[b], q[b] * DVec3::Z, time));
+        }
+        // Doc §15.41: where each body's push comes from, and how often the
+        // bodies' emissions collide with each other.
+        for b in 0..n {
+            let u = (cen - x[b]).try_normalize().unwrap_or(DVec3::Z);
+            src_print(b, &classes, &src_tab(&src_tot, b, time), src_alone.get(classes[b]), q[b], u, q[b] * DVec3::Z);
+        }
+        if !src_tot.xcoll.is_empty() {
+            let xc = |i: usize, k: usize| src_tot.xcoll[i.min(k) * 5 + i.max(k)] as f64 / time;
+            let all: f64 = src_tot.xcoll.iter().sum::<i64>() as f64 / time;
+            let mut line = format!("collisions per unit time by emitter: all {all:.0}, ambient-ambient {:.0}", xc(0, 0));
+            for b in 0..n {
+                line += &format!(", ambient-{}{b} {:.0}, {}{b}-{}{b} {:.0}", &classes[b][..1], xc(0, b + 1), &classes[b][..1], &classes[b][..1], xc(b + 1, b + 1));
+            }
+            for (i, k) in pairs_ij.iter() {
+                line += &format!(", CROSS {}{i}-{}{k} {:.0}", &classes[*i][..1], &classes[*k][..1], xc(i + 1, k + 1));
+            }
+            println!("{line}");
         }
     }
     for b in 0..n {

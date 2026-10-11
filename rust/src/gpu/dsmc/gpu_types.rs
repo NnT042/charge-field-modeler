@@ -509,7 +509,17 @@ pub const TALLY_SPIN_IN: usize = 2320;
 pub const TALLY_SPIN_OUT: usize = 2368;
 pub const SPIN_SCALE: f64 = 4194304.0;
 
-pub const TALLY_LEN: usize = 2380;
+/// Doc §15.41 push by source: momentum and torque brought in per body and
+/// category (emitter tag*4 + north entry*2 + crossed another body's
+/// emission), [(b*20 + cat)*6 + component], len 480 (TALLY_SCALE); counts
+/// [b*20 + cat], len 80; emission recoil [b*6 + component], len 24;
+/// collisions by emitter-tag pair [min*5 + max], len 25.
+pub const TALLY_SRC_IN: usize = 2380;
+pub const TALLY_SRC_N: usize = 2860;
+pub const TALLY_SRC_OUT: usize = 2940;
+pub const TALLY_XCOLL: usize = 2964;
+
+pub const TALLY_LEN: usize = 2989;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],

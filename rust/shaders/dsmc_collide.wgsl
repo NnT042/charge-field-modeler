@@ -67,6 +67,11 @@ const TALLY_COLLISIONS_IDX: u32 = 61u;
 const TALLY_MOM_DRIFT_COUNT_IDX: u32 = 62u;
 const TALLY_MOM_DRIFT_SUM_IDX: u32 = 67u;
 const TALLY_CELL_OVERFLOW_IDX: u32 = 68u;
+// Doc §15.41: collisions by the two photons' emitter tags (0 never
+// captured, 1 + last emitting body), [min tag*5 + max tag], len 25; a
+// collision between two different bodies' emission marks both photons.
+const TALLY_XCOLL_IDX: u32 = 2964u;
+const FLAG_XHIT: u32 = 1u << 21u;
 const TALLY_PAR_CELLS_IDX: u32 = 2315u; // doc §15.13: cells run in parallel rounds
 const TALLY_EXCHANGE_DRIFT_SUM_IDX: u32 = 69u;
 const TALLY_REDIRECT_DRIFT_SUM_IDX: u32 = 70u;
@@ -476,6 +481,16 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
     let b_emitted = (pb.c[0] & FLAG_KIND_EMITTED) != 0u;
     if (params.d5_far_zone_gate != 0u && !a_emitted && !b_emitted && !within) {
         return;
+    }
+
+    {
+        let tag_a = min((pa.c[0] >> 17u) & 7u, 4u);
+        let tag_b = min((pb.c[0] >> 17u) & 7u, 4u);
+        atomicAdd(&tallies[TALLY_XCOLL_IDX + min(tag_a, tag_b) * 5u + max(tag_a, tag_b)], 1);
+        if (tag_a != 0u && tag_b != 0u && tag_a != tag_b) {
+            pa.c[0] = pa.c[0] | FLAG_XHIT;
+            pb.c[0] = pb.c[0] | FLAG_XHIT;
+        }
     }
 
     if (params.exchange_rule == 2u) {

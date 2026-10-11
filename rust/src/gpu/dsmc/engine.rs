@@ -160,6 +160,13 @@ pub struct Totals {
     /// category (north entry)*2 + (species plus), and sent out.
     pub spin_in: [[[f64; 3]; 4]; 4],
     pub spin_out: [[f64; 3]; 4],
+    /// Doc §15.41: push by source, raw fixed-point sums (TALLY_SCALE) laid
+    /// out as TALLY_SRC_IN / TALLY_SRC_OUT; counts as TALLY_SRC_N; collisions
+    /// by emitter-tag pair as TALLY_XCOLL.
+    pub src_in: Vec<i64>,
+    pub src_n: Vec<i64>,
+    pub src_out: Vec<i64>,
+    pub xcoll: Vec<i64>,
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
 }
@@ -301,6 +308,10 @@ impl Totals {
             }
         }
         add_vec(&mut self.capt_lat, &other.capt_lat);
+        add_vec(&mut self.src_in, &other.src_in);
+        add_vec(&mut self.src_n, &other.src_n);
+        add_vec(&mut self.src_out, &other.src_out);
+        add_vec(&mut self.xcoll, &other.xcoll);
         self.par_cells += other.par_cells;
     }
 
@@ -498,6 +509,14 @@ impl Totals {
         }
         let cl: Vec<i64> = raw[TALLY_CAPT_LAT..TALLY_CAPT_LAT + 360].iter().map(|&x| x as i64).collect();
         add_vec(&mut self.capt_lat, &cl);
+        {
+            use super::gpu_types::{TALLY_SRC_IN, TALLY_SRC_N, TALLY_SRC_OUT, TALLY_XCOLL};
+            let grab = |lo: usize, len: usize| -> Vec<i64> { raw[lo..lo + len].iter().map(|&x| x as i64).collect() };
+            add_vec(&mut self.src_in, &grab(TALLY_SRC_IN, 480));
+            add_vec(&mut self.src_n, &grab(TALLY_SRC_N, 80));
+            add_vec(&mut self.src_out, &grab(TALLY_SRC_OUT, 24));
+            add_vec(&mut self.xcoll, &grab(TALLY_XCOLL, 25));
+        }
         self.par_cells += raw[super::gpu_types::TALLY_PAR_CELLS] as i64;
     }
 }
