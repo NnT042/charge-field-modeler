@@ -3928,6 +3928,23 @@ the pole-on pull. Note the free diproton run (§15.39) could not test
 turning: with L_spin 8.75e5 a torque of 135 moves the axis 1.5e-4 rad per
 time unit, 5° in 600.
 
+**Drifting (q32).** The same upright pair with the top proton shifted
+sideways (+x) at the same height; forces per unit time, pair minus alone:
+
+| sideways shift | lower proton, sideways / along the axis | upper proton, sideways / along the axis | torque (lower / upper) | disc-on-disc collisions |
+|---|---|---|---|---|
+| 0 | 0 / +591 | 0 / −641 | 13 / 6 | 884 000 |
+| 0.5 | +240 / +513 | −150 / −580 | 33 / 38 | 879 000 |
+| 1.0 | +352 / +364 | −298 / −419 | 84 / 74 | 862 000 |
+| 2.0 | +290 / +23 | −248 / −91 | 54 / 55 | 826 000 |
+
+Each proton is pushed sideways back under (over) the other, by more than
+the pull along the line of centres would give (sideways / axial 0.47 and
+0.97 at shifts 0.5 and 1.0, against 0.17 and 0.33 for a central force),
+and both are turned so that their facing poles point at each other. The
+engine's proton pair is restored against drifting as well as turning: a
+well in every direction tested, where stack.html has it free to do both.
+
 Not yet known: why the intake torque restores (a body that absorbs over
 its whole surface and emits radially gets its torque only from the
 impact offsets of what arrives).
