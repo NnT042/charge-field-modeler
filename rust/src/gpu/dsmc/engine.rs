@@ -33,26 +33,6 @@ fn load(ctx: &GpuContext, common: bool, src: &str) -> Kernel {
     Kernel::new(ctx, &module, "main")
 }
 
-/// GPU pause switch: while the file `cfm_pause` exists in the project root
-/// (or the path in CFM_PAUSE_FILE), every running simulation
-/// sleeps before its next step, leaving the GPU idle. Checked every 64th
-/// step; delete the file to resume where it stopped.
-fn wait_while_paused() {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNT: AtomicU32 = AtomicU32::new(0);
-    if COUNT.fetch_add(1, Ordering::Relaxed) % 64 != 0 {
-        return;
-    }
-    let path = std::env::var_os("CFM_PAUSE_FILE").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("cfm_pause"));
-    if path.exists() {
-        eprintln!("paused ({} exists)", path.display());
-        while path.exists() {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-        eprintln!("resumed");
-    }
-}
-
 /// Host-side running totals, folded from the GPU tally readback each step.
 #[derive(Default, Clone, Debug)]
 pub struct Totals {
@@ -1091,7 +1071,7 @@ impl DsmcEngine {
     /// steady-state loop). Compacts `n_used` down to the post-gather live
     /// count so dead slots are reclaimed for the next injection.
     pub fn step_collide(&mut self, ctx: &GpuContext, totals: &mut Totals) {
-        wait_while_paused();
+        super::guard::wait_while_paused();
         self.write_params(ctx);
         let n = self.n_used;
 

@@ -6,6 +6,7 @@ pub mod config;
 pub mod density;
 pub mod engine;
 pub mod gpu_types;
+pub mod guard;
 pub mod precompute;
 pub mod sigma_calib;
 #[cfg(test)]
