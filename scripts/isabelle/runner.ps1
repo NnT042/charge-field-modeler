@@ -25,7 +25,8 @@ while ($true) {
     $env:CFM_GUARD_NEED_MIN = $null
     if (-not $ok) {
         $why = "$(($chk | Select-String '^blocked' | Select-Object -First 1).Line)"
-        if ($why -ne $waiting) { Log "waiting ($($job.BaseName)): $why"; $waiting = $why }
+        $kind = ($why -replace '\d+', '#')
+        if ($kind -ne $waiting) { Log "waiting ($($job.BaseName)): $why"; $waiting = $kind }
         Start-Sleep -Seconds 60
         continue
     }

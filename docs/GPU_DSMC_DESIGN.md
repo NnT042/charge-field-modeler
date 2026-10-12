@@ -3949,6 +3949,78 @@ Not yet known: why the intake torque restores (a body that absorbs over
 its whole surface and emits radially gets its torque only from the
 impact offsets of what arrives).
 
+### 15.42 Pull against distance; the through-channel; a second GPU (2026-10-12)
+
+User reframe (2026-10-11): the bound pole-on proton pair may simply be
+H2, which only a chemical change breaks. diatom.pdf agrees with the
+mechanism: one atom has "a charge minimum at the south pole" and the
+other "will be pushed into it" (the starvation of §15.41); stack.html's
+unstable pair is the fused nuclear one. Two things stay open: the pair
+has no bond length (the free run bounces on hard contact, §15.39), and
+the p-p pull is as strong as p-n. User idea for the first: the overlapped
+recycling bubbles feed more charge into the exposed poles, some falls
+through the channel, crosses the gap at a slight angle and hits the facing
+side of the other proton, a push that could hold them slightly apart.
+
+Frozen screens as §15.41, pole-on pair, by centre distance (envelopes
+touch at 2.0): no channel (q33), through-channel of radius 1/3 (q33h,
+CFM_D_HOLE, own lone-body table), and the axial p-n pair with the narrow
+neutron (q34; 3.0 from §15.41). Mean push toward the partner per body,
+per unit time:
+
+| centre distance | p-p, no channel | p-p, channel 1/3 | ratio | axial p-n |
+|---|---|---|---|---|
+| 2.2 | +1823 | +1350 | 0.74 | +507 |
+| 2.6 | +1031 | +784 | 0.76 | |
+| 3.0 | +620 | +491 | 0.79 | +160 |
+| 4.0 | +199 | +154 | 0.77 | +54 |
+| 5.0 | +74 | +72 | | |
+
+Lower proton, no channel, by source (pair minus alone):
+
+| centre distance | fresh field, facing side | partner's photons | own recycled, facing side | fresh + own, far side | total |
+|---|---|---|---|---|---|
+| 2.2 | +1673 | −891 | +1179 | −173 | +1794 |
+| 2.6 | +1397 | −937 | +668 | −137 | +995 |
+| 3.0 | +1169 | −866 | +388 | −95 | +597 |
+| 4.0 | +754 | −623 | +87 | −49 | +176 |
+| 5.0 | +468 | −415 | +9 | −36 | +28 |
+
+- **No standoff, with or without the channel.** The pull rises all the
+  way into contact (×3 from 3.0 to 2.2). The partner's push levels off
+  near −900; what grows fastest up close is the partner intercepting the
+  proton's own returning charge on the facing side (+9 → +1179).
+- **The channel trims the pull by 21-26%, a little more up close, but not
+  by pushing.** The partner's-photon term is smaller with the channel
+  (−759 against −891 at 2.2): what falls through one channel mostly falls
+  through the other, which lies on the same axis, and is never taken in.
+  The trim is a smaller shadow (fresh field, facing side +1313 against
+  +1673 at 2.2), because a proton with a hole absorbs less. The user's
+  slanted crossing stream is not visible at this opening.
+- **Short range.** The pull falls about 3× per unit of distance beyond
+  3.0 and is near zero by 5.0. The two protons of a pair differ by 45-90
+  at every distance (self-force and lone-body table are measured at the
+  domain centre; at 5.0 the bodies sit 3.5 from the boundary), which is
+  the size of the error there.
+- **Hierarchy still inverted.** The p-p pull is ~3.7× the axial p-n
+  closing at every distance, with the same range. In the axial deuteron
+  the proton is pushed slightly away at every distance (−43, −87, −73 at
+  2.2, 3.0, 4.0) and the neutron does the closing (+1057, +408, +181).
+- Collisions between the two protons' emissions: 951, 917, 883, 772,
+  627 thousand per unit time at 2.2 .. 5.0.
+
+**Second GPU.** The no-channel and p-n series ran on a second PC
+(ISABELLE, RTX 5060 8 GB, same speed as the 3060: 47 min per screen
+against 49). The test binary is self-contained, so the machine needs no
+toolchain. Its repeat of the 3.0 run gave +597 / +643 against +591 / +641
+here, every by-source row within a few units. New: `gpu::dsmc::guard`
+(several pause files; hours and programs during which a run gives up the
+GPU with exit code 75 or pauses; built in for ISABELLE: Mon-Fri
+07:00-17:00 and Genshin Impact; `guard_check` for runners) and
+`scripts/isabelle/` (job queue runner that asks guard_check before each
+job, requeues a run that gave way, and never starts one that would cross
+into the guarded hours).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
