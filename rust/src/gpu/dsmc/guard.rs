@@ -63,6 +63,18 @@ pub fn in_hours(h: &[Hours], weekday: u32, minute: u32) -> bool {
     h.iter().any(|w| weekday >= w.day_from && weekday <= w.day_to && minute >= w.min_from && minute < w.min_to)
 }
 
+/// Minutes from (weekday, minute) until the next guarded window opens (0
+/// when inside one); None when there are no windows.
+pub fn minutes_until_hours(h: &[Hours], weekday: u32, minute: u32) -> Option<u32> {
+    if h.is_empty() {
+        return None;
+    }
+    (0..7 * 24 * 60).find(|&d| {
+        let t = minute + d;
+        in_hours(h, (weekday + t / (24 * 60)) % 7, t % (24 * 60))
+    })
+}
+
 /// Which of `procs` appears in a `tasklist /FO CSV /NH` listing.
 pub fn proc_running<'a>(procs: &'a [String], tasklist_csv: &str) -> Option<&'a str> {
     let low = tasklist_csv.to_ascii_lowercase();
@@ -124,7 +136,23 @@ pub fn blocked() -> Option<String> {
     if let Some(p) = pause_files().into_iter().find(|p| p.exists()) {
         return Some(format!("pause file {}", p.display()));
     }
-    guard_active(&rules_here())
+    let rules = rules_here();
+    if let Some(why) = guard_active(&rules) {
+        return Some(why);
+    }
+    // CFM_GUARD_NEED_MIN: a run of that many minutes must end before the
+    // next guarded window opens.
+    let need: u32 = std::env::var("CFM_GUARD_NEED_MIN").ok().and_then(|q| q.trim().parse().ok()).unwrap_or(0);
+    if need > 0 {
+        if let Some((wd, min)) = local_weekday_minute() {
+            if let Some(left) = minutes_until_hours(&rules.hours, wd, min) {
+                if left < need {
+                    return Some(format!("guarded hours start in {left} min, the run needs {need}"));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn guard_active(r: &Rules) -> Option<String> {
@@ -203,6 +231,16 @@ mod tests {
     }
 
     #[test]
+    fn time_left_before_the_window() {
+        let r = rules_for("ISABELLE", "", "");
+        // Sunday 23:00 -> Monday 07:00 is 8 h; Friday 17:00 -> Monday 07:00 is 62 h.
+        assert_eq!(minutes_until_hours(&r.hours, 0, 23 * 60), Some(8 * 60));
+        assert_eq!(minutes_until_hours(&r.hours, 5, 17 * 60), Some(62 * 60));
+        assert_eq!(minutes_until_hours(&r.hours, 3, 12 * 60), Some(0));
+        assert_eq!(minutes_until_hours(&[], 3, 12 * 60), None);
+    }
+
+    #[test]
     fn extra_rules_parse() {
         let r = rules_for("ESTELLE", "0-6,22:30-23:00", "notepad.exe; Game.exe");
         assert_eq!(r.hours, vec![Hours { day_from: 0, day_to: 6, min_from: 1350, min_to: 1380 }]);
@@ -219,8 +257,9 @@ mod tests {
         assert_eq!(proc_running(&procs, other), None);
     }
 
-    /// Runner helper (no GPU): exits 0 when the GPU may be used now, or
-    /// YIELD_EXIT with the reason. `<exe> guard_check --ignored --nocapture`.
+    /// Runner helper (no GPU): exits 0 when the GPU may be used now (and,
+    /// with CFM_GUARD_NEED_MIN, for that many minutes), or YIELD_EXIT with
+    /// the reason. `<exe> guard_check --ignored --nocapture`.
     #[test]
     #[ignore]
     fn guard_check() {
