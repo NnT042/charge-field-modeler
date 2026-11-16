@@ -4209,6 +4209,35 @@ p-n-n-p from contact, which will show whether hard contact plus the
 inward force is enough or whether jitter takes them over the edge; the
 net-force check above.
 
+**Free runs (2026-11-16).** From contact (centres 2.05), free in 3D
+(custom layout), rotation on (mass 7e6, inertia 2.8e6, L_spin 8.75e5),
+cluster centre held, 250 tu held then up to 600 free, seeds 49344 / 777.
+0 warnings. Raw: `reference/ch46/`.
+
+| Run | seed 49344 | seed 777 |
+|---|---|---|
+| p-n-p | **holds 600 tu**: p-n 2.000-2.085, p-p 4.01-4.10 | **holds 600 tu**: p-n 2.000-2.082 |
+| p-n-n-p | end protons leave, stopped at t 250 | end protons leave, stopped at t 239 |
+
+- **The on-axis He3 holds on both seeds with the neutron at 0.685**:
+  the first free cluster with a neutron at Mathis's throughput. The
+  protons rest against the neutron (27-28 contacts in 600 tu, last
+  quarter mean distance 2.02-2.03), sideways drift stays under 0.03,
+  axes within ~4° of upright (the proton tilts rock, largest 0.07,
+  back to 0.03-0.05 at the end; no growth seen but 600 tu is short for
+  it). Forces at the end as in the frozen screen (+393..+459 /
+  +604..+679).
+- **p-n-n-p comes apart the same way on both seeds.** The two neutrons
+  stay pressed together (2.00-2.05 throughout) but the end protons, at
+  about zero force at contact, drift out, and past ~2.1 the push grows
+  (−400..−500 at 2.1-2.2, −1500 at 2.4, −2000 at 3.3). Consistent with
+  the frozen screens: a weakly held end has no margin against the
+  sign change just outside contact.
+
+Queued (`reference/ch47/q47.sh`): frozen p-n-p at centres 2.3 and 2.6;
+frozen p-n-p at 2.05 with the +z proton's axis flipped; free p-n-p
+released from 2.3.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
