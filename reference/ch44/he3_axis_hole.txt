@@ -1,0 +1,75 @@
+
+running 1 test
+=== deuteron: pnp axial, sep0 3, mass 1e6, damp 0, fixed centre true, lambda 0.1, n_a 8000, h 0.1, dt 0.02, phi 0.667, r_d 6 ===
+intake Envelope { p: 1.0 }, neutron intake Some(PolarDeflect { aperture: 0.915 }), through hole 0.3333, maze speed EjectSurface
+self-force proton : (+2.6, -4.0, +45.4) per unit time (given)
+self-torque proton : (+0.0, +0.0, +0.0) per unit time (given)
+self-force neutron: (+4.1, +6.4, +29.1) per unit time (given)
+self-torque neutron: (-9.0, -0.7, +7.0) per unit time (given)
+rotation: inertia 0e0, L_spin 0e0, damp 0
+layout chain: orients [PoleOn, PoleOn, PoleOn], start [(-0.0, -0.0, -2.05), (0.0, 0.0, 0.0), (0.0, 0.0, 2.05)]
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+t   10.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +445 n -27 p -668 | contact steps 0 | captures/time 19331 13901 19220
+t   20.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +392 n -4 p -643 | contact steps 0 | captures/time 19292 13931 19182
+t   30.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +435 n -52 p -675 | contact steps 0 | captures/time 19290 13823 19215
+t   40.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +433 n -5 p -650 | contact steps 0 | captures/time 19266 13917 19179
+t   50.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +427 n -39 p -658 | contact steps 0 | captures/time 19299 13881 19204
+t   60.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +499 n -2 p -658 | contact steps 0 | captures/time 19309 13896 19121
+t   70.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +475 n -36 p -604 | contact steps 0 | captures/time 19294 13897 19189
+t   80.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +399 n -19 p -645 | contact steps 0 | captures/time 19296 13933 19150
+t   90.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +494 n +30 p -670 | contact steps 0 | captures/time 19319 13947 19100
+t  100.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +459 n +38 p -609 | contact steps 0 | captures/time 19284 13919 19110
+t  110.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +466 n -0 p -685 | contact steps 0 | captures/time 19321 13874 19125
+t  120.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +454 n +7 p -643 | contact steps 0 | captures/time 19292 13856 19190
+t  130.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +470 n -62 p -654 | contact steps 0 | captures/time 19323 13883 19154
+t  140.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +439 n -15 p -610 | contact steps 0 | captures/time 19253 13893 19151
+t  150.00: gaps 2.0500 2.0500 | gap rates +0.00000 +0.00000 | interaction along +e: p +451 n -38 p -618 | contact steps 0 | captures/time 19312 13945 19091
+distance 0-1 (proton-neutron): range 2.050 .. 2.050; last quarter mean 2.050
+distance 1-2 (neutron-proton): range 2.050 .. 2.050; last quarter mean 2.050
+drift of the stack centre +0.000
+spin torque about each body's own axis (+ = spins it up along its axis): p0 -15, n1 -10, p2 -12
+cluster torque about z: orbital +0, bodies' own -36, total -36
+body 0 proton  photon spin torque: net along axis +11.80, across 0.14 | in along axis: S- +4.97 S+ +8.32 N- +4.49 N+ +7.53 | out along axis +13.51 | selective in (S+ and N-) +12.81
+body 1 neutron photon spin torque: net along axis +10.97, across 0.48 | in along axis: S- +5.89 S+ +9.83 N- +6.00 N+ +10.14 | out along axis +20.89 | selective in (S+ and N-) +15.83
+body 2 proton  photon spin torque: net along axis +11.01, across 0.75 | in along axis: S- +4.53 S+ +7.63 N- +4.70 N+ +8.02 | out along axis +13.87 | selective in (S+ and N-) +12.34
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2096 /       0 |    -928.4 /      +0.0 /   -928.4 |     +2.0 /     +0.0 /     +2.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    1782 /       0 |    +799.8 /      +0.0 /   +799.8 |     +0.6 /     +0.0 /     +0.6 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    6198 /       0 |   -1783.7 /      +0.0 /  -1783.7 |     +6.5 /     +0.0 /     +6.5 | crossed part:   4011 photons, force -1502.1, torque +5.3
+  own emission             S entry:    4838 /       0 |   +1374.2 /      +0.0 /  +1374.2 |     +4.3 /     +0.0 /     +4.3 | crossed part:   3625 photons, force +1311.1, torque +3.5
+  from n1                  N entry:     635 /       0 |    -423.2 /      +0.0 /   -423.2 |     +2.7 /     +0.0 /     +2.7 | crossed part:    402 photons, force -214.0, torque +1.8
+  from n1                  S entry:    3420 /       0 |   +1576.6 /      +0.0 /  +1576.6 |     +2.7 /     +0.0 /     +2.7 | crossed part:   3004 photons, force +1484.1, torque +3.3
+  from p2                  N entry:     291 /       0 |    -137.6 /      +0.0 /   -137.6 |     +0.8 /     +0.0 /     +0.8 | crossed part:    291 photons, force -137.6, torque +0.8
+  from p2                  S entry:      39 /       0 |     +17.0 /      +0.0 /    +17.0 |     +0.4 /     +0.0 /     +0.4 | crossed part:     39 photons, force +17.0, torque +0.4
+  recoil of what it sends out      :                   |      -0.1 /      +0.0 /     -0.1 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    +494.6 /      +0.0 /   +494.6 |     +7.1 /     +0.0 /     +7.1
+push by source, body 1 neutron (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    5531 /       0 |   -1561.3 /      +0.0 /  -1561.3 |     +0.9 /     +0.0 /     +0.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    5490 /       0 |   +1566.8 /      +0.0 /  +1566.8 |     +6.1 /     +0.0 /     +6.1 | crossed part:      0 photons, force +0.0, torque +0.0
+  from p0                  N entry:    1367 /       0 |    -344.9 /      +0.0 /   -344.9 |     +1.7 /     +0.0 /     +1.7 | crossed part:   1367 photons, force -344.9, torque +1.7
+  from p0                  S entry:    3846 /       0 |   +1342.7 /      +0.0 /  +1342.7 |     +3.7 /     +0.0 /     +3.7 | crossed part:   3730 photons, force +1284.2, torque +3.8
+  own emission             N entry:     442 /       0 |    -152.5 /      +0.0 /   -152.5 |     +1.0 /     +0.0 /     +1.0 | crossed part:    416 photons, force -138.1, torque +1.2
+  own emission             S entry:     435 /       0 |    +151.2 /      +0.0 /   +151.2 |     +0.1 /     +0.0 /     +0.1 | crossed part:    409 photons, force +137.3, torque +0.2
+  from p2                  N entry:    3836 /       0 |   -1328.8 /      +0.0 /  -1328.8 |     +0.4 /     +0.0 /     +0.4 | crossed part:   3723 photons, force -1271.6, torque +0.5
+  from p2                  S entry:    1347 /       0 |    +345.2 /      +0.0 /   +345.2 |     +1.5 /     +0.0 /     +1.5 | crossed part:   1347 photons, force +345.2, torque +1.5
+  recoil of what it sends out      :                   |      -4.1 /      +0.0 /     -4.1 |     +1.7 /     +0.0 /     +1.7
+  total                            :                   |     +14.2 /      +0.0 /    +14.2 |     +7.1 /     +0.0 /     +7.1
+push by source, body 2 proton (pole facing the centre: south); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    1770 /       0 |    +791.2 /      +0.0 /   +791.2 |     +1.2 /     +0.0 /     +1.2 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2101 /       0 |    -927.0 /      +0.0 /   -927.0 |     +1.8 /     +0.0 /     +1.8 | crossed part:      0 photons, force +0.0, torque +0.0
+  from p0                  N entry:      39 /       0 |     +17.1 /      +0.0 /    +17.1 |     +0.1 /     +0.0 /     +0.1 | crossed part:     39 photons, force +17.1, torque +0.1
+  from p0                  S entry:     299 /       0 |    -141.4 /      +0.0 /   -141.4 |     +0.2 /     +0.0 /     +0.2 | crossed part:    299 photons, force -141.4, torque +0.2
+  from n1                  N entry:    3380 /       0 |   +1650.6 /      +0.0 /  +1650.6 |     +3.2 /     +0.0 /     +3.2 | crossed part:   3007 photons, force +1502.2, torque +3.5
+  from n1                  S entry:     583 /       0 |    -370.1 /      +0.0 /   -370.1 |     +1.3 /     +0.0 /     +1.3 | crossed part:    393 photons, force -203.9, torque +1.2
+  own emission             N entry:    4802 /       0 |   +1349.3 /      +0.0 /  +1349.3 |     +1.7 /     +0.0 /     +1.7 | crossed part:   3589 photons, force +1289.3, torque +1.2
+  own emission             S entry:    6185 /       0 |   -1766.8 /      +0.0 /  -1766.8 |     +0.7 /     +0.0 /     +0.7 | crossed part:   4006 photons, force -1491.4, torque +1.2
+  recoil of what it sends out      :                   |      -2.5 /      +0.0 /     -2.5 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    +600.5 /      +0.0 /   +600.5 |     +1.9 /     +0.0 /     +1.9
+collisions per unit time by emitter: all 45142136, ambient-ambient 31013373, ambient-p0 4014936, p0-p0 905355, ambient-n1 2659932, n1-n1 610418, ambient-p2 3963328, p2-p2 886157, CROSS p0-n1 402530, CROSS p0-p2 281097, CROSS n1-p2 405011
+screen body 0 proton  at (-0.00,-0.00,-2.05) axis (+0.00,+0.00,+1.00): force (+0,+0,+449) |449| inward +449 | toward neighbours n1:+449 | tilt torque 7 (+7,-1,+0), axis pushed toward (-1,-7,+0)
+screen body 1 neutron at (+0.00,+0.00,+0.00) axis (+0.00,+0.00,+1.00): force (+0,+0,-15) |15| inward +0 | toward neighbours p0:+15 p2:-15 | tilt torque 9 (+6,+7,+0), axis pushed toward (+7,-6,+0)
+screen body 2 proton  at (+0.00,+0.00,+2.05) axis (+0.00,+0.00,+1.00): force (+0,+0,-646) |646| inward +646 | toward neighbours n1:+646 | tilt torque 2 (+0,-2,+0), axis pushed toward (-2,-0,+0)
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 298 filtered out; finished in 2968.80s
+

@@ -4101,6 +4101,65 @@ Open, for the user:
   against distance and orientation; a far-field model with gravity does
   the molecules.
 
+### 15.44 The 0.685 neutron on the proton's through-channel (2026-11-15)
+
+Question: every earlier run with the neutron at Mathis's throughput
+(`deflect0.915`) pushed the protons off. None of them put the neutron's
+beam on the proton's through-channel: §15.35 used the cone release and
+no channel, the sandwiches had the neutrons off axis. A beam that is
+absorbed must push; a beam that passes through need not.
+
+Frozen screens, §15.41 settings (λ 0.1, n_a 8000, h 0.1, R_D 6, 250 tu
+settle, 150 tu measure), neutron `deflect0.915`, `CFM_D_POLAR=through`
+(parallel beam of radius 1/3, leaving by the pole the photon was heading
+for), all bodies on one axis, axes parallel. Force along the axis,
++ = toward the cluster centre. 0 warnings. Raw output and the queue
+script: `reference/ch44/`.
+
+| Screen | proton(s) | neutron | proton captures/time |
+|---|---|---|---|
+| p-n, centres 3, proton channel 1/3 | −2060 | −99 | 21,700 |
+| p-n, centres 3, no channel (control) | −5981 | −74 | 29,250 |
+| p-n, cone release, no channel (§15.35) | −4385 | −89 | |
+| p-n-p, centres 2.05, channels 1/3 | **+449 / +646** | −15 (net) | 19,300 |
+
+Lone self-forces used: proton with channel (+2.6, −4.0, +45.4), torque
+taken as 0; proton without (−10.4, −14.1, +63.8); 0.685 neutron with
+through-release (+4.1, +6.4, +29.1), torque (−9.0, −0.7, +7.0), measured
+in the first run.
+
+What it shows:
+
+- **The channel matters.** Same pair, same distance: the push on the
+  proton falls from −5981 to −2060 when the beam has a channel to go
+  down. The parallel beam with no channel is worse than the cone (−5981
+  against −4385), as expected for a tighter beam that is all absorbed.
+- **The deuteron is still pushed apart.** By source, on the proton
+  (facing side + far side): neutron's photons −1759 + 1531 = −228; the
+  proton's own emission coming back −2677 + 1522 = −1155; ambient
+  −1310 + 680 = −630. So about a tenth of the remaining push is the
+  beam; most is the proton's own emission returning to the facing side
+  (7,036 photons per unit time against 5,144 on the far side), i.e. the
+  beam fills the gap and scatters the proton's output back at it.
+- **The on-axis He3 is compressive on both protons with the neutron at
+  0.685.** This is the first cluster screen where a neutron at Mathis's
+  throughput does not blow the protons off. The neutron sits at ~0 net
+  (it is fed about equally by both protons: 3,846 and 3,836 photons per
+  unit time through its facing poles, nearly all crossing). On each
+  proton the neutron's photons sum to +1154 / +1280 toward the centre,
+  against −410 own emission, −130 ambient, −120 from the far proton.
+
+Not yet separated: the He3 was at contact (2.05) and the deuteron at 3,
+so layout (neutron fed from both sides) and distance are confounded.
+The proton "alone" columns are empty (self-force was given), so the
+facing/far differences above assume a lone proton with a channel is
+symmetric. The per-row N/S entry labels for crossed photons have not
+been checked against the code; the totals match the screen forces.
+These are frozen screens, not free runs; one seed.
+
+Follow-up queued (`reference/ch45/q45.sh`, same settings): p-n at 2.05;
+p-n-p at 3; on-axis alphas p-n-n-p and n-p-p-n at 2.05.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
