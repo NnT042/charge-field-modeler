@@ -2245,7 +2245,14 @@ fn report_deuteron() {
     let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
     // Doc §15.23: 'e' in CFM_F_PAIR is an electron (lepton ball, radius
     // CFM_D_RE, mass CFM_D_ME, no intake; spin axis from CFM_D_AXES).
-    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else if c == 'e' { "electron" } else { "proton" }).collect();
+    // Control (doc §15.43): 'x' is an inert sphere, a lepton-type ball of the
+    // full envelope radius that takes nothing in; photons bounce off it
+    // (rough contact). CFM_D_XSPIN = its spin sign (0 = not turning).
+    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else if c == 'e' { "electron" } else if c == 'x' { "inert" } else { "proton" }).collect();
+    let x_spin: f64 = env("CFM_D_XSPIN", "0").parse().unwrap();
+    // Control (doc §15.43): CFM_D_MAZE=iso re-emits in a uniformly random
+    // direction (no maze, no disc) for every body.
+    let d_maze_iso = env("CFM_D_MAZE", "swept") == "iso";
     let r_e: f64 = env("CFM_D_RE", "0.2").parse().unwrap();
     let m_e: f64 = env("CFM_D_ME", "3800").parse().unwrap();
     let e = if geom == "axial" { DVec3::Z } else { DVec3::X };
@@ -2267,9 +2274,12 @@ fn report_deuteron() {
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
         for ((bc, o), cl) in config.bodies.iter_mut().zip(ors).zip(cls) {
             bc.orient = *o;
-            if *cl == "electron" {
+            if *cl == "electron" || *cl == "inert" {
                 bc.class = GpuClass::Electron;
             }
+        }
+        if d_maze_iso {
+            config.rough.maze = MazeMode::Isotropic;
         }
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
@@ -2291,6 +2301,12 @@ fn report_deuteron() {
                 // CFM_E_DISC (doc §15.32): recycling electron, disc
                 // half-width in degrees (0 = off, photons bounce off it).
                 engine.shell_bodies[b].lepton_disc_deg = env("CFM_E_DISC", "0").parse().unwrap();
+            }
+            if *cl == "inert" {
+                engine.make_lepton(&ctx, b, 1.0);
+                engine.shell_bodies[b].signs = [x_spin, 0.0, 0.0, 0.0];
+                let centers: Vec<DVec3> = engine.config.bodies.iter().map(|c| c.center).collect();
+                engine.set_body_poses(&ctx, &centers, None);
             }
         }
         apply_level_speeds(&mut engine);

@@ -4021,6 +4021,86 @@ GPU with exit code 75 or pauses; built in for ISABELLE: Mon-Fri
 job, requeues a run that gave way, and never starts one that would cross
 into the guarded hours).
 
+### 15.43 Controls: isotropic emission and inert spheres (2026-11-15)
+
+A review of §15.35-15.42 raised two controls that had never been run on
+the pair screens.
+
+1. A body that takes photons in and sends the same number out evenly, at
+   the same speed, should feel no force from a neighbour. If it does, part
+   of the pole-on pull is an artifact.
+2. The neutron that holds the alpha (deflect 1/3) bats away ~95% of what
+   reaches it. Does the alpha need a neutron at all, or only a ball?
+
+New in `report_deuteron`:
+- `CFM_D_MAZE=iso`: every body re-emits in a uniformly random direction
+  (`MazeMode::Isotropic`, the §15.11 control), still at c from the
+  envelope.
+- Class letter `x` in `CFM_F_PAIR`: an inert sphere, a lepton-type ball of
+  the full envelope radius that takes nothing in; photons bounce off it by
+  the rough contact law. `CFM_D_XSPIN` = its spin sign (default 0, not
+  turning).
+
+Frozen screens at the §15.41 settings (λ 0.1, n_a 8000, R_D 6, 150 time
+units after 250 of settling, one seed, 0 warnings). Lone-body self-forces:
+isotropic proton (−1.8, −18.4, +9.5), inert sphere (−0.2, −8.8, +5.1).
+Force toward the partner or the cluster centre, per unit time:
+
+| screen | this run | same layout before |
+|---|---|---|
+| isotropic p-p, pole to pole, centres 3 | **+0 / +22** | +591 / +641 (disc, §15.41) |
+| isotropic p-p, side by side, centres 3 | **+8 / +29** | −256 (disc, §15.41) |
+| alpha with inert spheres for neutrons (protons z ±1.9, spheres x ±1.0) | protons **+1057 / +1181**, spheres +2540 / +2514 | protons +1015 / +1090, neutrons ~+2800 (narrow neutrons, no hole, §15.36) |
+
+- **The engine has no spurious pair force.** Evenly emitting protons
+  neither attract nor repel, in either layout, at λ 0.1. The residuals are
+  the size of the calibration error noted in §15.42.
+- **Every pair force comes from the shape of the emission.** In the
+  isotropic pole-on pair the by-source rows still move (own emission,
+  facing side +110 and far side −40 on the lower proton), but they sum to
+  +0.2. The starvation of the facing side (§15.41) gives a net pull only
+  because the proton is dark along its poles and bright along its disc.
+  The angular profile the maze produces is the one lever behind the
+  pole-on pull, the side-by-side push, the diproton and the missing bond
+  length.
+- **The alpha screen uses no neutron physics.** A ball that only reflects
+  photons gives the same compression as the near-inert neutron; tilt
+  torques are noise (20 and 8). The alpha of §15.36 and, very likely, the
+  He3 and tritium of §15.38-15.39 show that same-spin protons facing pole
+  to pole with passive spacers hold together. They do not test Mathis's
+  neutron. At 0.3-0.685 of a proton's throughput the neutron's beams
+  still drive the protons off (§15.35-15.36).
+- The spacers add compression: ~+1100 per proton against ~+200 to +250
+  for bare protons at centres 3.8 (§15.42, interpolated). With the
+  spheres present each proton takes in ~25 400 per unit time (lone
+  proton: 23 892). Mechanism not worked out; the by-source table for
+  this layout is in the raw output.
+
+Raw outputs and the queue script: `reference/ctl43/`.
+
+**Mathis on what binds (checked 2026-11-15).** The engine has no gravity
+term (the old Atom mode had `g_q`). quantumg.html: the proton's gravity is
+9.81 m/s² against a charge acceleration of 1.48e18 m/s² at its surface,
+falling as 1/r⁴ (0.00064 at 9e-9 m), which puts the crossover near 2e4
+proton radii (~0.8 nm). Inside this domain (R_D 6) gravity is ~1e-17 of
+the charge push, so it does not belong here; it belongs in a far-field
+model at molecular distances. For the nucleus: strong.html, "We don't
+have a strong force in the nucleus, we have gravity", because channelled
+charge does not repel; grav4.pdf, the nucleons are "bound by charge
+pressure from outside" and by the pressure differences at the poles that
+also make the vortices; grav3.pdf, gravity is "the binding energy of the
+charge field". The engine's pole-on pull (a starved facing side) is of
+that kind. By scale the engine's bound p-p pair (centres 2-3, pull gone
+by 5) is a nuclear-distance object, not H2.
+
+Open, for the user:
+- The neutron at Mathis's throughput.
+- Whether the proton's emission toward its poles should change when a
+  partner sits there (the diproton and the bond length both hang on it).
+- A two-scale plan: this engine tabulates near-field force and torque
+  against distance and orientation; a far-field model with gravity does
+  the molecules.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
