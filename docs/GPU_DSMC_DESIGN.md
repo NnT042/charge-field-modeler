@@ -4149,16 +4149,65 @@ What it shows:
   proton the neutron's photons sum to +1154 / +1280 toward the centre,
   against −410 own emission, −130 ambient, −120 from the far proton.
 
-Not yet separated: the He3 was at contact (2.05) and the deuteron at 3,
-so layout (neutron fed from both sides) and distance are confounded.
+The He3 was at contact (2.05) and the deuteron at 3, so layout and
+distance were confounded; the follow-up below separates them.
 The proton "alone" columns are empty (self-force was given), so the
 facing/far differences above assume a lone proton with a channel is
 symmetric. The per-row N/S entry labels for crossed photons have not
 been checked against the code; the totals match the screen forces.
 These are frozen screens, not free runs; one seed.
 
-Follow-up queued (`reference/ch45/q45.sh`, same settings): p-n at 2.05;
-p-n-p at 3; on-axis alphas p-n-n-p and n-p-p-n at 2.05.
+**Follow-up (2026-11-16): distance check and on-axis alphas.** Same
+settings, all protons with channel 1/3, self-forces given. 0 warnings.
+Raw: `reference/ch45/`. Bodies listed from −z to +z; + = toward the
+cluster centre.
+
+| Screen | centres | forces toward the centre | sum along z |
+|---|---|---|---|
+| p-n | 2.05 | p +253, n −346 | +599 |
+| p-n | 3 | p −2060, n −99 | |
+| p-n-p | 2.05 | p +449, n ~0, p +646 | −212 |
+| p-n-p | 3 | p −2054, n ~0, p −1891 | −144 |
+| p-n-n-p | 2.05 | p −1, n +1067, n +1103, p +257 | −294 |
+| n-p-p-n | 2.05 | n −293, p −1141, p −950, n −272 | −212 |
+
+- **Distance decides, not layout.** The He3 that is compressive at
+  contact is pushed apart at centres 3 with the same force as the
+  deuteron there (−2054 / −1891 against −2060). So the hold is a
+  contact effect: inward at 2.05, outward at 3. That is not a well with
+  a standoff; between the two there is a point where the force changes
+  sign, and it is an unstable one. The cluster holds if pressed
+  together and comes apart if it opens past that point (not located).
+- **At contact the deuteron half-holds.** The proton is drawn to the
+  neutron (+253) but the neutron is pushed away from the proton (−346):
+  the pair is driven along the axis toward the neutron's side (+599)
+  and opens slowly (93 net). In the He3 the second proton cancels this.
+- **p-n-n-p is the first on-axis alpha layout with nothing pushed
+  out**: the two neutrons are pressed together hard (+1067 / +1103),
+  mostly by their own emission returning on the outer side and by each
+  other's beam (rows as labelled), and the end protons sit near zero
+  (−1, +257).
+  Weakly held ends, not a compressed cluster like the He3.
+- **n-p-p-n fails on every body.** The outer neutrons' beams go through
+  the near proton and land on the far one (from the far neutron: −920 /
+  −1007), and the proton pair that attracts when bare (§15.42) is
+  split (−1141 / −950). Neutrons belong inside, protons at the ends,
+  for this neutron rule.
+- **Unexplained net force.** The symmetric layouts carry −144 to −294
+  along z (the +z proton is always held ~200 harder than the −z one).
+  All axes point +z, so this may be real (a cluster with parallel spins
+  has a preferred direction, like the lone bodies' self-force) or a
+  self-force calibration error (proton torque taken as 0; the neutron's
+  self-force measured alone may not carry over into a cluster). To
+  check: flip one proton's axis, or re-measure with antiparallel ends.
+
+Where this leaves the neutron question: at Mathis's throughput the
+neutron can sit in a cluster, but only on the axis, inside, at contact,
+feeding the protons' channels. Next: locate the sign change between
+2.05 and 3 for p-n-p (two or three distances); free runs of p-n-p and
+p-n-n-p from contact, which will show whether hard contact plus the
+inward force is enough or whether jitter takes them over the edge; the
+net-force check above.
 
 ## 12. Out of scope for this step
 
