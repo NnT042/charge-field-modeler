@@ -4234,9 +4234,57 @@ cluster centre held, 250 tu held then up to 600 free, seeds 49344 / 777.
   the frozen screens: a weakly held end has no margin against the
   sign change just outside contact.
 
-Queued (`reference/ch47/q47.sh`): frozen p-n-p at centres 2.3 and 2.6;
-frozen p-n-p at 2.05 with the +z proton's axis flipped; free p-n-p
-released from 2.3.
+**How robust is the He3 (2026-11-16/17).** Same settings; frozen
+unless stated. Raw: `reference/ch47/`. 0 warnings.
+
+| Screen | proton −z | neutron | proton +z |
+|---|---|---|---|
+| p-n-p, centres 2.05 (above) | +449 | ~0 | +646 |
+| p-n-p, centres 2.3 | −755 | ~0 | −565 |
+| p-n-p, centres 2.6 | −1544 | ~0 | −1380 |
+| p-n-p, centres 3 (above) | −2054 | ~0 | −1891 |
+| p-n-p, 2.05, +z proton flipped (axis −z) | +461 | ~0 | +438 |
+| free, released from 2.3 (rotation on) | apart: p-n 4.9 / 4.6 at t 172, stopped | | |
+
+- The force changes sign within 0.25 of contact (between 2.05 and
+  2.3). Released from 2.3 the He3 comes apart at once: the hold is a
+  contact lock with a capture range of about a quarter of a radius, not
+  a well.
+- With the +z proton flipped the two protons read nearly equal
+  (+461 / +438, against +449 / +646 with parallel axes), and the cluster
+  still holds. So the uneven net force along the axis with parallel
+  spins is physical (it follows the spin direction), not a self-force
+  calibration error. Flipping a proton does not cost the He3 its hold.
+
+**Two alpha layouts with the 0.685 through-release neutron (2026-11-17).**
+Compact alpha: protons z ±1.9 (same spin), neutrons at x ±1.0, proton
+channels 1/3. Raw: `reference/ch48/`. 0 warnings.
+
+| Screen | protons | neutrons |
+|---|---|---|
+| Mathis's sandwich (neutron axes ±z; beams straddle the proton rims) | **−3985 / −3962 (out)** | +3463 / +3436 (in) |
+| sideways, in line along x, head to tail (axes +x) | +1904 / +1981 (in) | +693 / +754 (in) |
+| same, free (rotation on, seed 49344) | comes apart, stopped t 238 | |
+
+- The sandwich with a beam half on the rim is worse than with the cone
+  release (−2750 in §15.35): the rim takes the beam and is pushed off.
+  The neutrons' pole intake at the disc edge does not hold the proton.
+- The in-line sideways alpha is compressive on all four when frozen,
+  but free it fails the same way as §15.34 q13: the protons close in
+  (p-p 3.8 → 3.5 by t 50), the n-n contact opens (2.26 at t 50, 3.0 at
+  t 90) and the neutrons are pushed out along x (n-n 8.3 at the stop).
+  The end state is the two protons pole to pole at contact (p-p ~2.1)
+  with one neutron still touching one of them: the diproton plus loose
+  neutrons. The n-n pole-to-pole pull is +700 here against +1100 in the
+  on-axis p-n-n-p, too weak to resist the wedge.
+
+Status after §15.44: the only cluster that holds free with a neutron at
+0.685 is the on-axis He3, by a contact lock with ~0.25 capture range.
+No alpha layout holds. Every outcome in §15.34-15.44 turns on the
+neutron's release rule (cone, parallel through-beam, near-inert), which
+is a chosen rule, not derived; with §15.43 (isotropic emission gives no
+force) this says the nuclear results are set by the emission and intake
+rules we pick.
 
 ## 12. Out of scope for this step
 
