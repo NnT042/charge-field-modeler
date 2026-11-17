@@ -214,6 +214,23 @@ fn body_of(x: vec3<f32>) -> u32 {
 
 const BALLKEY_STRIDE: u32 = 49u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
+// Doc §15.45 trace copies (gpu_types::BALLKEY_COPY_*): copy 0 is the real
+// ball; copies 1.. are the same body at fixed time offsets along its trace.
+const BALL_COPY_MAX: u32 = 64u;
+fn n_copies(b: u32) -> u32 { return max(u32(ballkeys[4u * BALLKEY_STRIDE][b]), 1u); }
+fn bkc(b: u32, m: u32, s: u32, j: u32) -> vec4<f32> {
+    if (m == 0u) {
+        return bk(b, s, j);
+    }
+    return ballkeys[4u * BALLKEY_STRIDE + 1u + (b * (BALL_COPY_MAX - 1u) + m - 1u) * 36u + s * 4u + j];
+}
+// Level-9 phase at the step start of copy m (for the swept maze frame).
+fn copy_th9(b: u32, m: u32) -> f32 {
+    if (m == 0u) {
+        return ballkeys[b * BALLKEY_STRIDE + 36u].z;
+    }
+    return bkc(b, m, 0u, 1u).w;
+}
 
 fn quat_rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let u = q.xyz;
@@ -333,14 +350,14 @@ fn maze_world(oq: vec4<f32>, th: f32, v: vec3<f32>) -> vec3<f32> {
 // along the maze exit, trapped photons out of the opposite pole. Speed is
 // kept relative to the ball surface; inner stacked levels turn rigidly.
 // Returns the emission point.
-fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32) -> vec3<f32> {
+fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, th0: f32) -> vec3<f32> {
     let base = b * BALLKEY_STRIDE;
     let bmeta = ballkeys[base + 36u];
     let oq = ballkeys[base + 45u];
     let sg = ballkeys[base + 46u];
     var th = 0.0;
     if ((params.maze_mode & 255u) == 2u) {
-        th = bmeta.z + bmeta.w * t_step;
+        th = th0 + bmeta.w * t_step;
     }
     let dir = (*p).b.xyz;
     let v_in = dir * (*p).d.w;
@@ -480,7 +497,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
 // tank (FLAG_HELD, released at step c[1]; returns the end-of-step core
 // centre) or re-emits it at once through maze_contact (returns the emission
 // point). `held` reports which.
-fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, held: ptr<function, bool>) -> vec3<f32> {
+fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, held: ptr<function, bool>, th0: f32) -> vec3<f32> {
     let tag = ((*p).c[0] >> FLAG_EMIT_SHIFT) & 7u;
     atomicAdd(&tallies[TALLY_FEED + b * 5u + tag], 1);
     let hold_steps = u32(ballkeys[b * BALLKEY_STRIDE + 47u].y);
@@ -493,7 +510,7 @@ fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb
         return bk(b, 8u, 0u).xyz;
     }
     *held = false;
-    let xe = maze_contact(p, b, xh, ch, rb, om, vcen, t_step, key);
+    let xe = maze_contact(p, b, xh, ch, rb, om, vcen, t_step, key, th0);
     (*p).c[0] = ((*p).c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
     return xe;
 }
@@ -682,7 +699,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             let rkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x4E1Eu));
             ph.c[0] = ph.c[0] & ~FLAG_HELD;
             ph.c[1] = 0u;
-            let xe = maze_contact(&ph, hb, ch0 - ph.b.xyz * rb0, ch0, rb0, bk(hb, 0u, 1u).xyz, bk(hb, 0u, 2u).xyz, 0.0, rkey);
+            let xe = maze_contact(&ph, hb, ch0 - ph.b.xyz * rb0, ch0, rb0, bk(hb, 0u, 1u).xyz, bk(hb, 0u, 2u).xyz, 0.0, rkey, copy_th9(hb, 0u));
             ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((hb + 1u) << FLAG_EMIT_SHIFT);
             ph.a = vec4<f32>(xe, ph.a.w);
             atomicAdd(&tallies[TALLY_HOLD + hb * 2u + 1u], 1);
@@ -782,34 +799,55 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             var best_t = 1e30;
             var best_b = 4u;
             var best_s = 0u;
+            var best_m = 0u;
             var touching = false;
+            // Doc §15.45: copy 0 is the real ball; copies 1.. are tested only
+            // when the photon is near the body (the trace stays inside the
+            // envelope).
+            let reach = params.dt * ph.d.w + 0.25;
             for (var b = 0u; b < params.n_bodies; b = b + 1u) {
-                let si0 = min(u32(tc / h), 7u);
-                let f0 = (tc - f32(si0) * h) / h;
-                let c_now = mix(bk(b, si0, 0u).xyz, bk(b, si0 + 1u, 0u).xyz, f0);
-                let rb = bk(b, si0, 0u).w;
-                let vc_now = (bk(b, si0 + 1u, 0u).xyz - bk(b, si0, 0u).xyz) / h;
-                let d = x - c_now;
-                if (dot(d, d) <= rb * rb * (1.0 + 2e-4) && dot(d, v - vc_now) < 0.0) {
-                    best_t = tc;
-                    best_b = b;
-                    best_s = si0;
-                    touching = true;
-                    break;
-                }
-                for (var si = si0; si < 8u; si = si + 1u) {
-                    let ts = max(f32(si) * h, tc);
-                    let c0 = mix(bk(b, si, 0u).xyz, bk(b, si + 1u, 0u).xyz, (ts - f32(si) * h) / h);
-                    let vc = (bk(b, si + 1u, 0u).xyz - bk(b, si, 0u).xyz) / h;
-                    let t = moving_sphere_hit(x + v * (ts - tc), v, c0, vc, rb, f32(si + 1u) * h - ts);
-                    if (t >= 0.0 && ts + t < best_t) {
-                        best_t = ts + t;
-                        best_b = b;
-                        best_s = si;
-                    }
-                    if (best_b == b) {
+                let ncb = n_copies(b);
+                let near_d = x - bodies[b].center.xyz;
+                let near_r = bodies[b].center.w + reach;
+                let near = dot(near_d, near_d) <= near_r * near_r;
+                for (var m = 0u; m < ncb; m = m + 1u) {
+                    if (m > 0u && !near) {
                         break;
                     }
+                    let si0 = min(u32(tc / h), 7u);
+                    let f0 = (tc - f32(si0) * h) / h;
+                    let c_now = mix(bkc(b, m, si0, 0u).xyz, bkc(b, m, si0 + 1u, 0u).xyz, f0);
+                    let rb = bkc(b, m, si0, 0u).w;
+                    let vc_now = (bkc(b, m, si0 + 1u, 0u).xyz - bkc(b, m, si0, 0u).xyz) / h;
+                    let d = x - c_now;
+                    if (dot(d, d) <= rb * rb * (1.0 + 2e-4) && dot(d, v - vc_now) < 0.0) {
+                        best_t = tc;
+                        best_b = b;
+                        best_s = si0;
+                        best_m = m;
+                        touching = true;
+                        break;
+                    }
+                    for (var si = si0; si < 8u; si = si + 1u) {
+                        let ts = max(f32(si) * h, tc);
+                        let c0 = mix(bkc(b, m, si, 0u).xyz, bkc(b, m, si + 1u, 0u).xyz, (ts - f32(si) * h) / h);
+                        let vc = (bkc(b, m, si + 1u, 0u).xyz - bkc(b, m, si, 0u).xyz) / h;
+                        let t = moving_sphere_hit(x + v * (ts - tc), v, c0, vc, rb, f32(si + 1u) * h - ts);
+                        var found = false;
+                        if (t >= 0.0 && ts + t < best_t) {
+                            best_t = ts + t;
+                            best_b = b;
+                            best_s = si;
+                            best_m = m;
+                            found = true;
+                        }
+                        if (found || ts >= best_t) {
+                            break;
+                        }
+                    }
+                }
+                if (touching) {
+                    break;
                 }
             }
             if (best_b == 4u) {
@@ -817,10 +855,11 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             }
             let b = best_b;
             let si = best_s;
+            let bm = best_m;
             let f = (best_t - f32(si) * h) / h;
             var xh = x + v * (best_t - tc);
-            let ch = mix(bk(b, si, 0u).xyz, bk(b, si + 1u, 0u).xyz, f);
-            let rb = bk(b, si, 0u).w;
+            let ch = mix(bkc(b, bm, si, 0u).xyz, bkc(b, bm, si + 1u, 0u).xyz, f);
+            let rb = bkc(b, bm, si, 0u).w;
             if (touching) {
                 let dd = xh - ch;
                 if (dot(dd, dd) > 1e-20) {
@@ -828,8 +867,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 }
                 atomicAdd(&tallies[TALLY_BALL_OVERLAP], 1);
             }
-            let om = mix(bk(b, si, 1u).xyz, bk(b, si + 1u, 1u).xyz, f);
-            let vcen = mix(bk(b, si, 2u).xyz, bk(b, si + 1u, 2u).xyz, f);
+            let om = mix(bkc(b, bm, si, 1u).xyz, bkc(b, bm, si + 1u, 1u).xyz, f);
+            let vcen = mix(bkc(b, bm, si, 2u).xyz, bkc(b, bm, si + 1u, 2u).xyz, f);
             let pp_before = (ph.c[0] & FLAG_PP_PASSAGE) != 0u;
             var dp = vec3<f32>(0.0);
             var touched = false;
@@ -846,7 +885,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let mkey = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x3A2Eu ^ (iter * 0x9E3779B9u)));
                 tally_spin(TALLY_SPIN_IN + (b * 4u + spin_cat(b, xh, &ph)) * 3u, photon_spin_am(&ph));
                 let scat = src_cat(b, xh, &ph);
-                x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held);
+                x_next = capture(&ph, b, xh, ch, rb, om, vcen, best_t, mkey, &now_held, copy_th9(b, bm));
                 if (!now_held) {
                     tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                 }
@@ -875,7 +914,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     // (mode 2) the unresolved inner levels at random phases.
                     tw = om * ballkeys[b * BALLKEY_STRIDE + 36u].y;
                     if (params.grain_mode == 2u) {
-                        let q = normalize(mix(bk(b, si, 3u), bk(b, si + 1u, 3u), f));
+                        let q = normalize(mix(bkc(b, bm, si, 3u), bkc(b, bm, si + 1u, 3u), f));
                         let key = hash_u32(bitcast<u32>(ph.a.w) ^ hash_u32(params.step ^ 0x7A157u ^ (iter * 0x9E3779B9u)));
                         tw = tw + inner_twist(b, q, key);
                     }
@@ -1244,7 +1283,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         atomicAdd(&tallies[TALLY_HOLD + b * 2u], 1);
                         pos = ch8;
                     } else {
-                        pos = maze_contact(&ph, b, xh8, ch8, rb8, bk(b, 8u, 1u).xyz, bk(b, 8u, 2u).xyz, params.dt, ekey);
+                        pos = maze_contact(&ph, b, xh8, ch8, rb8, bk(b, 8u, 1u).xyz, bk(b, 8u, 2u).xyz, params.dt, ekey, copy_th9(b, 0u));
                         tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                         ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     }

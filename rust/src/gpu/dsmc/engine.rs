@@ -678,7 +678,7 @@ impl DsmcEngine {
                 .collect(),
         };
         let shells_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(32, wgpu::BufferUsages::empty());
-        let ballkeys_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(4 * super::gpu_types::BALLKEY_STRIDE, wgpu::BufferUsages::empty());
+        let ballkeys_buf = ctx.zeroed_storage_buffer::<[f32; 4]>(super::gpu_types::BALLKEY_LEN, wgpu::BufferUsages::empty());
 
         let inject_emit_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_inject_emit.wgsl"));
         let move_kernel = load(ctx, true, include_str!("../../../shaders/dsmc_move.wgsl"));
@@ -944,8 +944,47 @@ impl DsmcEngine {
     /// Doc §15/§15.8: 9 keyframes per body over this step (s * dt/8) plus the
     /// unresolved inner levels; layout in gpu_types::BALLKEY_STRIDE.
     pub fn ball_keyframes(&self) -> Vec<[f32; 4]> {
-        use super::gpu_types::BALLKEY_STRIDE;
-        let mut data = vec![[0.0f32; 4]; 4 * BALLKEY_STRIDE];
+        use super::gpu_types::{BALLKEY_COPY_BASE, BALLKEY_COPY_COUNTS, BALLKEY_LEN, BALLKEY_STRIDE, BALL_COPY_MAX};
+        let mut data = vec![[0.0f32; 4]; BALLKEY_LEN];
+        let n_copies = (self.config.rough.ball_copies as usize).clamp(1, BALL_COPY_MAX);
+        for (b, body) in self.shell_bodies.iter().enumerate() {
+            // Doc §15.45: copy m (1..n) is this body at time offset tau_m
+            // along its own trace. The offsets are golden-ratio stratified
+            // over four turns of the slowest level, so the copies sample the
+            // trace's phases evenly; they are fixed, and each copy moves on
+            // with the body.
+            let nc = if body.lepton { 1 } else { n_copies };
+            if b < 4 {
+                data[BALLKEY_COPY_COUNTS][b] = nc as f32;
+            }
+            let slowest = (0..4).map(|i| body.rate(i).abs()).filter(|r| *r > 0.0).fold(f64::INFINITY, f64::min);
+            let window = if slowest.is_finite() { 4.0 * std::f64::consts::TAU / slowest } else { 0.0 };
+            // The real ball (m = 0) is written by the loop below.
+            for m in 1..nc {
+                let mut sb = body.clone();
+                sb.advance(window * ((m as f64 * 0.618_033_988_749_895).fract()));
+                let mut prev_q: Option<glam::DQuat> = None;
+                for s in 0..9 {
+                    let st = sb.ball();
+                    let base = BALLKEY_COPY_BASE + (b * (BALL_COPY_MAX - 1) + m - 1) * 36 + s * 4;
+                    data[base] = [st.center.x as f32, st.center.y as f32, st.center.z as f32, st.radius as f32];
+                    data[base + 1] = [st.omega.x as f32, st.omega.y as f32, st.omega.z as f32, 0.0];
+                    if s == 0 {
+                        data[base + 1][3] = sb.angles[0].rem_euclid(std::f64::consts::TAU) as f32;
+                    }
+                    data[base + 2] = [st.velocity.x as f32, st.velocity.y as f32, st.velocity.z as f32, 0.0];
+                    let mut q = st.frame;
+                    if let Some(pq) = prev_q {
+                        if pq.dot(q) < 0.0 {
+                            q = -q;
+                        }
+                    }
+                    prev_q = Some(q);
+                    data[base + 3] = [q.x as f32, q.y as f32, q.z as f32, q.w as f32];
+                    sb.advance(self.config.dt / 8.0);
+                }
+            }
+        }
         for (b, body) in self.shell_bodies.iter().enumerate() {
             let mut sb = body.clone();
             let mut prev_q: Option<glam::DQuat> = None;

@@ -532,6 +532,15 @@ pub const TALLY_LEN: usize = 2989;
 /// intake mode 0 ball / 1 envelope / 2 polar).
 /// Doc §15.24: [48] = (through-charge hole radius, 0, 0, 0).
 pub const BALLKEY_STRIDE: usize = 49;
+/// Doc §15.45 trace copies: after the 4 per-body blocks, one vec4 holding the
+/// copy count per body (1 = the real ball only), then for each body
+/// BALL_COPY_MAX - 1 copies of 9 keyframes x 4 vec4 (same layout as the real
+/// ball's), copy m being the same body seen at a fixed time offset. Keyframe
+/// 0's omega.w holds that copy's level-9 phase (the real ball's is in [36].z).
+pub const BALL_COPY_MAX: usize = 64;
+pub const BALLKEY_COPY_COUNTS: usize = 4 * BALLKEY_STRIDE;
+pub const BALLKEY_COPY_BASE: usize = BALLKEY_COPY_COUNTS + 1;
+pub const BALLKEY_LEN: usize = BALLKEY_COPY_BASE + 4 * (BALL_COPY_MAX - 1) * 36;
 
 pub const HIST_BINS: usize = 36; // 5-degree bins over [-90, 90]
 pub const HIST_MAX_BODIES: usize = 4;

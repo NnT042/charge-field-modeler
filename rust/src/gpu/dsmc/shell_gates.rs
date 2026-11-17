@@ -1627,8 +1627,11 @@ fn report_intake() {
         let hold: f64 = f.get(2).map(|h| h.parse().unwrap()).unwrap_or(0.0);
         let mut config = two_body_config(&[DVec3::ZERO], &[class.as_str()], n_a, lambda, cap, seed, dt);
         // CFM_I_SPEED: ejectc (default) | rel (doc §15.14).
-        let maze_speed = if env("CFM_I_SPEED", "ejectc") == "ejectc" { super::config::MazeSpeed::EjectC } else { super::config::MazeSpeed::Relative };
-        config.rough = RoughParams { intake, maze, maze_speed, hold_time: hold, ..config.rough };
+        // surface = EjectSurface (doc §15.29, the report_deuteron default).
+        let maze_speed = match env("CFM_I_SPEED", "ejectc").as_str() { "ejectc" => super::config::MazeSpeed::EjectC, "surface" => super::config::MazeSpeed::EjectSurface, _ => super::config::MazeSpeed::Relative };
+        // CFM_C_COPIES (doc §15.45): trace copies per body (1 = real ball only).
+        let ball_copies: u32 = env("CFM_C_COPIES", "1").parse().unwrap();
+        config.rough = RoughParams { intake, maze, maze_speed, hold_time: hold, ball_copies, ..config.rough };
         // CFM_C_H: DSMC cell size (0.25); keep it at or below lambda.
         config.h = env("CFM_C_H", "0.25").parse().unwrap();
         config.boundary = Boundary::SphereEscape { r_d };
@@ -1711,6 +1714,16 @@ fn report_intake() {
         println!(
             "   intake latitude, fresh: 0-30 {:.3} 30-60 {:.3} 60-90 {:.3} (polar/expect {:.3}, equatorial/expect {:.3}) | recaptured: {:.3}/{:.3}/{:.3}",
             fresh[0], fresh[1], fresh[2], fresh[2] / 0.134, fresh[0] / 0.5, re[0], re[1], re[2]
+        );
+        println!(
+            "   passages: entries/step {:.1}, contacts/step {:.1}, clean share {:.3}, contacts per entry {:.4} | self-force/step ({:+.2}, {:+.2}, {:+.2})",
+            t.sh_entries[0] as f64 / avg as f64,
+            t.sh_contacts[0] as f64 / avg as f64,
+            t.sh_clean[0] as f64 / t.sh_entries[0].max(1) as f64,
+            t.sh_contacts[0] as f64 / t.sh_entries[0].max(1) as f64,
+            t.sh_dp[0][0] / avg as f64,
+            t.sh_dp[0][1] / avg as f64,
+            t.sh_dp[0][2] / avg as f64
         );
         println!(
             "   contacted-exit bands p/m/e {:.3}/{:.3}/{:.3} | pp collisions/step {:.0} | maze esc-up/esc-down/trap-up/trap-down {:?}",
@@ -2044,7 +2057,10 @@ fn report_pair_force() {
 /// deflect<aperture> (polar opening, outer spin bats the rest away).
 fn parse_intake(s: &str) -> super::config::Intake {
     use super::config::Intake;
-    if let Some(a) = s.strip_prefix("deflect") {
+    if s == "ball" {
+        // Doc §15.45 trace body: only real ball contacts take photons in.
+        Intake::Ball
+    } else if let Some(a) = s.strip_prefix("deflect") {
         Intake::PolarDeflect { aperture: a.parse().unwrap() }
     } else if let Some(a) = s.strip_prefix("polar") {
         Intake::Polar { aperture: a.parse().unwrap() }
@@ -2283,7 +2299,8 @@ fn report_deuteron() {
         }
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
-        config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ..config.rough };
+        // CFM_D_COPIES (doc §15.45): trace copies per body (1 = real ball only).
+        config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ball_copies: env("CFM_D_COPIES", "1").parse().unwrap(), ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };

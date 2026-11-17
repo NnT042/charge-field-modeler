@@ -4286,6 +4286,76 @@ is a chosen rule, not derived; with §15.43 (isotropic emission gives no
 force) this says the nuclear results are set by the emission and intake
 rules we pick.
 
+### 15.45 Trace bodies: copies of the spin trace instead of the sponge (2026-11-17)
+
+User direction (2026-11-17): the engine had drifted into treating the
+baryon as "a magic ball that takes in charge like a sponge and launches it
+out the poles". The body should be the trace of one base solid through the
+spin levels, its motion set by the charge that trace actually touches, and
+the central gap should pass through charge without momentum. The §15 rule
+"never a swept volume" was there to stop the magic ball, not to forbid
+averaging: averaging the trace's hits to save compute is fine if it is
+stated as such.
+
+**What is averaged, stated up front.** The §15 ball (levels 1-8 collapsed
+to radius 1/8, carried by levels 9-12) touches only ~3% of the photons
+entering its envelope, at any affordable density, so its forces and its
+recycling are tiny next to noise. `RoughParams::ball_copies` (M) tests
+each body as M copies of its own ball, copy m being the same body at a
+fixed time offset along its own trace (golden-ratio stratified over four
+turns of the slowest level; each copy moves on with the body). A photon
+can hit any copy; the contact uses that copy's real position, surface
+velocity, spin and level-9 maze frame. This stands in for a denser field
+(opacity × M) while every contact keeps the trace's geometry: where the
+trace never goes (the polar hole, the corners of the envelope) nothing is
+touched, at any M. Nothing takes photons in except a ball contact
+(`Intake::Ball`, `CFM_D_INTAKE=ball`); there is no sponge and no neutron
+rule. What a contact does is unchanged: the photon enters the maze (§15.9,
+swept frame, the user's sign rules) and leaves by EjectSurface (§15.29),
+escapes from the envelope at the exit latitude, trapped photons along the
+pole over the measured 1/3 hole. Those two are still rules and are the
+next things to question.
+
+Build: `gpu_types::BALL_COPY_MAX` 64, copies appended to the ballkeys
+buffer (`BALLKEY_COPY_*`); the move kernel loops copies only for photons
+within reach of a body; knobs `CFM_C_COPIES` (report_intake),
+`CFM_D_COPIES` (report_deuteron). Copies = 1 is the old ball: all 14 ball
+and shell gates pass unchanged. Wall time does not change with M.
+
+**Gate 1: lone bodies** (report_intake, Intake::Ball, swept maze, surface
+emission, λ 0.3, n_a 8000, h 0.25, dt 0.06, R_D 6, 100 tu warm-up + 100
+averaged, one seed). Raw: `reference/tc45/lone_*`.
+
+| copies | proton contacts per entry | neutron contacts per entry | n / p intake |
+|---|---|---|---|
+| 1 | 0.030 | 0.029 | 0.98 |
+| 4 | 0.092 | 0.091 | 0.99 |
+| 16 | 0.277 | 0.277 | 1.02 |
+| 64 | 0.308 | 0.309 | 1.03 |
+
+- **The trace is porous and the knob drops out.** Opacity saturates by
+  16 copies: even with 64, 69% of the charge entering the envelope
+  crosses it without touching the trace. The free number M matters little
+  above ~16 (c16 → c64: +11% contacts).
+- **The proton recycles in Mathis's pattern with nothing imposed on
+  intake:** net flow at r 1.5 is in at the poles (−111) and mid-latitudes
+  (−96), out at the equator (+91) (×1e3 per step, c64). All maze exits
+  are escapes, all equatorial.
+- **The neutron takes in exactly what the proton does** (n/p 1.00 ± 0.03
+  at every M). The 0.685 does not come out of the trace's intake (nor the
+  0.81 of §15.5, which used other settings).
+- **The neutron's difference is all in the maze:** every capture is
+  trapped and leaves along a pole, 72% by one pole and 28% by the other,
+  so a lone neutron self-propels hard (−204 per step along its axis at
+  c64, against the proton's ~8). Net flow is out at the poles (+443), in
+  at the mid-latitudes and equator: the reversed proton again, not
+  Mathis's in-one-pole-out-the-other. The pole split presumably follows
+  the 2:1 photon/antiphoton ambient through the maze's helicity choice
+  (not checked).
+
+Pair screens (64 copies, frozen, λ 0.3, 150 tu settle + 100 measured):
+running, `reference/tc45/q_pairs.sh`.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
