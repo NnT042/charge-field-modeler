@@ -4413,6 +4413,32 @@ the pole they were heading toward (`CFM_D_POLAR=through`, the user's
 §15.32 rule), which should remove the 72/28 thrust; deuteron on axis and
 He3 at contact (`reference/tc45/q_through.sh`).
 
+**Through release on the trace bodies** (surface emission, 64 copies,
+`CFM_D_POLAR=through`, frozen, λ 0.3, one seed, 0 warnings). Raw:
+`reference/tc45/*_through.txt`.
+
+| Screen | proton(s) | neutron |
+|---|---|---|
+| lone neutron self-force | | (−0.7, +0.3, **+5.6**): the thrust is gone |
+| p-n pole to pole, centres 3 | −693 (neutron's photons −488) | −12 |
+| p-n-p on axis, centres 2.05 | −1615 / −1553 | ~0 |
+
+- Through release removes the neutron's self-propulsion (−2475 → +6)
+  and makes the He3 symmetric, as expected.
+- Both protons are still pushed off, because the trace proton absorbs
+  the neutron's beam: `CFM_D_HOLE` only acts on envelope intake, and the
+  trace's own polar clearing is narrower than the beam. The beam is
+  spread over radius 1/3 (the hole measured from the swept trace, §15.29);
+  the ball (radius 1/8) still reaches inside that radius, so the clear
+  cylinder through the trace is narrower, roughly 1/3 − 1/8 ≈ 0.21 if
+  1/3 is the ball centre's clearance (not measured).
+- With the sponge plus a channel of the same width as the beam, the same
+  He3 held (§15.44). With the trace, whether it holds turns on one
+  geometric fact: does the neutron's beam fit the proton's clear hole.
+  Both come from the same trace, so making them consistent (release
+  spread = the trace's measured clear radius) is a geometry fix, not a
+  tuned constant. User decision; not done.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
