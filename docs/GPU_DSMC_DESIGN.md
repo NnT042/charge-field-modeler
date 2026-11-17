@@ -4353,8 +4353,34 @@ averaged, one seed). Raw: `reference/tc45/lone_*`.
   the 2:1 photon/antiphoton ambient through the maze's helicity choice
   (not checked).
 
-Pair screens (64 copies, frozen, λ 0.3, 150 tu settle + 100 measured):
-running, `reference/tc45/q_pairs.sh`.
+**Pair screens** (64 copies, frozen, λ 0.3, h 0.25, dt 0.06, 150 tu
+settle + 100 measured, self-force subtracted, one seed, 0 warnings). Raw:
+`reference/tc45/tr_*`. Force toward the partner(s), per unit time.
+
+| Screen | proton(s) | neutron |
+|---|---|---|
+| p-p pole to pole, centres 3 | +69 / +106 | |
+| p-n pole to pole, centres 3 | −360 | +235 |
+| p-n side by side, centres 3 | +145 | −92 |
+| p-n-p on axis, centres 2.05 | −1045 / −2102 | net +420 along +z |
+
+Lone self-forces (measured in the first run): proton (−107, −12, +23)
+per unit time, neutron (−1, −7, **−2475**). The proton's −107 across
+its axis should be zero by symmetry, so forces below ~100 are noise here.
+
+- Every force is much weaker than with the sponge, as the porous trace
+  implies; the p-p pull and the side-by-side deuteron are at the noise
+  level.
+- The one strong effect is the neutron's polar jets pushing protons off:
+  on the deuteron's proton the neutron's photons give −265, and in the
+  He3 both protons are pushed out, the one on the neutron's stronger pole
+  twice as hard (−2102 against −1045), following the 72/28 pole split.
+- So with the trace bodies the sponge is gone but the outcome is still
+  set by a rule: what the neutron's maze does with a trapped photon
+  (leave along the pole, placed on the envelope at c). Next screen:
+  emission from the ball's own surface (MazeSpeed::EjectC) so the
+  emitted charge must also get out through the trace
+  (`reference/tc45/q_eject.sh`).
 
 ## 12. Out of scope for this step
 

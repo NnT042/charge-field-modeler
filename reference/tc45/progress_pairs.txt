@@ -1,0 +1,6 @@
+tr_pn_axis_3 done Tue Nov 17 12:54:23 CST 2026
+FSELF proton:-106.9,-12.0,22.6,1.5,1.8,-4.2;neutron:-1.3,-6.6,-2475.1,2.5,0.8,-6.0
+tr_pp_axis_3 done Tue Nov 17 13:04:06 CST 2026
+tr_pn_side_3 done Tue Nov 17 13:13:50 CST 2026
+tr_he3_axis_205 done Tue Nov 17 13:21:42 CST 2026
+ALL DONE Tue Nov 17 13:21:42 CST 2026
