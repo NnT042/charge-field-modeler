@@ -1,0 +1,18 @@
+
+running 1 test
+=== intake report: proton, dt 0.06, r_d 6, lambda 0.3, n_a 8000, depth 0, warmup 1667, avg 1667 ===
+   (no-field expectation for intake latitude on a sphere, isotropic arrivals: |lat| 0-30 0.500, 30-60 0.366, 60-90 0.134)
+test gpu::dsmc::shell_gates::report_intake has been running for over 60 seconds
+   wall 439 s, live 6969775
+   speeds: mean 1.012 median 1.000 p99 1.00 max 3.8 | >2c 0.0055 >4c 0.00000 | mean within r<2: 1.079 (223854 photons)
+--- ball:swept:0 (h 0.25): captures/step 672.8 (envelope 0.0, tank releases 0.0, fresh 0.420, recaptured 0.580) | held 0 | steady n/a ---
+   intake latitude, fresh: 0-30 0.000 30-60 0.000 60-90 0.000 (polar/expect 0.000, equatorial/expect 0.000) | recaptured: 0.000/0.000/0.000
+   passages: entries/step 1321.9, contacts/step 672.8, clean share 0.757, contacts per entry 0.5090 | self-force/step (+9.91, +23.68, -18.94)
+   contacted-exit bands p/m/e 0.131/0.284/0.585 | pp collisions/step 892452 | maze esc-up/esc-down/trap-up/trap-down [660064, 461522, 0, 0]
+   net radial flow x1e3 (pol/mid/eq): r=1.5: +10.7 -3.2 -0.6 r=2: +4.3 +0.3 -1.4 r=3: +0.8 +0.1 -0.3 r=5: +0.1 -0.0 -0.1
+   net flow per capture (pol in / eq out): r=1.5: -0.013 / -0.003 r=2: -0.010 / -0.012
+   north/south: emission 0.000 / 0.000 | fresh intake 0.000 / 0.000 (no field 0.067 each) | net inflow per capture at r=1.5 -0.038 / +0.024
+test gpu::dsmc::shell_gates::report_intake ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 298 filtered out; finished in 440.66s
+

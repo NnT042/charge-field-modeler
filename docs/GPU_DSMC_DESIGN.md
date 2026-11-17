@@ -4382,6 +4382,37 @@ its axis should be zero by symmetry, so forces below ~100 are noise here.
   emitted charge must also get out through the trace
   (`reference/tc45/q_eject.sh`).
 
+**Emission from the ball's own surface** (MazeSpeed::EjectC: at c
+relative to the ball's surface, from the ball; 64 copies, otherwise as
+gate 1). Raw: `reference/tc45/*_ejectc*`.
+
+| | proton | neutron |
+|---|---|---|
+| contacts per entry | 0.509 | 0.440 (n/p **0.87**) |
+| recaptured share of captures | 0.58 | 0.52 |
+| emission bands polar/mid/equatorial | 0.13 / 0.28 / 0.59 | 0.13 / 0.48 / 0.39 |
+| net flow at r 1.5, polar/mid/eq (×1e3/step) | **+10.7** / −3.2 / −0.6 | +30.9 / +24.1 / −26.3 |
+| lone self-force per unit time | (+183, +389, −311) | (−33, −194, −2995) |
+
+- Charge emitted inside the trace is mostly caught again by it (58% of
+  the proton's captures are its own emission): the trace recycles
+  internally, and intake per entry rises to 0.51.
+- The neutron now takes in less than the proton (0.87), the first
+  emergent n/p difference in intake on this body, but not 0.685.
+- **The proton loses Mathis's pattern**: emission spreads off the disc
+  and the net polar flow turns outward. The emergent poles-in /
+  equator-out of gate 1 came from placing escapes on the envelope at
+  their exit latitude, not from the trace. The ball moves near c, and
+  its velocity rides on everything it emits.
+- The deuteron on axis (frozen, 3 apart): proton −22, neutron −304,
+  proton tilt torque 216; with lone self-forces of several hundred per
+  unit time across the axis this screen is inside the noise.
+
+Next, back on surface emission: the neutron's trapped photons leave by
+the pole they were heading toward (`CFM_D_POLAR=through`, the user's
+§15.32 rule), which should remove the 72/28 thrust; deuteron on axis and
+He3 at contact (`reference/tc45/q_through.sh`).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
