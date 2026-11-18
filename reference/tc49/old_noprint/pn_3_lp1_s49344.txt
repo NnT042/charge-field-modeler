@@ -1,0 +1,51 @@
+
+running 1 test
+=== deuteron: pn axial, sep0 3, mass 1e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface
+self-force proton : (-106.9, -12.0, +22.6) per unit time (given)
+self-torque proton : (+1.5, +1.8, -4.2) per unit time (given)
+self-force neutron: (+1.5, +5.8, -5.0) per unit time (given)
+self-torque neutron: (-3.3, +1.5, -5.8) per unit time (given)
+rotation: inertia 0e0, L_spin 0e0, damp 0
+layout chain: orients [PoleOn, PoleOn], start [(-0.0, -0.0, -1.5), (0.0, 0.0, 1.5)]
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+t   10.02: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1065 n +18 | contact steps 0 | captures/time 8661 8134
+t   20.04: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1113 n +39 | contact steps 0 | captures/time 8717 8179
+t   30.06: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1109 n +38 | contact steps 0 | captures/time 8662 8100
+t   40.08: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1128 n +23 | contact steps 0 | captures/time 8709 8157
+t   50.10: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1120 n +32 | contact steps 0 | captures/time 8683 8205
+t   60.12: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1124 n +25 | contact steps 0 | captures/time 8687 8145
+t   70.14: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1113 n +26 | contact steps 0 | captures/time 8677 8149
+t   80.16: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1150 n -1 | contact steps 0 | captures/time 8717 8197
+t   90.18: gaps 3.0000 | gap rates +0.00000 | interaction along +e: p -1192 n +20 | contact steps 0 | captures/time 8779 8149
+distance 0-1 (proton-neutron): range 3.000 .. 3.000; last quarter mean 3.000
+drift of the stack centre +0.000
+spin torque about each body's own axis (+ = spins it up along its axis): p0 -20, n1 +3
+cluster torque about z: orbital +0, bodies' own -17, total -17
+body 0 proton  photon spin torque: net along axis +5.54, across 0.98 | in along axis: S- +2.01 S+ +3.48 N- +2.19 N+ +3.83 | out along axis +5.97 | selective in (S+ and N-) +5.67
+body 1 neutron photon spin torque: net along axis +2.59, across 0.36 | in along axis: S- +1.70 S+ +2.99 N- +1.55 N+ +2.74 | out along axis +6.39 | selective in (S+ and N-) +4.55
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2524 /       0 |    -825.5 /      +0.0 /   -825.5 |     +1.0 /     +0.0 /     +1.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2537 /       0 |    +520.5 /      +0.0 /   +520.5 |     +2.3 /     +0.0 /     +2.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:     902 /       0 |    -218.7 /      +0.0 /   -218.7 |     +0.4 /     +0.0 /     +0.4 | crossed part:    756 photons, force -217.0, torque +0.0
+  own emission             S entry:     944 /       0 |    +148.6 /      +0.0 /   +148.6 |     +1.2 /     +0.0 /     +1.2 | crossed part:    748 photons, force +116.7, torque +1.3
+  from n1                  N entry:    1224 /       0 |    -660.0 /      +0.0 /   -660.0 |     +1.2 /     +0.0 /     +1.2 | crossed part:    877 photons, force -419.6, torque +0.8
+  from n1                  S entry:     564 /       0 |     -63.6 /      +0.0 /    -63.6 |     +1.1 /     +0.0 /     +1.1 | crossed part:    482 photons, force -26.4, torque +1.1
+  recoil of what it sends out      :                   |      -0.7 /      +0.0 /     -0.7 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |   -1099.5 /      +0.0 /  -1099.5 |     +5.5 /     +0.0 /     +5.5
+push by source, body 1 neutron (pole facing the centre: south); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    3391 /       0 |    +308.9 /      +0.0 /   +308.9 |     +3.0 /     +0.0 /     +3.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    3337 /       0 |    -237.9 /      +0.0 /   -237.9 |     +5.0 /     +0.0 /     +5.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  from p0                  N entry:     202 /       0 |      -1.9 /      +0.0 /     -1.9 |     +0.4 /     +0.0 /     +0.4 | crossed part:    200 photons, force -1.6, torque +0.4
+  from p0                  S entry:     276 /       0 |     -46.6 /      +0.0 /    -46.6 |     +0.8 /     +0.0 /     +0.8 | crossed part:    273 photons, force -45.7, torque +0.7
+  own emission             N entry:     487 /       0 |     +74.1 /      +0.0 /    +74.1 |     +1.4 /     +0.0 /     +1.4 | crossed part:    367 photons, force +33.7, torque +0.9
+  own emission             S entry:     460 /       0 |     -52.9 /      +0.0 /    -52.9 |     +0.0 /     +0.0 /     +0.0 | crossed part:    388 photons, force -48.3, torque +0.2
+  recoil of what it sends out      :                   |     -64.3 /      +0.0 /    -64.3 |     +1.2 /     +0.0 /     +1.2
+  total                            :                   |     -20.6 /      +0.0 /    -20.6 |     +8.1 /     +0.0 /     +8.1
+collisions per unit time by emitter: all 15285226, ambient-ambient 13279446, ambient-p0 1052061, p0-p0 66300, ambient-n1 773703, n1-n1 55594, CROSS p0-n1 58122
+screen body 0 proton  at (-0.00,-0.00,-1.50) axis (+0.00,+0.00,+1.00): force (+0,+0,-1122) |1122| inward -1122 | toward neighbours n1:-1122 | tilt torque 5 (-3,+3,+0), axis pushed toward (+3,+3,-0)
+screen body 1 neutron at (+0.00,+0.00,+1.50) axis (+0.00,+0.00,+1.00): force (+0,+0,+26) |26| inward -26 | toward neighbours p0:-26 | tilt torque 11 (+10,+3,+0), axis pushed toward (+3,-10,+0)
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 299 filtered out; finished in 619.73s
+

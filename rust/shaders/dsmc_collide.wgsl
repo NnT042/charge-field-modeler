@@ -536,6 +536,38 @@ fn beam_first(p: ptr<function, GpuPhoton>, partner_tag: u32) {
     }
 }
 
+// Doc §15.49 near-exit counter: every collision of a beam photon (flag set
+// from its release until its next capture) while it is within 1 of its
+// emitter's envelope and within 45 deg of the emitter's axis. Bins of 0.1 in
+// the distance outside the envelope x partner (0 ambient, 1 a fresh beam
+// photon of the same emitter that has not yet collided, 2 any other photon
+// of the same emitter, 3 another body's photon). Layout TALLY_BEAM+27+bin*4+k.
+fn beam_near(p: ptr<function, GpuPhoton>, q_c0: u32) {
+    if (((*p).c[0] & FLAG_BEAM) == 0u) {
+        return;
+    }
+    let e = ((*p).c[0] >> 17u) & 7u;
+    if (e == 0u || e > params.n_bodies) {
+        return;
+    }
+    let d = (*p).a.xyz - bodies[e - 1u].center.xyz;
+    let ax = bodies[e - 1u].axis.xyz;
+    let z = abs(dot(d, ax));
+    let rho = length(d - ax * dot(d, ax));
+    let s = length(d) - bodies[e - 1u].center.w;
+    if (s < 0.0 || s >= 1.0 || z < rho) {
+        return;
+    }
+    let qe = (q_c0 >> 17u) & 7u;
+    var k = 3u;
+    if (qe == 0u) {
+        k = 0u;
+    } else if (qe == e) {
+        k = select(2u, 1u, (q_c0 & FLAG_BEAM) != 0u && (q_c0 & FLAG_BEAM_COLL) == 0u);
+    }
+    atomicAdd(&tallies[TALLY_BEAM + 27u + min(u32(s / 0.1), 9u) * 4u + k], 1);
+}
+
 fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32, within: bool, axis: vec3<f32>, body_center: vec3<f32>) {
     let slot_a = sh_slots[i];
     let slot_b = sh_slots[j];
@@ -587,6 +619,10 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
             pa.c[0] = pa.c[0] | FLAG_XHIT;
             pb.c[0] = pb.c[0] | FLAG_XHIT;
         }
+        let ca0 = pa.c[0];
+        let cb0 = pb.c[0];
+        beam_near(&pa, cb0);
+        beam_near(&pb, ca0);
         beam_first(&pa, (pb.c[0] >> 17u) & 7u);
         beam_first(&pb, (pa.c[0] >> 17u) & 7u);
     }

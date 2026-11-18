@@ -519,10 +519,12 @@ pub const TALLY_SRC_N: usize = 2860;
 pub const TALLY_SRC_OUT: usize = 2940;
 pub const TALLY_XCOLL: usize = 2964;
 
-/// Doc §15.48 beam-fate tally (layout in dsmc_move.wgsl), len 27.
+/// Doc §15.48 beam-fate tally (layout in dsmc_move.wgsl), len 27, then the
+/// §15.49 near-exit counter (dsmc_collide.wgsl beam_near), 10 bins x 4 = 40.
 pub const TALLY_BEAM: usize = 2989;
+pub const TALLY_BEAM_LEN: usize = 67;
 
-pub const TALLY_LEN: usize = 3016;
+pub const TALLY_LEN: usize = 3056;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],

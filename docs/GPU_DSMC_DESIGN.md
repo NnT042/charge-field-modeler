@@ -4562,11 +4562,15 @@ first. Captures are 0.000 clean at every distance, the He3 included.
 - The beam leaves exactly parallel (through release without the normal
   bit), so two fresh beam photons have zero relative velocity and cannot
   collide under the |v1−v2| kernel. The "own" partners are therefore beam
-  photons that were already knocked sideways. One ambient hit sets off a
-  cascade through the dense stream: n1-n1 pairs number 47-68 thousand per
-  unit time against 7,900 releases, so each beam photon collides with its
-  own siblings about 12-17 times. The beam behaves as a collisional JET
-  that spreads like a plume, which is why the push falls faster than d^-2.
+  photons that were already knocked sideways. The beam behaves as a
+  collisional jet that spreads like a plume, which is why the push falls
+  faster than d^-2. (CORRECTED 2026-11-18: an earlier version said each
+  beam photon collides with its siblings 12-17 times, from n1-n1 pairs
+  47-68 thousand per unit time against 7,900 releases. That count covers
+  each photon's whole life, since a photon keeps its emitter tag until
+  captured, mostly as diffuse gas around the neutron. Counted the same way
+  it collides with ambient about 100 times. It says nothing about the
+  beam itself; §15.49 counts the collisions near the exit directly.)
 - He3 at 2.05 (both poles covered by protons): 73% of first collisions
   are inside a proton's envelope, 47% with siblings, 19% with ambient and
   7% with the proton's own emission. By distance from the proton's axis
@@ -4596,6 +4600,67 @@ pulled. Mechanics questions this raises (user decisions, nothing changed):
    ambient hit inside the stream cascades into a dozen sibling collisions.
 3. Is the beam truly parallel? A cone (normal bit, half-angle 12.8° for
    0.222) would spread it without any collisions.
+
+### 15.49 Collisions near the neutron's pole (2026-11-18)
+
+User question: is the engine making collisions where photons should pass
+by, or is the beam far denser than pictured (a rough river, not a laser)?
+Counter (`beam_near` in dsmc_collide.wgsl, TALLY_BEAM+27, 10 bins x 4):
+every collision of a beam photon (from its release until its next
+capture) while it is less than 1 outside its neutron's envelope and
+within 45° of the axis. Bins are 0.1 in distance. Partners are ambient, a
+FRESH beam photon (same neutron, not yet collided), any other photon of
+the same neutron, or the other body. Frozen p-n, trace bodies, beam
+0.222, λ 0.3; local pairing off on seed 49344 (ESTELLE), on with seed 777
+(ISABELLE). Gates 23/23. reference/tc49; the first pass printed nothing
+(a len == 27 check; outputs kept in old_noprint/, forces only).
+
+Collisions per release within 1 of the pole:
+
+| run | total | ambient | fresh beam | other own | proton's | proton push |
+|---|---|---|---|---|---|---|
+| d 3, random pairing | 14.3 | 7.0 | 0.67 | 6.1 | 0.59 | −833 |
+| d 3, local pairing | 12.4 | 6.2 | 0.64 | 5.0 | 0.54 | −1126 |
+| d 2.05, random | 12.1 | 5.6 | 0.63 | 5.1 | 0.84 | −1758 |
+| d 2.05, local | 10.5 | 5.0 | 0.62 | 4.2 | 0.72 | −1825 |
+
+(First pass, forces only, both seeds: local pairing −1122/−1123 at d 3 and
+−1841/−1837 at 2.05; random −833/−822 and −1758/−1756.)
+
+- Ambient collisions are what the mean free path predicts. In the first
+  0.1 bin a beam photon meets ambient 0.36 times per release, against
+  0.1/λ = 0.33 for a straight path. The engine is not inventing ambient
+  hits.
+- The beam is mostly gone within half a unit. Fresh-beam partners fall
+  0.12 → 0.20 → 0.17 → 0.07 → 0.06 → 0.02 per 0.1 bin. Collisions between
+  two fresh beam photons are rare (0.65 per release in all, since parallel
+  photons need relative speed to collide).
+- Around the pole sits a HALO of the neutron's own already-scattered
+  photons, about as dense as the ambient (0.46 vs 0.36 in the first bin,
+  0.73 vs 0.58 at 0.3-0.4). That halo is what the "own" share of first
+  collisions in §15.48 was. The user's faucet picture fits: splash
+  around the outlet.
+- 14 collisions within 1 of the pole is not a dense beam. The field
+  itself is thick: λ 0.3 is under a third of a body radius, so the 1-unit
+  region is 3+ free paths deep. Scattered photons random-walk out of it
+  (about (1/0.3)^2 ≈ 11 steps).
+- Local pairing removes 14% of near-pole collisions (18% of the halo
+  ones, 11% of ambient) and lets more beam reach the proton (captures
+  0.192 → 0.220 at d 3). That is why the push grows 35% at d 3, but only
+  4% at 2.05, where the beam is in the proton's funnel almost at once.
+  Random pairing in 0.25 cells does add some spurious halo collisions,
+  but it is not the main story.
+
+Reading: the beam is a river through a thick medium, not a laser and not
+an unusually dense stream. It stays coherent for only about 1-2 free
+paths whatever the beam density, because the ambient alone forbids more.
+At λ 0.3 that is 0.3-0.6, about the p-n gap at contact. So the axial
+stream joining two nucleons (Mathis's binding) can only be a coherent
+channel if the bodies sit within about one free path, or if the field
+is thinner. λ is still a free parameter (no proton-scale density from
+Mathis), and the denser fields where the H atom held (λ 0.1) make this
+worse. A resolution check (λ 0.15, h halved; docs/VAST_PLAN.md A) would
+separate grid effects from the physics.
 
 ## 12. Out of scope for this step
 

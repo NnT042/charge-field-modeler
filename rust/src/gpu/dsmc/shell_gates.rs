@@ -2717,7 +2717,7 @@ fn report_deuteron() {
             println!("{line}");
         }
         // Doc §15.48: what happens to the neutrons' polar beams.
-        if src_tot.beam.len() == 27 {
+        if src_tot.beam.len() >= 27 {
             let bt = &src_tot.beam;
             let rel: i64 = bt[0..4].iter().sum();
             if rel > 0 {
@@ -2726,6 +2726,15 @@ fn report_deuteron() {
                 let hist: Vec<String> = bt[13..23].iter().map(|&v| format!("{:.3}", r(v))).collect();
                 println!("beam fate: first collisions inside another body by distance from its axis (0.05 bins): {}", hist.join(" "));
                 println!("beam fate: captured by another body, clean {:.3} after a collision {:.3} | recaptured by the emitter, clean {:.3} after a collision {:.3}", r(bt[23]), r(bt[24]), r(bt[25]), r(bt[26]));
+                // Doc §15.49: collisions per release within 1 of the envelope,
+                // within 45 deg of the axis, by 0.1 bin and partner.
+                if bt.len() >= 67 {
+                    let near = &bt[27..67];
+                    let part = |k: usize| -> f64 { (0..10).map(|i| r(near[i * 4 + k])).sum() };
+                    println!("beam near exit (s<1 outside envelope, within 45 deg of axis): collisions per release: total {:.3} | ambient {:.3} fresh beam {:.3} own other {:.3} other body {:.3}", part(0) + part(1) + part(2) + part(3), part(0), part(1), part(2), part(3));
+                    let bins: Vec<String> = (0..10).map(|i| format!("{:.3}/{:.3}/{:.3}/{:.3}", r(near[i * 4]), r(near[i * 4 + 1]), r(near[i * 4 + 2]), r(near[i * 4 + 3]))).collect();
+                    println!("beam near exit by 0.1 bin (ambient/fresh/own/other): {}", bins.join(" "));
+                }
             }
         }
     }

@@ -147,7 +147,8 @@ pub struct Totals {
     pub src_n: Vec<i64>,
     pub src_out: Vec<i64>,
     pub xcoll: Vec<i64>,
-    /// Doc §15.48: beam-fate tally, len 27 (gpu_types::TALLY_BEAM).
+    /// Doc §15.48/§15.49: beam-fate tally + near-exit counter, len
+    /// gpu_types::TALLY_BEAM_LEN.
     pub beam: Vec<i64>,
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
@@ -499,7 +500,7 @@ impl Totals {
             add_vec(&mut self.src_n, &grab(TALLY_SRC_N, 80));
             add_vec(&mut self.src_out, &grab(TALLY_SRC_OUT, 24));
             add_vec(&mut self.xcoll, &grab(TALLY_XCOLL, 25));
-            add_vec(&mut self.beam, &grab(super::gpu_types::TALLY_BEAM, 27));
+            add_vec(&mut self.beam, &grab(super::gpu_types::TALLY_BEAM, super::gpu_types::TALLY_BEAM_LEN));
         }
         self.par_cells += raw[super::gpu_types::TALLY_PAR_CELLS] as i64;
     }
