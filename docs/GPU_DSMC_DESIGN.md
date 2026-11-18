@@ -4439,6 +4439,37 @@ He3 at contact (`reference/tc45/q_through.sh`).
   spread = the trace's measured clear radius) is a geometry fix, not a
   tuned constant. User decision; not done.
 
+### 15.46 The trace's clear polar hole, measured (2026-11-17)
+
+`baryon_shells::tests::report_trace_clear_hole` (CPU, 2M samples, dt
+0.0137) follows the level-9 ball along levels 9-12 and asks, for a line
+parallel to the spin axis at offset rho: how often does the ball cover
+it, and does a photon running down it at c through the body (z -1.2 to
+1.2) touch the ball at least once.
+
+- Ball centres never come closer than **0.347** to the axis (proton and
+  neutron identical; the sign patterns change the direction of travel, not
+  the swept geometry). That is the "measured trace hole 1/3" used since
+  §15.29 for the trapped-release spread: it is the hole of the ball
+  CENTRES.
+- The ball has radius 1/8, so the cylinder no part of the trace touches
+  is **0.222** (hard zero occupancy and zero touch chance for rho <= 0.22).
+- Beyond it, one ball gives a touch chance per axial transit of 1-6%
+  (proton) and 3-11% (neutron) for rho 0.24-0.46; with 64 copies that
+  annulus is close to opaque. A beam spread uniformly over radius 1/3 puts
+  1 - (0.222/0.333)^2 = **56%** of its photons in that annulus. That is
+  the beam the trace protons absorbed in the §15.45 through-release
+  screens.
+
+So the 1/3 opening was a slip (centres instead of surface), not a choice.
+The knob `RoughParams::polar_beam` (env `CFM_D_BEAM`, per body in
+`GpuBody.lane.w`; default 1/3, so every earlier run is unchanged) sets the
+opening. Overnight queue `reference/tc46/q_beam.sh` (same settings as the
+§15.45 through screens): deuteron at 3 with beam 0.222 (also calibrates
+the neutron's self-force), He3 at 2.05 with beam 0.222 on three seeds and
+1/3 on the two new seeds (paired, to get under the ~100 noise), a 0.15
+dose point, then a free He3 from contact (250 tu held, 600 free).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

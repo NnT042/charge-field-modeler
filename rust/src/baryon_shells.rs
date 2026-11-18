@@ -610,4 +610,66 @@ mod tests {
         }
     }
 
+    /// Doc §15.46: the trace's clear polar hole, measured. For a line
+    /// parallel to the spin axis at offset rho (random azimuth), (a) the
+    /// fraction of time the ball covers it (occupancy) and (b) the chance
+    /// that a photon running down that line at c through the whole body
+    /// (z -1.2 .. 1.2) touches the ball at least once (one ball, random
+    /// start phase). Also the hard clear radius min(rho_centre) - r_ball.
+    #[test]
+    #[ignore]
+    fn report_trace_clear_hole() {
+        for (name, signs) in [("proton +a+x+y+z", PROTON_STATES[0]), ("neutron -a-x-y+z", NEUTRON_STATES[0])] {
+            let mut body = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, signs);
+            let (n, dt) = (2_000_000usize, 0.0137);
+            let mut min_rho = f64::MAX;
+            let mut cen: Vec<DVec3> = Vec::with_capacity(n);
+            let mut rb = 0.0;
+            for _ in 0..n {
+                body.advance(dt);
+                let b = body.ball();
+                rb = b.radius;
+                min_rho = min_rho.min((b.center.x * b.center.x + b.center.y * b.center.y).sqrt());
+                cen.push(b.center);
+            }
+            println!("=== trace clear hole: {name} (ball r {rb:.4}) ===");
+            println!("  min centre rho {min_rho:.4} -> hard clear radius {:.4}", min_rho - rb);
+            // Deterministic hash RNG.
+            let mut s: u64 = 0x9E3779B97F4A7C15;
+            let mut rnd = || {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                (s >> 11) as f64 / (1u64 << 53) as f64
+            };
+            println!("  rho   occupancy   P(touch | axial transit at c)");
+            let mut r = 0.0;
+            while r <= 0.601 {
+                let (mut occ, mut hit) = (0u64, 0u64);
+                let trials = 4000;
+                for _ in 0..trials {
+                    let phi = std::f64::consts::TAU * rnd();
+                    let (lx, ly) = (r * phi.cos(), r * phi.sin());
+                    let i0 = (rnd() * (n - 400) as f64) as usize;
+                    let c = cen[i0];
+                    if (c.x - lx).powi(2) + (c.y - ly).powi(2) < rb * rb {
+                        occ += 1;
+                    }
+                    // Transit: z = -1.2 + t, sample index i0 + t/dt.
+                    let steps = (2.4 / dt) as usize;
+                    for k in 0..steps {
+                        let c = cen[i0 + k];
+                        let z = -1.2 + k as f64 * dt;
+                        if (c.x - lx).powi(2) + (c.y - ly).powi(2) + (c.z - z).powi(2) < rb * rb {
+                            hit += 1;
+                            break;
+                        }
+                    }
+                }
+                println!("  {r:.2}  {:.4}      {:.4}", occ as f64 / trials as f64, hit as f64 / trials as f64);
+                r += 0.02;
+            }
+        }
+    }
+
 }

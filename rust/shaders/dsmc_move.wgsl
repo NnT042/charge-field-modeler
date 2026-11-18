@@ -449,7 +449,9 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
                 e1 = normalize(cross(ax, vec3<f32>(0.0, 1.0, 0.0)));
             }
             let e2 = cross(ax, e1);
-            let rr = (1.0 / 3.0) * sqrt(rand01(params.seed_hi, params.seed_lo, key, 300u));
+            // Doc §15.46: opening radius per body (lane.w; 0 = legacy 1/3).
+            let beam = select(1.0 / 3.0, bodies[b].lane.w, bodies[b].lane.w > 0.0);
+            let rr = beam * sqrt(rand01(params.seed_hi, params.seed_lo, key, 300u));
             let pa = TAU * rand01(params.seed_hi, params.seed_lo, key, 301u);
             let off = e1 * (rr * cos(pa)) + e2 * (rr * sin(pa));
             let R = bodies[b].center.w;

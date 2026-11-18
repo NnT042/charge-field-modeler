@@ -624,7 +624,7 @@ impl DsmcEngine {
                     center: [b.center.x as f32, b.center.y as f32, b.center.z as f32, 1.0],
                     axis: [axis.x as f32, axis.y as f32, axis.z as f32, b.class.chirality_sign() as f32],
                     emit: [p0 as f32, p1.map(|v| v as f32).unwrap_or(-1.0), sigma as f32, swing as f32],
-                    lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, 0.0],
+                    lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, config.rough.polar_beam as f32],
                 }
             })
             .collect();
@@ -793,7 +793,7 @@ impl DsmcEngine {
                     center: [b.center.x as f32, b.center.y as f32, b.center.z as f32, env_r as f32],
                     axis: [axis.x as f32, axis.y as f32, axis.z as f32, b.class.chirality_sign() as f32],
                     emit: [p0 as f32, p1.map(|v| v as f32).unwrap_or(-1.0), sigma as f32, swing as f32],
-                    lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, 0.0],
+                    lane: [b.through_lane_rho as f32, DsmcConfig::cos_max_angle() as f32, b.class.id() as f32, self.config.rough.polar_beam as f32],
                 }
             })
             .collect();
