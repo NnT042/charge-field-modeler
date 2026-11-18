@@ -2300,7 +2300,7 @@ fn report_deuteron() {
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
         // CFM_D_COPIES (doc §15.45): trace copies per body (1 = real ball only).
-        config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ball_copies: env("CFM_D_COPIES", "1").parse().unwrap(), polar_beam: env("CFM_D_BEAM", "0.3333333333").parse().unwrap(), ..config.rough };
+        config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ball_copies: env("CFM_D_COPIES", "1").parse().unwrap(), polar_beam: env("CFM_D_BEAM", "0.3333333333").parse().unwrap(), local_pairing: env("CFM_D_LOCALPAIR", "0") == "1", ..config.rough };
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };

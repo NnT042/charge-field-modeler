@@ -52,8 +52,33 @@ struct Params {
     rough_kappa: f32, twist_loss_to_normal: u32, speed_mode: u32, spin_edge0: f32,
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
-    body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
+    body_beta: f32, body_beta_twist: f32, _pad14a: u32, maze_mode: u32,
 };
+
+// Doc §15.47: bit 13 of maze_mode = local (nearest-neighbour) pairing. The
+// cell's candidate count stays NTC's, but each candidate pairs a photon with
+// a near neighbour in a Morton order of 4x4x4 sub-cells instead of anyone in
+// the cell, so a dense directed flow (disc, vortex wall, beam tube) shadows
+// what is behind it at sub-cell scale (user, 2026-11-17).
+fn local_pairing() -> bool {
+    return ((params.maze_mode >> 13u) & 1u) != 0u;
+}
+
+fn spread2(v: u32) -> u32 {
+    // 2-bit value -> bits 0 and 3 (for a 3-axis Morton interleave).
+    return (v & 1u) | ((v & 2u) << 2u);
+}
+
+fn subcell_key(cell: u32, x: vec3<f32>) -> u32 {
+    let dx = params.grid_dim_x;
+    let dy = params.grid_dim_y;
+    let cx = cell % dx;
+    let cy = (cell / dx) % dy;
+    let cz = cell / (dx * dy);
+    let lo = vec3<f32>(params.grid_min_x, params.grid_min_y, params.grid_min_z) + vec3<f32>(f32(cx), f32(cy), f32(cz)) * params.cell_h;
+    let s = clamp(floor((x - lo) / params.cell_h * 4.0), vec3<f32>(0.0), vec3<f32>(3.0));
+    return spread2(u32(s.x)) | (spread2(u32(s.y)) << 1u) | (spread2(u32(s.z)) << 2u);
+}
 
 const FLAG_KIND_EMITTED: u32 = 2u;
 const FLAG_SPECIES_PLUS: u32 = 4u;
@@ -299,7 +324,13 @@ fn main(
         let i = lid.x + m * SORT_LOCAL;
         if (i >= len) { continue; }
         if (i < capn) {
-            sh_ids[i] = bitcast<u32>(photons[off + i].a.w);
+            let pid = bitcast<u32>(photons[off + i].a.w);
+            sh_ids[i] = pid;
+            if (local_pairing()) {
+                // Sort by sub-cell first (Morton), then id; the id is masked
+                // below 0x3FFFFFF so no real key equals the sentinel.
+                sh_ids[i] = (subcell_key(cell, photons[off + i].a.xyz) << 26u) | (pid & 0x3FFFFFEu);
+            }
             sh_slots[i] = off + i;
         } else {
             sh_ids[i] = 0xFFFFFFFFu;
@@ -396,11 +427,22 @@ fn main(
     if (m > PAR_MIN_CANDIDATES) {
         let pairs_total = f32(capn) * f32(capn - 1u) * 0.5;
         let lm1 = f32(len - 1u);
-        let rounds = u32(ceil(f32(m) * lm1 / pairs_total));
-        let sel = f32(m) * lm1 / (f32(rounds) * pairs_total);
+        var rounds = u32(ceil(f32(m) * lm1 / pairs_total));
+        var sel = f32(m) * lm1 / (f32(rounds) * pairs_total);
+        // §15.47 local: masks 1..7 pair within Morton blocks of 8; nearly
+        // every i < capn has a valid partner, ~capn/2 pairs per round.
+        let lp = local_pairing();
+        if (lp) {
+            let per_round = max(f32(capn / 2u), 1.0);
+            rounds = u32(ceil(f32(m) / per_round));
+            sel = f32(m) / (f32(rounds) * per_round);
+        }
         for (var r = 0u; r < rounds; r = r + 1u) {
             let rkey = hash_u32(key_base ^ hash_u32(r * 0x85EBCA6Bu ^ 0x51ED27u));
-            let mask = 1u + (hash_u32(rkey) % (len - 1u));
+            var mask = 1u + (hash_u32(rkey) % (len - 1u));
+            if (lp) {
+                mask = 1u + (hash_u32(rkey) % min(len - 1u, 7u));
+            }
             for (var q = 0u; q < strides; q = q + 1u) {
                 let i = lid.x + q * SORT_LOCAL;
                 let j = i ^ mask;
@@ -432,7 +474,22 @@ fn main(
         let i = min(u32(ui * f32(capn)), capn - 1u);
         let n_minus_1 = max(capn, 2u) - 1u;
         let j_off = min(u32(uj * f32(n_minus_1)), n_minus_1 - 1u);
-        let j = (i + 1u + j_off) % capn;
+        var j = (i + 1u + j_off) % capn;
+        if (local_pairing()) {
+            // §15.47: a neighbour 1-3 places away in the Morton order, on a
+            // random side (the other side if that one runs off the list).
+            let o = 1u + min(u32(uj * 6.0), 5u) % 3u;
+            let up = u32(uj * 6.0) >= 3u;
+            if (up && i + o < capn) {
+                j = i + o;
+            } else if (i >= o) {
+                j = i - o;
+            } else if (i + o < capn) {
+                j = i + o;
+            } else {
+                j = (i + 1u) % capn;
+            }
+        }
         try_pair(i, j, key_base, draw0, g_max, size_max, within, axis, body_center);
     }
 }

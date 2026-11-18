@@ -916,7 +916,8 @@ impl DsmcEngine {
                 super::config::MazeSpeed::EjectSurface => 256 | 1024,
                 super::config::MazeSpeed::Relative => 0,
             } | if c.rough.polar_release_normal { 2048 } else { 0 }
-                | if c.rough.polar_release_through { 4096 } else { 0 },
+                | if c.rough.polar_release_through { 4096 } else { 0 }
+                | if c.rough.local_pairing { 8192 } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);
