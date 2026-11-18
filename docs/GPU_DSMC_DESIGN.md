@@ -4490,9 +4490,17 @@ dose point, then a free He3 from contact (250 tu held, 600 free).
   facing pole and −154 via the far pole; ambient −759 facing / +374 far
   (similar counts, 2209 / 2190, so the ambient arriving from the neutron's
   side carries more momentum outward: it has been turned toward the proton
-  by the neutron's emission); own emission −150. The neutron's push is
-  mostly NOT its polar beam: the next diagnostic is to split "from n1"
-  into trapped (polar) releases vs maze-escaped surface emission.
+  by the neutron's emission); own emission −150. CORRECTION (2026-11-18):
+  the lone trace neutron has NO maze-escaped emission (tc45
+  lone_neutron_c64: esc-up/esc-down 0/0, every capture trapped, exit
+  bands p/m/e 1.000/0/0), so "from n1" IS the polar beam. Of the 1616
+  beam photons entering the proton's facing pole, 921 cross it (−450:
+  slowed by collisions inside the envelope) and ~695 do not come out the
+  far side (−477: captured). The trace leaves r < 0.222 clear, so the
+  beam is being scattered by photon-photon collisions (in the 0.05 gap or
+  in the proton's polar intake funnel, where ambient converges across the
+  axis) before the proton's trace takes it. Next diagnostic: where the
+  beam's photons first collide.
 - Free He3 (beam 0.222, seed 49344): comes apart symmetrically; protons at
   4.8 from the neutron by t 180, run stopped at the domain limit.
 
