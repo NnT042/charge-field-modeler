@@ -10,9 +10,10 @@
 //!   (exit code `YIELD_EXIT`, freeing the GPU memory; a runner starts it
 //!   again later) or sleeps in place (CFM_GUARD_ACTION=pause).
 //!
-//! The guards are built in for the borrowed machine ISABELLE (school hours
-//! 07:00-17:00 Monday to Friday, and Genshin Impact running) and cannot be
-//! switched off there. Any machine can add more: CFM_GUARD_HOURS =
+//! The guard built in for the borrowed machine ISABELLE is Genshin Impact
+//! running, and it cannot be switched off there (user, 2026-11-18: the
+//! school-hours window 07:00-17:00 Mon-Fri was dropped; school runs in web
+//! browser apps and a GPU run does not get in its way). Any machine can add more: CFM_GUARD_HOURS =
 //! "1-5,07:00-17:00" (days 0 = Sunday .. 6, local time), CFM_GUARD_PROCS =
 //! "a.exe;b.exe".
 
@@ -49,7 +50,6 @@ pub fn parse_hours(s: &str) -> Option<Hours> {
 pub fn rules_for(host: &str, extra_hours: &str, extra_procs: &str) -> Rules {
     let mut r = Rules::default();
     if host.eq_ignore_ascii_case("ISABELLE") {
-        r.hours.push(Hours { day_from: 1, day_to: 5, min_from: 7 * 60, min_to: 17 * 60 });
         r.procs.push("GenshinImpact.exe".to_string());
         r.procs.push("YuanShen.exe".to_string());
     }
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn isabelle_rules_are_built_in() {
         let r = rules_for("isabelle", "", "");
-        assert_eq!(r.hours, vec![Hours { day_from: 1, day_to: 5, min_from: 420, min_to: 1020 }]);
+        assert!(r.hours.is_empty());
         assert!(r.procs.iter().any(|p| p == "GenshinImpact.exe"));
         let other = rules_for("ESTELLE", "", "");
         assert!(other.hours.is_empty() && other.procs.is_empty());
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn school_hours_window() {
-        let r = rules_for("ISABELLE", "", "");
+        let r = rules_for("ESTELLE", "1-5,07:00-17:00", "");
         // Monday 06:59 free, 07:00 guarded, 16:59 guarded, 17:00 free.
         assert!(!in_hours(&r.hours, 1, 6 * 60 + 59));
         assert!(in_hours(&r.hours, 1, 7 * 60));
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn time_left_before_the_window() {
-        let r = rules_for("ISABELLE", "", "");
+        let r = rules_for("ESTELLE", "1-5,07:00-17:00", "");
         // Sunday 23:00 -> Monday 07:00 is 8 h; Friday 17:00 -> Monday 07:00 is 62 h.
         assert_eq!(minutes_until_hours(&r.hours, 0, 23 * 60), Some(8 * 60));
         assert_eq!(minutes_until_hours(&r.hours, 5, 17 * 60), Some(62 * 60));

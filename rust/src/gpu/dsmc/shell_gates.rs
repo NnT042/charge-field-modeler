@@ -2716,6 +2716,18 @@ fn report_deuteron() {
             }
             println!("{line}");
         }
+        // Doc §15.48: what happens to the neutrons' polar beams.
+        if src_tot.beam.len() == 27 {
+            let bt = &src_tot.beam;
+            let rel: i64 = bt[0..4].iter().sum();
+            if rel > 0 {
+                let r = |v: i64| v as f64 / rel as f64;
+                println!("beam fate (neutron trapped releases {:.0}/tu): first pp collision, share of releases | inside own envelope: ambient {:.3} own {:.3} other {:.3} | inside another body: ambient {:.3} own {:.3} other {:.3} | outside envelopes: ambient {:.3} own {:.3} other {:.3}", rel as f64 / time, r(bt[4]), r(bt[5]), r(bt[6]), r(bt[7]), r(bt[8]), r(bt[9]), r(bt[10]), r(bt[11]), r(bt[12]));
+                let hist: Vec<String> = bt[13..23].iter().map(|&v| format!("{:.3}", r(v))).collect();
+                println!("beam fate: first collisions inside another body by distance from its axis (0.05 bins): {}", hist.join(" "));
+                println!("beam fate: captured by another body, clean {:.3} after a collision {:.3} | recaptured by the emitter, clean {:.3} after a collision {:.3}", r(bt[23]), r(bt[24]), r(bt[25]), r(bt[26]));
+            }
+        }
     }
     for b in 0..n {
         let f = fsum[b] / time;

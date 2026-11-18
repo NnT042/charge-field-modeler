@@ -2,8 +2,8 @@
 # a time, and stops when the queue is empty. Each job is a .cmd that sets its
 # settings and runs C:\cfm\cfm.exe; a line "rem minutes=NN" gives its length.
 # Before each job it asks cfm.exe (guard_check) whether the GPU may be used
-# for that long: pause file, school hours (Mon-Fri 07:00-17:00), Genshin
-# Impact running. A job that gives way (exit 75) stays queued and runs again.
+# for that long: pause file, Genshin Impact running (the school-hours
+# window was dropped 2026-11-18; extra hours only via CFM_GUARD_HOURS). A job that gives way (exit 75) stays queued and runs again.
 $root = 'C:\cfm'
 $mutex = $null
 try { $mutex = New-Object System.Threading.Mutex($false, 'Global\cfm_runner') } catch { $mutex = New-Object System.Threading.Mutex($false, 'cfm_runner') }

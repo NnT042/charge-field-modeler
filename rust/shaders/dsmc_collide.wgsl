@@ -497,6 +497,45 @@ fn main(
 // One NTC candidate pair (sorted positions i != j in this cell's shared
 // list): acceptance, then the collision. Shared by the serial loop and the
 // parallel rounds of dense cells (doc §15.13).
+// Doc §15.48 beam-fate tally (layout in dsmc_move.wgsl / gpu_types).
+const FLAG_BEAM: u32 = 1u << 22u;
+const FLAG_BEAM_COLL: u32 = 1u << 23u;
+const TALLY_BEAM: u32 = 2989u;
+
+// First photon-photon collision of a neutron's beam photon since its
+// release: region (0 inside the emitter's envelope, 1 inside another
+// body's, 2 outside every envelope) x partner (0 ambient, 1 the emitter's
+// own emission, 2 another body's emission); for region 1 also the
+// photon's distance from that body's axis.
+fn beam_first(p: ptr<function, GpuPhoton>, partner_tag: u32) {
+    if (((*p).c[0] & FLAG_BEAM) == 0u || ((*p).c[0] & FLAG_BEAM_COLL) != 0u) {
+        return;
+    }
+    (*p).c[0] = (*p).c[0] | FLAG_BEAM_COLL;
+    let e = ((*p).c[0] >> 17u) & 7u;
+    let x = (*p).a.xyz;
+    var region = 2u;
+    var rho = 0.0;
+    for (var b = 0u; b < params.n_bodies; b = b + 1u) {
+        let d = x - bodies[b].center.xyz;
+        if (length(d) < bodies[b].center.w) {
+            if (b + 1u == e) {
+                if (region == 2u) { region = 0u; }
+            } else {
+                region = 1u;
+                let ax = bodies[b].axis.xyz;
+                rho = length(d - ax * dot(d, ax));
+            }
+        }
+    }
+    var pc = 2u;
+    if (partner_tag == 0u) { pc = 0u; } else if (partner_tag == e) { pc = 1u; }
+    atomicAdd(&tallies[TALLY_BEAM + 4u + region * 3u + pc], 1);
+    if (region == 1u) {
+        atomicAdd(&tallies[TALLY_BEAM + 13u + min(u32(rho / 0.05), 9u)], 1);
+    }
+}
+
 fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32, within: bool, axis: vec3<f32>, body_center: vec3<f32>) {
     let slot_a = sh_slots[i];
     let slot_b = sh_slots[j];
@@ -548,6 +587,8 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
             pa.c[0] = pa.c[0] | FLAG_XHIT;
             pb.c[0] = pb.c[0] | FLAG_XHIT;
         }
+        beam_first(&pa, (pb.c[0] >> 17u) & 7u);
+        beam_first(&pb, (pa.c[0] >> 17u) & 7u);
     }
 
     if (params.exchange_rule == 2u) {

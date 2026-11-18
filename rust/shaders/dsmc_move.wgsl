@@ -135,6 +135,15 @@ const TALLY_SRC_OUT: u32 = 2940u;
 // Set by dsmc_collide when two photons last emitted by different bodies
 // collide; cleared when a body emits the photon.
 const FLAG_XHIT: u32 = 1u << 21u;
+// Doc §15.48 beam-fate tally: bit 22 = released trapped (polar beam) by a
+// neutron; bit 23 = has had a photon-photon collision since that release.
+const FLAG_BEAM: u32 = 1u << 22u;
+const FLAG_BEAM_COLL: u32 = 1u << 23u;
+// [0..4) beam releases per body; [4..13) first collision region x partner
+// (dsmc_collide); [13..23) rho of first collisions inside another body;
+// [23..27) beam captured: other body clean / other collided / own clean /
+// own collided. Must match gpu_types::TALLY_BEAM.
+const TALLY_BEAM: u32 = 2989u;
 
 @group(0) @binding(0) var<storage, read_write> photons: array<GpuPhoton>;
 @group(0) @binding(1) var<storage, read> bodies: array<GpuBody>;
@@ -396,6 +405,19 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     }
     let escaped = dot(d, d0) >= 0.0;
     let upright = dot(s, s0) >= 0.0;
+    // Doc §15.48: beam-fate tally. A beam photon reaching a ball is
+    // captured here; then the flag is reset for this release.
+    if (((*p).c[0] & FLAG_BEAM) != 0u) {
+        let src = ((*p).c[0] >> 17u) & 7u;
+        let own = src == b + 1u;
+        let coll = ((*p).c[0] & FLAG_BEAM_COLL) != 0u;
+        atomicAdd(&tallies[TALLY_BEAM + 23u + select(0u, 2u, own) + select(0u, 1u, coll)], 1);
+    }
+    let beam_now = !escaped && bodies[b].lane.z == 1.0;
+    (*p).c[0] = ((*p).c[0] & ~(FLAG_BEAM | FLAG_BEAM_COLL)) | select(0u, FLAG_BEAM, beam_now);
+    if (beam_now) {
+        atomicAdd(&tallies[TALLY_BEAM + min(b, 3u)], 1);
+    }
     var out_l = d;
     if (!escaped) {
         out_l = vec3<f32>(0.0, 0.0, h);
