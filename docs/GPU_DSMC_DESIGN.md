@@ -4470,6 +4470,50 @@ the neutron's self-force), He3 at 2.05 with beam 0.222 on three seeds and
 1/3 on the two new seeds (paired, to get under the ~100 noise), a 0.15
 dose point, then a free He3 from contact (250 tu held, 600 free).
 
+**Results (tc46 + tc47, frozen, inward force per unit time, end protons):**
+
+| run | proton 0 | proton 2 |
+|---|---|---|
+| He3, beam 1/3, seeds 49344 / 777 / 31337 | −1615 / −1602 / −1596 | −1553 / −1542 / −1547 |
+| He3, beam 0.222, same seeds | −1701 / −1681 / −1690 | −1638 / −1638 / −1636 |
+| He3, beam 0.15, seed 49344 | −1715 | −1644 |
+| He3, beam 0.222 + local pairing (§15.47), 49344 / 777 | −1747 / −1755 | −1695 / −1691 |
+| deuteron at 3: beam 1/3 / 0.222 / 0.222 + local | −693 / −833 / −1116 | (neutron −12 / −16 / −37) |
+
+- Seed-to-seed spread is only ~10-20, so differences of ~100 are real.
+  (The "~100 noise" quoted in §15.45 was the lone proton's own axial
+  self-force, a systematic that the screens subtract, not scatter.)
+- Narrowing the beam makes the He3 push-apart slightly STRONGER, not
+  weaker (1/3 → 0.222 → 0.15: −1605 → −1690 → −1715). The beam width is
+  not what drives the protons off.
+- By source (He3, beam 0.222, proton 0): from the neutron −927 via the
+  facing pole and −154 via the far pole; ambient −759 facing / +374 far
+  (similar counts, 2209 / 2190, so the ambient arriving from the neutron's
+  side carries more momentum outward: it has been turned toward the proton
+  by the neutron's emission); own emission −150. The neutron's push is
+  mostly NOT its polar beam: the next diagnostic is to split "from n1"
+  into trapped (polar) releases vs maze-escaped surface emission.
+- Free He3 (beam 0.222, seed 49344): comes apart symmetrically; protons at
+  4.8 from the neutron by t 180, run stopped at the domain limit.
+
+### 15.47 Local (nearest-neighbour) photon pairing (2026-11-17)
+
+User (2026-11-17): dense directed emission (discs, vortex walls, beam
+tubes) acts on average as a semisolid wall that shadows what is behind or
+inside it. The DSMC pairs collision candidates at random within a cell
+(h 0.25 here), so a wall and the space it encloses (beam radius 0.222)
+share cells and cannot shadow each other. `RoughParams::local_pairing`
+(`CFM_D_LOCALPAIR=1`, maze_mode bit 13, default off) keeps NTC's
+candidate count per cell but sorts the cell by a Morton order of 4x4x4
+sub-cells and pairs each candidate with a neighbour 1-3 places away
+(parallel rounds: masks 1-7, i.e. within Morton blocks of 8).
+
+Checks: default-off gates 23/23 pass (tc47/gates_default.txt); the
+collision rate is unchanged in the gas (ambient-ambient 12,758,757 local
+vs 12,767,875 random, same seed, −0.07%). Effect: local pairing makes the
+pushes stronger, not weaker (table above; deuteron −833 → −1116). Not
+yet understood; the from-n1 split above comes first.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

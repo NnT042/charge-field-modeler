@@ -1,0 +1,12 @@
+START Tue Nov 17 21:07:14 CST 2026
+pn_axis_3_b222 done Tue Nov 17 21:36:03 CST 2026
+FSELF b222 proton:-106.9,-12.0,22.6,1.5,1.8,-4.2;neutron:1.5,5.8,-5.0,-3.3,1.5,-5.8
+FSELF b333 (tc45) proton:-106.9,-12.0,22.6,1.5,1.8,-4.2;neutron:-0.7,0.3,5.6,0.1,-3.4,-0.1
+he3_205_b222_s0 done Tue Nov 17 21:46:06 CST 2026
+he3_205_b222_s777 done Tue Nov 17 21:56:02 CST 2026
+he3_205_b333_s777 done Tue Nov 17 22:05:58 CST 2026
+he3_205_b222_s31337 done Tue Nov 17 22:15:54 CST 2026
+he3_205_b333_s31337 done Tue Nov 17 22:25:50 CST 2026
+he3_205_b150_s0 done Tue Nov 17 22:35:46 CST 2026
+he3_free_b222_s0 done Tue Nov 17 22:52:58 CST 2026
+ALL DONE Tue Nov 17 22:52:58 CST 2026

@@ -1,0 +1,29 @@
+
+running 1 test
+=== deuteron: pnp axial, sep0 3, mass 7e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface
+self-force proton : (-106.9, -12.0, +22.6) per unit time (given)
+self-torque proton : (+1.5, +1.8, -4.2) per unit time (given)
+self-force neutron: (+1.5, +5.8, -5.0) per unit time (given)
+self-torque neutron: (-3.3, +1.5, -5.8) per unit time (given)
+rotation: inertia 2.8e6, L_spin 8.75e5, damp 0
+layout custom: orients [PoleOn, PoleOn, PoleOn], start [(0.0, 0.0, -2.05), (0.0, 0.0, 0.0), (0.0, 0.0, 2.05)]
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+t   30.00: gaps 2.1594 4.3126 2.1532 | interaction (x,z): p (+208,-1669) n (-12,+9) p (-241,+1602) | max lateral y 0.016 | pos (+0.01,+0.02,-2.16) (+0.00,-0.01,+0.00) (-0.01,-0.01,+2.16) | axes (-0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 16 13 16 | contact steps 0 | captures/time 8861 7784 8846
+t   60.00: gaps 2.4758 4.9278 2.4530 | interaction (x,z): p (+140,-1470) n (-11,+12) p (-177,+1426) | max lateral y 0.060 | pos (+0.05,+0.06,-2.47) (+0.00,-0.03,+0.01) (-0.05,-0.03,+2.46) | axes (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 91 5 35 | contact steps 0 | captures/time 8779 7822 8749
+t   90.00: gaps 2.9602 5.8673 2.9110 | interaction (x,z): p (+123,-1001) n (+6,+24) p (-113,+1029) | max lateral y 0.124 | pos (+0.11,+0.12,-2.94) (+0.00,-0.07,+0.01) (-0.11,-0.05,+2.92) | axes (+0.00,-0.01,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 90 6 33 | contact steps 0 | captures/time 8440 7865 8487
+t  120.00: gaps 3.5502 7.0082 3.4672 | interaction (x,z): p (+104,-542) n (-3,+28) p (-76,+554) | max lateral y 0.203 | pos (+0.18,+0.20,-3.51) (+0.00,-0.12,+0.02) (-0.18,-0.08,+3.48) | axes (+0.01,-0.01,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 62 8 23 | contact steps 0 | captures/time 8125 7895 8166
+t  150.00: gaps 4.1939 8.2503 4.0733 | interaction (x,z): p (+72,-256) n (+7,-4) p (-3,+247) | max lateral y 0.292 | pos (+0.26,+0.29,-4.13) (+0.00,-0.18,+0.03) (-0.26,-0.11,+4.10) | axes (+0.00,-0.01,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 27 8 14 | contact steps 0 | captures/time 7878 7907 7946
+t  180.00: gaps 4.8668 9.5414 4.7011 | interaction (x,z): p (+47,-141) n (-10,+14) p (-9,+128) | max lateral y 0.386 | pos (+0.35,+0.39,-4.77) (-0.00,-0.24,+0.04) (-0.34,-0.15,+4.73) | axes (+0.01,-0.01,+1.00) (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) | net torque 18 16 13 | contact steps 0 | captures/time 7768 7911 7795
+stopped at t 180.06: gaps [4.86820895695263, 9.544037437292468, 4.702383609387959], centres [-4.773160823016027, 0.04201175723546802, 4.731149065780558]
+distance 0-1 (proton-neutron): range 2.050 .. 4.868; last quarter mean 4.364
+distance 0-2 (proton-proton): range 4.100 .. 9.544; last quarter mean 8.576
+distance 1-2 (neutron-proton): range 2.050 .. 4.702; last quarter mean 4.232
+drift of the stack centre -0.000
+screen body 0 proton  at (+0.35,+0.39,-4.77) axis (+0.01,-0.01,+1.00): force (+115,+210,-846) |879| inward -866 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,-0)
+screen body 1 neutron at (-0.00,-0.24,+0.04) axis (+0.00,-0.00,+1.00): force (-4,+1,+14) |14| inward -1 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,-0)
+screen body 2 proton  at (-0.34,-0.15,+4.73) axis (+0.00,-0.00,+1.00): force (-103,+41,+831) |838| inward -834 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,-0)
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 299 filtered out; finished in 1032.36s
+

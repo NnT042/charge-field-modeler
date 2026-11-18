@@ -1,0 +1,8 @@
+WAITING Tue Nov 17 21:38:25 CST 2026
+BUILD Tue Nov 17 22:53:30 CST 2026
+gates done (exit 0) Tue Nov 17 22:55:01 CST 2026
+pn_axis_3_b222_local done Tue Nov 17 23:25:19 CST 2026
+FSELF local proton:-106.9,-12.0,22.6,1.5,1.8,-4.2;neutron:3.2,1.2,-4.3,-2.6,4.7,0.8
+he3_205_b222_local_s0 done Tue Nov 17 23:35:48 CST 2026
+he3_205_b222_local_s777 done Tue Nov 17 23:44:03 CST 2026
+ALL DONE Tue Nov 17 23:44:03 CST 2026

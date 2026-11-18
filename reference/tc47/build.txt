@@ -1,0 +1,11 @@
+   Compiling charge_field_modeler v0.1.0 (C:\Users\nnt04\Project\charge-field-modeler\rust)
+warning: variable `LAMBDA` should have a snake case name
+   --> src\gpu\dsmc\shell_gates.rs:911:9
+    |
+911 |     let LAMBDA: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
+    |         ^^^^^^ help: convert the identifier to snake case: `lambda`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `charge_field_modeler` (lib test) generated 1 warning
+    Finished `fast` profile [optimized] target(s) in 39.94s
