@@ -4522,6 +4522,81 @@ vs 12,767,875 random, same seed, −0.07%). Effect: local pairing makes the
 pushes stronger, not weaker (table above; deuteron −833 → −1116). Not
 yet understood; the from-n1 split above comes first.
 
+### 15.48 Beam fate and the p-n distance curve (2026-11-18)
+
+Code (d8ae598): a tally that follows each photon the neutron releases
+through a pole (the lone trace neutron emits nothing else, §15.46
+correction). It records where that photon's FIRST collision happens
+(inside the neutron's own envelope / inside another body / outside every
+envelope) and the partner's emitter (ambient / the neutron itself /
+another body). For first collisions inside another body it also records
+the distance from that body's axis, and it records whether a photon a body
+captures had collided first. Runs: trace bodies (64 copies, surface
+emission, through release, beam 0.222, λ 0.3, random pairing), frozen,
+coaxial, the proton's north pole and the neutron's south pole facing. The
+He3 at 2.05 and a p-n sweep at centre distances 2.05-5 on seed 49344 ran
+on ESTELLE; the same sweep on seed 777 ran on ISABELLE (reference/tc48).
+
+**p-n force vs distance** (inward force; negative = pushed apart; mean of
+2 seeds, seeds agree within 15):
+
+| distance | 2.05 | 2.3 | 2.6 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| proton | −1757 | −1511 | −1204 | −828 | −290 | −127 |
+| neutron | −65 | −45 | −25 | −15 | −15 | −8 |
+| beam photons the proton captures (share of releases) | 0.33 | 0.30 | 0.25 | 0.19 | 0.10 | 0.05 |
+
+The force pushes the bodies apart at every distance and falls
+monotonically. It never changes sign and there is no standoff or well.
+The proton's push falls about as d^-3 (d^-3.7 between 3 and 5), steeper
+than a point source (d^-2) and nothing like a collimated beam (flat). The
+neutron hardly feels the proton (the proton emits mostly into its disc).
+
+**Beam fate.** No beam photon reaches either proton without colliding
+first. Captures are 0.000 clean at every distance, the He3 included.
+
+- In the deuteron the first collision is just OUTSIDE the neutron's
+  envelope (no first collisions inside it). At d 3, 68% of first
+  collisions are with the neutron's own emission and 30% with ambient. At
+  d 2.05, 38% happen already inside the proton's envelope.
+- The beam leaves exactly parallel (through release without the normal
+  bit), so two fresh beam photons have zero relative velocity and cannot
+  collide under the |v1−v2| kernel. The "own" partners are therefore beam
+  photons that were already knocked sideways. One ambient hit sets off a
+  cascade through the dense stream: n1-n1 pairs number 47-68 thousand per
+  unit time against 7,900 releases, so each beam photon collides with its
+  own siblings about 12-17 times. The beam behaves as a collisional JET
+  that spreads like a plume, which is why the push falls faster than d^-2.
+- He3 at 2.05 (both poles covered by protons): 73% of first collisions
+  are inside a proton's envelope, 47% with siblings, 19% with ambient and
+  7% with the proton's own emission. By distance from the proton's axis
+  they are 0.04 / 0.12 / 0.19 / 0.25 / 0.13 in bins of 0.05 from 0 to
+  0.25, and none beyond 0.25. So they all happen INSIDE the proton's
+  clear polar hole (0.222), where the beam is crowded against the
+  proton's own polar intake. 63% of beam photons end up captured by a
+  proton, every one after a collision.
+- Geometry: the beam opening (0.222) is the same as the clear polar hole
+  (0.222, §15.46), so a coaxial beam is aimed straight DOWN the proton's
+  hole. Unscattered, it would cross the proton without touching the trace
+  balls. That is the through channel (Mathis: through charge runs pole to
+  pole along a stack), and in this engine it can only be captured once
+  something knocks it sideways.
+
+Reading: in this engine the neutron's polar emission is a scattering
+jet. Its push on a coaxial proton is a pressure from a plume, not a feed.
+This repeats §15.46 at every distance: the proton is pushed away, never
+pulled. Mechanics questions this raises (user decisions, nothing changed):
+
+1. Should a photon that enters a proton's clear polar hole on an inbound
+   course be taken into the proton's through channel (out of the gas and
+   into the proton's pole-to-pole crossing), rather than free gas that
+   collides inside the funnel?
+2. Should a co-moving stream (a beam, a disc) be treated as the user's
+   semisolid wall toward its OWN scattered members as well? Today one
+   ambient hit inside the stream cascades into a dozen sibling collisions.
+3. Is the beam truly parallel? A cone (normal bit, half-angle 12.8° for
+   0.222) would spread it without any collisions.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
