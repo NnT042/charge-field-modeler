@@ -4737,6 +4737,78 @@ sign and trend do not depend on λ. λ is still free: no Mathis density
 at proton scale. The sweep says it matters less than the absorbing
 proton does.
 
+### 15.51 Pipe test: let axial photons run through the proton (2026-11-19)
+
+Asked by the user after §15.50 ("try it, we'll go over it at lunch"). A
+TEST switch, not a mechanics change: `RoughParams::pipe_classes /
+pipe_cos / pipe_mouth` (env CFM_D_PIPE=p|n|pn, CFM_D_PIPE_DEG,
+CFM_D_PIPE_MOUTH), ballkeys row 49 (BALLKEY_STRIDE 49 → 50). A photon
+entering a pipe body's envelope within the mouth (0.222 of the radius:
+the trace's own clear hole, report_trace_clear_hole) and heading inward
+within the pipe angle of the axis is turned exactly onto the axis. It
+then runs down the ball-free hole and out the far pole unless a photon
+collision knocks it into the walls. The body takes only the sideways
+momentum of the turn, booked to the photon's source. Counted in
+TALLY_HOLE_PASS ("pipe:" line). Off by default; gates 23/23. Frozen p-n,
+λ 0.3, h 0.25, seed 49344, as tc48 (reference/tc51; ISABELLE: 90° and
+20° + local pairing).
+
+| setting | photons piped /tu (d 3 / 2.05) | push d 3 | push d 2.05 | push d 4 |
+|---|---|---|---|---|
+| none (tc48) | – | −833 | −1758 | −287 |
+| proton, 20° | 419 / 3268 | −807 | −1745 | −272 |
+| proton + neutron, 20° | 418 / 3260 (n 19) | −805 | −1733 | |
+| proton, 45° | 1022 / 3906 | −788 | −1713 | |
+| proton, 90° (whole mouth) | 1457 / 4429 | −794 | −1707 | |
+| none, local pairing (tc49) | – | −1126 | −1825 | |
+| proton, 20°, local pairing | 772 / 3640 | −1094 | −1818 | |
+
+- **The pipe changes the push by 2-5%** (seed spread ~1-2%). The proton's
+  capture of neutron beam photons does not move (0.192 → 0.192-0.199
+  at d 3), and clean capture stays 0.
+- Why: the mouth is too small for what arrives. The clear hole is 0.222
+  of the radius, about 5% of the proton's face. By the time the beam
+  crosses the gap it is a splash (§15.49: mostly gone within 0.5), so
+  most of the neutron's photons strike the face outside the hole and are
+  captured there. Piping the whole mouth at any angle takes only ~100 off
+  the direct "from n1" push (−516 → −418 at d 3, 90°). The ambient
+  difference then grows by about as much: the momentum still gets
+  through, handed to ambient instead.
+- The neutron's own mouth pipes almost nothing (19/tu): its pole is
+  busy emitting its beam outward.
+- One side observation: in every pair run the proton's FAR pole gets
+  10-13% fewer ambient photons than when it is alone (2533 vs 2908 at d 3,
+  20°). That deficit (−160 to −180) is a third of the push. Something
+  exiting the proton's far side (its own polar release, plus what passes
+  through) shields that pole from ambient (the user's "emission walls"
+  picture), and the back pressure that would push it toward the neutron
+  goes missing. Not yet measured directly.
+
+- At d 2.05 the gap is only 0.05, so the drain IS under the tap: 3300-4400
+  photons/tu are piped. The push still barely moves. The hole itself is
+  the trouble: it is 2 long (pole to pole), about 7 free paths at λ 0.3,
+  and the gas inside the envelope is as collisional as outside. A piped
+  photon collides inside the proton (first collisions "inside another
+  body": 0.10 ambient + 0.25 the neutron's own halo, §15.48) and the
+  scattered photon then hits the walls and is captured.
+
+Reading: in this engine a through-stream cannot bind the pair. Far from
+contact, no coherent stream reaches the proton; at contact, none can
+cross it. In both cases the cause is the same thick, random gas that
+§15.49-15.50 measured. Mathis's locked axial stream needs the channel
+to stay coherent over a body length (2 radii). That means one of these:
+(a) a field whose free path is at least a body length, at least along
+the axis. §15.50's λ 1.0 is half that and still repels, but it did not
+have the pipe;
+(b) photons inside a body's hole that do not collide with the gas
+there: the channel as a protected lane (the earlier recycling.rs
+through-lane worked that way);
+(c) the two bodies' polar flows organising the gas around the axis into
+one channel. No mechanism for that yet.
+Candidate next screens (user decides): pipe + λ 1.0; pipe + no
+photon-photon collisions inside a pipe body's hole (b); and a direct
+measure of the far-pole ambient deficit.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

@@ -231,6 +231,16 @@ pub struct RoughParams {
     /// random within the cell. The NTC candidate count is unchanged. false =
     /// random in-cell pairing (bit-identical to before).
     pub local_pairing: bool,
+    /// Doc §15.51 pipe TEST (user, 2026-11-19: "a stopper, not a pipe"):
+    /// bit 1 = protons, bit 2 = neutrons. A photon entering such a body's
+    /// envelope within `pipe_mouth` (fraction of the radius) of the axis,
+    /// heading inward within acos(`pipe_cos`) of it, is turned exactly onto
+    /// the axis. It then runs down the trace's clear hole and leaves by the
+    /// far pole unless a photon collision knocks it into the walls. The body
+    /// takes only the sideways momentum of the turn. 0 = off (bit-identical).
+    pub pipe_classes: u32,
+    pub pipe_cos: f64,
+    pub pipe_mouth: f64,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -238,7 +248,7 @@ pub struct RoughParams {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, body_law: None }
     }
 }
 

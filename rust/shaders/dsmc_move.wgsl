@@ -221,7 +221,7 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-const BALLKEY_STRIDE: u32 = 49u;
+const BALLKEY_STRIDE: u32 = 50u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
 // Doc §15.45 trace copies (gpu_types::BALLKEY_COPY_*): copy 0 is the real
 // ball; copies 1.. are the same body at fixed time offsets along its trace.
@@ -1189,6 +1189,36 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             }
             ph.c[2] = packed;
             ph.c[0] = ph.c[0] & ~(FLAG_PP_PASSAGE | FLAG_HIT_CLEAN | FLAG_HIT_AFTER_PP);
+            // Doc §15.51 pipe test: a photon entering the polar mouth heading
+            // inward within the pipe angle of the axis is turned onto the axis
+            // (down the trace's clear hole). The body takes the sideways
+            // momentum of the turn, attributed to the photon's source.
+            if (params.body_model == 2u && now_inside != 0u && prev_inside == 0u) {
+                let b = now_inside - 1u;
+                let pk = ballkeys[b * BALLKEY_STRIDE + 49u];
+                if (pk.x > 0.5) {
+                    let ce = bodies[b].center.xyz;
+                    let rr = bodies[b].center.w;
+                    let ax = bodies[b].axis.xyz;
+                    let rel = pos - ce;
+                    let za = dot(rel, ax);
+                    let perp = rel - za * ax;
+                    let ca = dot(ph.b.xyz, ax);
+                    if (ca * za < 0.0 && abs(ca) >= pk.y && dot(perp, perp) <= pk.z * pk.z * rr * rr) {
+                        let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                        let nd = ax * sign(ca);
+                        let dpp = (ph.b.xyz - nd) * ph.d.w * m;
+                        let tqp = cross(rel, dpp);
+                        tally_src_in(b, src_cat(b, pos, &ph), dpp, tqp);
+                        for (var a = 0u; a < 3u; a = a + 1u) {
+                            atomicAdd(&tallies[TALLY_SH_DP + b * 3u + a], i32(dpp[a] * TALLY_SCALE));
+                            atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqp[a] * TALLY_SCALE));
+                        }
+                        ph.b = vec4<f32>(nd, axial_helicity(&ph, ph.d.xyz, nd));
+                        atomicAdd(&tallies[TALLY_HOLE_PASS + b], 1);
+                    }
+                }
+            }
             // Doc §15.11: envelope intake. A photon entering body b's
             // envelope is taken in (envelope mode: with probability p
             // anywhere; polar mode: within `aperture` of the axis) and

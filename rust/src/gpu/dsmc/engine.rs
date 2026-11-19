@@ -1035,6 +1035,14 @@ impl DsmcEngine {
             // [48].w (doc §15.35): the outer spin's signed equatorial surface
             // speed (level-12 sign x speed fraction), for PolarDeflect.
             data[b * BALLKEY_STRIDE + 48] = [r.through_hole as f32, if lrec { 1.0 } else { 0.0 }, body.lepton_disc_deg.to_radians() as f32, (body.signs[3] * body.speeds[3]) as f32];
+            // [49] (doc §15.51): pipe test [on, cos max angle, mouth, 0].
+            let cls_bit = match self.config.bodies.get(b).map(|c| c.class) {
+                Some(super::config::GpuClass::Proton) => 1,
+                Some(super::config::GpuClass::Neutron) => 2,
+                _ => 0,
+            };
+            let pipe = !body.lepton && (r.pipe_classes & cls_bit) != 0;
+            data[b * BALLKEY_STRIDE + 49] = [if pipe { 1.0 } else { 0.0 }, r.pipe_cos as f32, r.pipe_mouth as f32, 0.0];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

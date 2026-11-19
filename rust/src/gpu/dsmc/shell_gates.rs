@@ -2284,7 +2284,7 @@ fn report_deuteron() {
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}");
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"));
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2301,6 +2301,12 @@ fn report_deuteron() {
         // surface normal over the polar opening.
         // CFM_D_COPIES (doc §15.45): trace copies per body (1 = real ball only).
         config.rough = RoughParams { intake: d_intake, intake_neutron: d_intake_n, maze_speed: d_speed, through_hole: d_hole, polar_release_normal: env("CFM_D_POLAR", "axial").contains("normal"), polar_release_through: env("CFM_D_POLAR", "axial").contains("through"), ball_copies: env("CFM_D_COPIES", "1").parse().unwrap(), polar_beam: env("CFM_D_BEAM", "0.3333333333").parse().unwrap(), local_pairing: env("CFM_D_LOCALPAIR", "0") == "1", ..config.rough };
+        // CFM_D_PIPE (doc §15.51): pipe test on "p", "n" or "pn" bodies;
+        // CFM_D_PIPE_DEG max angle to the axis, CFM_D_PIPE_MOUTH mouth radius.
+        let pipe = env("CFM_D_PIPE", "");
+        config.rough.pipe_classes = (if pipe.contains('p') { 1 } else { 0 }) | (if pipe.contains('n') { 2 } else { 0 });
+        config.rough.pipe_cos = env("CFM_D_PIPE_DEG", "20").parse::<f64>().unwrap().to_radians().cos();
+        config.rough.pipe_mouth = env("CFM_D_PIPE_MOUTH", "0.2222222222").parse().unwrap();
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2715,6 +2721,11 @@ fn report_deuteron() {
                 line += &format!(", CROSS {}{i}-{}{k} {:.0}", &classes[*i][..1], &classes[*k][..1], xc(i + 1, k + 1));
             }
             println!("{line}");
+        }
+        // Doc §15.51: photons turned onto the axis by the pipe test.
+        if src_tot.hole_pass.iter().take(n).any(|&v| v > 0) {
+            let pp: Vec<String> = (0..n).map(|b| format!("{}{b} {:.0}", &classes[b][..1], src_tot.hole_pass[b] as f64 / time)).collect();
+            println!("pipe: photons turned onto the axis per unit time: {}", pp.join(", "));
         }
         // Doc §15.48: what happens to the neutrons' polar beams.
         if src_tot.beam.len() >= 27 {

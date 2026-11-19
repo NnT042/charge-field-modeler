@@ -536,7 +536,7 @@ pub const TALLY_LEN: usize = 3056;
 /// Doc §15.11: [47] = (intake open 1/0, hold steps, intake parameter,
 /// intake mode 0 ball / 1 envelope / 2 polar).
 /// Doc §15.24: [48] = (through-charge hole radius, 0, 0, 0).
-pub const BALLKEY_STRIDE: usize = 49;
+pub const BALLKEY_STRIDE: usize = 50;
 /// Doc §15.45 trace copies: after the 4 per-body blocks, one vec4 holding the
 /// copy count per body (1 = the real ball only), then for each body
 /// BALL_COPY_MAX - 1 copies of 9 keyframes x 4 vec4 (same layout as the real
