@@ -1,0 +1,14 @@
+START Thu Nov 19 09:29:54 CST 2026
+pn_3_lane20 done Thu Nov 19 09:59:31 CST 2026
+FSELF lane20 proton:-98.7,5.5,10.1,-1.8,-0.2,-6.8;neutron:1.5,5.8,-5.0,-3.3,1.5,-5.8
+pn_2.05_lane20 done Thu Nov 19 10:09:32 CST 2026
+pn_3_lane90 done Thu Nov 19 10:39:09 CST 2026
+FSELF lane90 proton:-95.4,-10.5,6.5,-1.2,-0.6,-3.0;neutron:1.5,5.8,-5.0,-3.3,1.5,-5.8
+pn_2.05_lane90 done Thu Nov 19 10:49:10 CST 2026
+pn_3_sw45 done Thu Nov 19 11:18:48 CST 2026
+FSELF sw45 proton:-102.2,0.7,13.4,-2.7,-0.6,-14.1;neutron:1.5,5.8,-5.0,-3.3,1.5,-5.8
+pn_2.05_sw45 done Thu Nov 19 11:28:49 CST 2026
+pn_3_sw45lane done Thu Nov 19 11:58:28 CST 2026
+FSELF sw45lane proton:-100.3,-6.6,19.4,-0.0,1.7,-19.5;neutron:1.5,5.8,-5.0,-3.3,1.5,-5.8
+pn_2.05_sw45lane done Thu Nov 19 12:08:29 CST 2026
+ALL DONE Thu Nov 19 12:08:29 CST 2026

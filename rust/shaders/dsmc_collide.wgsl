@@ -568,6 +568,36 @@ fn beam_near(p: ptr<function, GpuPhoton>, q_c0: u32) {
     atomicAdd(&tallies[TALLY_BEAM + 27u + min(u32(s / 0.1), 9u) * 4u + k], 1);
 }
 
+// Doc §15.52 pipe flags (dsmc_move.wgsl): PIPED = turned down a body's hole
+// and not yet collided; LANE = piped in protected-lane mode (no collisions
+// until it leaves the envelope).
+const FLAG_PIPED: u32 = 1u << 24u;
+const FLAG_LANE: u32 = 1u << 25u;
+const TALLY_FAR: u32 = 3056u;
+
+// Doc §15.52: collisions within 1 outside body 0's envelope and within 45
+// deg of its axis, by pole, s bin (<0.5, <1) and partner pair.
+fn far_tally(x: vec3<f32>, ta: u32, tb: u32) {
+    if (params.n_bodies == 0u) {
+        return;
+    }
+    let d = x - bodies[0].center.xyz;
+    let ax = bodies[0].axis.xyz;
+    let z = dot(d, ax);
+    let rho = length(d - ax * z);
+    let s = length(d) - bodies[0].center.w;
+    if (s < 0.0 || s >= 1.0 || abs(z) < rho) {
+        return;
+    }
+    let ca = select(select(2u, 1u, ta == 1u), 0u, ta == 0u);
+    let cb = select(select(2u, 1u, tb == 1u), 0u, tb == 0u);
+    let lo = min(ca, cb);
+    let hi = max(ca, cb);
+    let k = select(select(5u, 3u + hi - 1u, lo == 1u), hi, lo == 0u);
+    let pole = select(1u, 0u, z >= 0.0);
+    atomicAdd(&tallies[TALLY_FAR + pole * 12u + select(1u, 0u, s < 0.5) * 6u + k], 1);
+}
+
 fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32, within: bool, axis: vec3<f32>, body_center: vec3<f32>) {
     let slot_a = sh_slots[i];
     let slot_b = sh_slots[j];
@@ -575,6 +605,10 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
     var pb = photons[slot_b];
     // Doc §15.11: photons held in a body's tank take no collisions.
     if (((pa.c[0] | pb.c[0]) & (1u << 20u)) != 0u) {
+        return;
+    }
+    // Doc §15.52 protected lane: a lane photon takes no collisions.
+    if (((pa.c[0] | pb.c[0]) & FLAG_LANE) != 0u) {
         return;
     }
     let da = pa.b.xyz;
@@ -625,6 +659,10 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
         beam_near(&pb, ca0);
         beam_first(&pa, (pb.c[0] >> 17u) & 7u);
         beam_first(&pb, (pa.c[0] >> 17u) & 7u);
+        far_tally(pa.a.xyz, (pa.c[0] >> 17u) & 7u, (pb.c[0] >> 17u) & 7u);
+        // Doc §15.52: a collision ends a photon's guided run down a pipe.
+        pa.c[0] = pa.c[0] & ~FLAG_PIPED;
+        pb.c[0] = pb.c[0] & ~FLAG_PIPED;
     }
 
     if (params.exchange_rule == 2u) {

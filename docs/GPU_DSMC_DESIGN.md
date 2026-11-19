@@ -4809,6 +4809,132 @@ Candidate next screens (user decides): pipe + λ 1.0; pipe + no
 photon-photon collisions inside a pipe body's hole (b); and a direct
 measure of the far-pole ambient deficit.
 
+### 15.52 Protected lane, helix swirl, λ 1.0 pipe, far-pole partners (2026-11-19)
+
+Code (test knobs, no Mathis values, all off by default):
+- `CFM_D_PIPE_LANE=1` (`RoughParams::pipe_lane`): a piped photon carries
+  FLAG_LANE (bit 25) and `try_pair` skips any pair that holds one. It
+  collides with nothing until it leaves the envelope or is captured (both
+  clear the flag).
+- `CFM_D_PIPE_SWIRL=deg` (`pipe_swirl`): at the mouth, the piped direction
+  is tilted by that angle around the axis in the sense of the body's outer
+  spin (`signs[3]*speeds[3]`). Inside the body the velocity is then
+  rotated about the axis each step by v_az·dt/ρ, so the photon follows a
+  helix until its first collision. That turning momentum goes to the
+  body's SH_DP/SH_TORQUE. A photon entering from the other pole gets the
+  same azimuthal sense with the opposite axial sign, which gives the
+  opposite-handed spiral the user described. Ballkey row 49 .w carries
+  the signed swirl; BALLKEY_STRIDE is now 50.
+- Far-pole collision tally (TALLY_FAR, 24 slots, `far_tally` in
+  dsmc_collide). It counts collisions within s<1 outside body 0's
+  envelope and within 45° of its axis, split by pole, by s<0.5, and by
+  partner pair: a = ambient, o = body 0's own photon, x = another body's.
+  It prints for the lone calibration and for the pair.
+
+Runs: reference/tc52. ESTELLE ran q52.sh; ISABELLE ran q52_*. All at h
+0.25, n_a 8000, seed 49344, ball intake, polar through-beam 0.222. Push
+is on the proton, toward the neutron; negative means apart.
+
+| setting | λ | d 3 | d 2.05 |
+|---|---|---|---|
+| no pipe (§15.50, rerun q52_pn_3_base) | 0.3 | −813 | −1758 |
+| pipe 20° (§15.51) | 0.3 | −807 | −1745 |
+| pipe 90° (§15.51) | 0.3 | −794 | −1707 |
+| **pipe 20° + lane** | 0.3 | **−665** | **−330** |
+| **pipe 90° + lane** | 0.3 | **−393** | **+70** |
+| **p and n pipe 90° + lane** | 0.3 | – | **p +55, n +43** |
+| pipe 20° + swirl 45° | 0.3 | −840 | −2020 |
+| pipe 20° + swirl 45° + lane | 0.3 | −826 | −1826 |
+| pipe 20° + swirl 70° | 0.3 | −857 | – |
+| no pipe (§15.50) | 1.0 | −915 | −1071 |
+| pipe 20° | 1.0 | −857 | −1066 |
+
+Pipe counts (photons turned per unit time) at d 2.05:
+- lane20: 3102
+- lane90: 3998 (with the neutron also piped: p 4179, n 481)
+
+At d 3 the 20° pipe turns about 400 per unit time and the 90° pipe about
+1200.
+
+Findings:
+1. **The lane is the whole effect.** At contact, the same 90° pipe with
+   collisions allowed gives −1707. With the hole protected it gives +70.
+   The "from n1, N entry" push on the proton goes from −525 to +82, and
+   proton captures fall from 8295 to 7320. When nothing scatters the
+   neutron's beam inside the hole, the proton passes it through instead
+   of absorbing it.
+   - With both bodies laned, both are pulled together: p +55, n +43. This
+     is the first attractive p-n screen in the GPU engine.
+   - It is small: about 4% of the no-lane push.
+   - It is a single seed. §15.48 put two seeds within about 15 of each
+     other.
+   - It holds only at contact. At d 3 the lane still repels (−393), so the
+     sign changes somewhere between 2.05 and 3. The profile would be a
+     shallow well at contact behind a repulsive barrier, not a long-range
+     pull.
+   - Caveats: the lane is a rule, not a mechanism. nuc2.pdf says photons
+     in the pole channel "suffer a lot of edge hits". The 90° funnel
+     straightens everything that enters the mouth. Both are scaffolding of
+     the kind feedback_emergent_intake_goal allows only as a probe.
+2. **The helix as built is invalid.**
+   - The guidance rotates the velocity and then moves the photon in a
+     straight line. Each step that drifts the radius outward,
+     ρ² → ρ² + (v_az·dt)². Over a 2-long hole at 45° (about 48 steps)
+     that adds about 0.085 to ρ², so ρ reaches about 0.3. The hole radius
+     is 0.222, so helix photons spiral out into the balls.
+   - Evidence: with lane + swirl, 0.101 of beam releases are captured
+     clean by the proton; every other run shows 0.000. Swirl also undoes
+     the lane (−330 becomes −1826) and makes the plain pipe worse at
+     contact (−2020).
+   - So these numbers say nothing about the user's idea. A fair test needs
+     the helix held at its entry radius: a rigid circular step, or a
+     radial re-projection after each move.
+   - Even then, the grid cell (0.25) is wider than the hole (0.222).
+     DSMC pairs within a cell, so two interleaved helices cannot be told
+     apart. What it can see is the lower relative speed of co-rotating
+     opposite streams (g = 2cosα).
+3. **The pipe at λ 1.0 does nothing:** −857 vs −915 at d 3, and −1066 vs
+   −1071 at contact. Even with the hole 2 free paths long, collisions in
+   the hole decide the outcome. Only the full lane changes it.
+4. **What starves the proton's far pole (λ 0.3, d 3).**
+   - Alone, the S-pole region has 68860 collisions per unit time, of
+     which 50435 are a-a and 16957 a-o.
+   - In the pair it has 69964: a-a 46085, a-o 16559, a-x 4763, o-x 890.
+   - The total barely changes, but the neutron's scattered photons have
+     wrapped round to the proton's back. They do about 8% of the
+     collisions there, in place of ambient-ambient hits.
+   - Ambient arrivals at the far pole fall 13%, versus 3% at the
+     neutron's far pole (the share of global depletion when two bodies
+     convert ambient). So about 10 points is this local halo.
+   - At λ 1.0 the deficit is larger (−185 to −283) while a-x at the S
+     pole is only 1485. In a thin field, the deficit there comes from
+     farther out.
+   - The lane runs cut the far-pole deficit too: −112 at lane90, d 3.
+
+Mathis (search_mathis):
+- halbach.pdf: a photon and an antiphoton meeting head-on spin each other
+  up and attract, and he calls it "what happens along the nuclear pole".
+  Same-spin pairs spin down and repel.
+- voyag.pdf: photons hit edge to edge, not head-on.
+- rhrule.pdf: protons act as fans herding photons through the channels.
+  This supports a co-rotating swirl.
+- per4.pdf: opposed streams cancel linearly while their spins stack.
+
+Together these say the channel is collisional, but in a specific way: its
+hits are spin exchanges, not the isotropic momentum scattering DSMC does.
+The lane result is consistent with that. What breaks the stream in this
+engine is momentum-randomising collisions in the hole, and Mathis's
+channel collisions do not randomise momentum.
+
+Candidate next screens (user decides):
+- Lane distance sweep (2.05, 2.2, 2.5) to find the barrier and the depth
+  of the well.
+- A second seed at d 2.05.
+- A radius-held helix.
+- A spin-exchange collision rule for photons in a hole: opposed axial
+  photons swap or stack spin and keep their linear momentum, in place of
+  the lane. This is the mechanism version of the lane knob.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

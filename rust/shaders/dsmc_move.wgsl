@@ -139,6 +139,9 @@ const FLAG_XHIT: u32 = 1u << 21u;
 // neutron; bit 23 = has had a photon-photon collision since that release.
 const FLAG_BEAM: u32 = 1u << 22u;
 const FLAG_BEAM_COLL: u32 = 1u << 23u;
+// Doc §15.52 pipe flags (also in dsmc_collide.wgsl).
+const FLAG_PIPED: u32 = 1u << 24u;
+const FLAG_LANE: u32 = 1u << 25u;
 // [0..4) beam releases per body; [4..13) first collision region x partner
 // (dsmc_collide); [13..23) rho of first collisions inside another body;
 // [23..27) beam captured: other body clean / other collided / own clean /
@@ -522,6 +525,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
 // centre) or re-emits it at once through maze_contact (returns the emission
 // point). `held` reports which.
 fn capture(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32>, rb: f32, om: vec3<f32>, vcen: vec3<f32>, t_step: f32, key: u32, held: ptr<function, bool>, th0: f32) -> vec3<f32> {
+    (*p).c[0] = (*p).c[0] & ~(FLAG_PIPED | FLAG_LANE);
     let tag = ((*p).c[0] >> FLAG_EMIT_SHIFT) & 7u;
     atomicAdd(&tallies[TALLY_FEED + b * 5u + tag], 1);
     let hold_steps = u32(ballkeys[b * BALLKEY_STRIDE + 47u].y);
@@ -794,6 +798,32 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
     }
 
+    // Doc §15.52 swirl: a piped photon that has not collided keeps to its
+    // helix down the hole. Each step its velocity turns about the body axis
+    // by (azimuthal speed x dt / helix radius); the walls take the change.
+    if (params.body_model == 2u && (ph.c[0] & FLAG_PIPED) != 0u && (ph.c[2] & 7u) != 0u) {
+        let bg = (ph.c[2] & 7u) - 1u;
+        if (ballkeys[bg * BALLKEY_STRIDE + 49u].w != 0.0) {
+            let ax = bodies[bg].axis.xyz;
+            let rel = ph.a.xyz - bodies[bg].center.xyz;
+            let perp = rel - dot(rel, ax) * ax;
+            let pl = length(perp);
+            if (pl > 1e-4) {
+                let v_old = ph.b.xyz;
+                let vaz = dot(v_old, cross(ax, perp / pl));
+                let phi = vaz * ph.d.w * params.dt / pl;
+                let v_new = v_old * cos(phi) + cross(ax, v_old) * sin(phi) + ax * dot(ax, v_old) * (1.0 - cos(phi));
+                let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                let dpg = -(v_new - v_old) * ph.d.w * m;
+                let tqg = cross(rel, dpg);
+                for (var a = 0u; a < 3u; a = a + 1u) {
+                    atomicAdd(&tallies[TALLY_SH_DP + bg * 3u + a], i32(dpg[a] * TALLY_SCALE));
+                    atomicAdd(&tallies[TALLY_SH_TORQUE + bg * 3u + a], i32(tqg[a] * TALLY_SCALE));
+                }
+                ph.b = vec4<f32>(v_new, ph.b.w);
+            }
+        }
+    }
     var pos = ph.a.xyz;
     let dir = ph.b.xyz;
     let id = bitcast<u32>(ph.a.w);
@@ -1188,7 +1218,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 packed = now_inside | (hist_bin(lat_in) << 3u) | (abin << 9u);
             }
             ph.c[2] = packed;
-            ph.c[0] = ph.c[0] & ~(FLAG_PP_PASSAGE | FLAG_HIT_CLEAN | FLAG_HIT_AFTER_PP);
+            ph.c[0] = ph.c[0] & ~(FLAG_PP_PASSAGE | FLAG_HIT_CLEAN | FLAG_HIT_AFTER_PP | FLAG_PIPED | FLAG_LANE);
             // Doc §15.51 pipe test: a photon entering the polar mouth heading
             // inward within the pipe angle of the axis is turned onto the axis
             // (down the trace's clear hole). The body takes the sideways
@@ -1206,7 +1236,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     let ca = dot(ph.b.xyz, ax);
                     if (ca * za < 0.0 && abs(ca) >= pk.y && dot(perp, perp) <= pk.z * pk.z * rr * rr) {
                         let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
-                        let nd = ax * sign(ca);
+                        var nd = ax * sign(ca);
+                        // Doc §15.52 swirl: a helix about the axis, turning
+                        // with the body (pk.w = signed helix angle).
+                        let pl = length(perp);
+                        if (pk.w != 0.0 && pl > 1e-4) {
+                            nd = nd * cos(pk.w) + cross(ax, perp / pl) * sin(pk.w);
+                        }
                         let dpp = (ph.b.xyz - nd) * ph.d.w * m;
                         let tqp = cross(rel, dpp);
                         tally_src_in(b, src_cat(b, pos, &ph), dpp, tqp);
@@ -1215,6 +1251,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                             atomicAdd(&tallies[TALLY_SH_TORQUE + b * 3u + a], i32(tqp[a] * TALLY_SCALE));
                         }
                         ph.b = vec4<f32>(nd, axial_helicity(&ph, ph.d.xyz, nd));
+                        ph.c[0] = ph.c[0] | FLAG_PIPED | select(0u, FLAG_LANE, pk.x > 1.5);
                         atomicAdd(&tallies[TALLY_HOLE_PASS + b], 1);
                     }
                 }

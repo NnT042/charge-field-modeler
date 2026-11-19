@@ -2099,6 +2099,27 @@ struct SrcTab {
     to: DVec3,
 }
 
+/// Doc §15.52: collisions per unit time within 1 outside body 0's envelope
+/// and within 45 deg of its axis, by pole and partner pair (a ambient, o body
+/// 0's own photon, x another body's).
+fn far_line(far: &[i64], time: f64) -> String {
+    if far.len() < 24 {
+        return String::new();
+    }
+    let names = ["a-a", "a-o", "a-x", "o-o", "o-x", "x-x"];
+    let mut out = String::from("collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets):");
+    for (pole, pn) in ["N", "S"].iter().enumerate() {
+        let tot: i64 = far[pole * 12..pole * 12 + 12].iter().sum();
+        out += &format!(" | {pn} total {:.0}", tot as f64 / time);
+        for (k, nm) in names.iter().enumerate() {
+            let v0 = far[pole * 12 + k];
+            let v1 = far[pole * 12 + 6 + k];
+            out += &format!(" {nm} {:.0} ({:.0})", (v0 + v1) as f64 / time, v0 as f64 / time);
+        }
+    }
+    out
+}
+
 fn src_tab(t: &Totals, b: usize, time: f64) -> SrcTab {
     let s = super::gpu_types::TALLY_SCALE * time;
     let v = |x: &[i64]| DVec3::new(x[0] as f64, x[1] as f64, x[2] as f64) / s;
@@ -2284,7 +2305,7 @@ fn report_deuteron() {
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"));
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"));
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2307,6 +2328,10 @@ fn report_deuteron() {
         config.rough.pipe_classes = (if pipe.contains('p') { 1 } else { 0 }) | (if pipe.contains('n') { 2 } else { 0 });
         config.rough.pipe_cos = env("CFM_D_PIPE_DEG", "20").parse::<f64>().unwrap().to_radians().cos();
         config.rough.pipe_mouth = env("CFM_D_PIPE_MOUTH", "0.2222222222").parse().unwrap();
+        // Doc §15.52: CFM_D_PIPE_LANE=1 protected lane, CFM_D_PIPE_SWIRL helix
+        // angle in degrees.
+        config.rough.pipe_lane = env("CFM_D_PIPE_LANE", "0") == "1";
+        config.rough.pipe_swirl = env("CFM_D_PIPE_SWIRL", "0").parse::<f64>().unwrap().to_radians();
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2393,6 +2418,10 @@ fn report_deuteron() {
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
         println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], DVec3::Z, cal as f64 * dt));
+        println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
+        if t.hole_pass[0] > 0 {
+            println!("alone {cl:<7}: pipe: photons turned onto the axis per unit time: {:.0}", t.hole_pass[0] as f64 / (cal as f64 * dt));
+        }
         let st = src_tab(&t, 0, cal as f64 * dt);
         if !src_dir.is_empty() {
             src_tab_save(&src_path(cl), &st);
@@ -2722,6 +2751,7 @@ fn report_deuteron() {
             }
             println!("{line}");
         }
+        println!("pair: {}", far_line(&src_tot.far, time));
         // Doc §15.51: photons turned onto the axis by the pipe test.
         if src_tot.hole_pass.iter().take(n).any(|&v| v > 0) {
             let pp: Vec<String> = (0..n).map(|b| format!("{}{b} {:.0}", &classes[b][..1], src_tot.hole_pass[b] as f64 / time)).collect();

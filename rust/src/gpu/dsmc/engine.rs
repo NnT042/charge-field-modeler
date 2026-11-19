@@ -150,6 +150,10 @@ pub struct Totals {
     /// Doc §15.48/§15.49: beam-fate tally + near-exit counter, len
     /// gpu_types::TALLY_BEAM_LEN.
     pub beam: Vec<i64>,
+    /// Doc §15.52: collisions within 1 outside body 0's envelope, within 45
+    /// deg of its axis: [pole (0 N, 1 S)][s bin (<0.5, <1)][partner pair],
+    /// len gpu_types::TALLY_FAR_LEN.
+    pub far: Vec<i64>,
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
 }
@@ -296,6 +300,7 @@ impl Totals {
         add_vec(&mut self.src_out, &other.src_out);
         add_vec(&mut self.xcoll, &other.xcoll);
         add_vec(&mut self.beam, &other.beam);
+        add_vec(&mut self.far, &other.far);
         self.par_cells += other.par_cells;
     }
 
@@ -501,6 +506,7 @@ impl Totals {
             add_vec(&mut self.src_out, &grab(TALLY_SRC_OUT, 24));
             add_vec(&mut self.xcoll, &grab(TALLY_XCOLL, 25));
             add_vec(&mut self.beam, &grab(super::gpu_types::TALLY_BEAM, super::gpu_types::TALLY_BEAM_LEN));
+            add_vec(&mut self.far, &grab(super::gpu_types::TALLY_FAR, super::gpu_types::TALLY_FAR_LEN));
         }
         self.par_cells += raw[super::gpu_types::TALLY_PAR_CELLS] as i64;
     }
@@ -1042,7 +1048,11 @@ impl DsmcEngine {
                 _ => 0,
             };
             let pipe = !body.lepton && (r.pipe_classes & cls_bit) != 0;
-            data[b * BALLKEY_STRIDE + 49] = [if pipe { 1.0 } else { 0.0 }, r.pipe_cos as f32, r.pipe_mouth as f32, 0.0];
+            // .x: 1 pipe, 2 pipe + protected lane; .w: signed helix angle
+            // (sense of the outer spin, doc §15.52).
+            let fan = if body.signs[3] * body.speeds[3] < 0.0 { -1.0 } else { 1.0 };
+            let on = if !pipe { 0.0 } else if r.pipe_lane { 2.0 } else { 1.0 };
+            data[b * BALLKEY_STRIDE + 49] = [on, r.pipe_cos as f32, r.pipe_mouth as f32, (fan * r.pipe_swirl) as f32];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

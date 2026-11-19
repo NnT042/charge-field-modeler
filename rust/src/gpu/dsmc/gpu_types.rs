@@ -524,7 +524,13 @@ pub const TALLY_XCOLL: usize = 2964;
 pub const TALLY_BEAM: usize = 2989;
 pub const TALLY_BEAM_LEN: usize = 67;
 
-pub const TALLY_LEN: usize = 3056;
+/// Doc §15.52 collisions near body 0's poles (dsmc_collide.wgsl far_tally):
+/// pole(2) x s bin(2) x partner pair(6: aa, a0, ax, 00, 0x, xx; 0 = body 0's
+/// photon, x = another body's).
+pub const TALLY_FAR: usize = 3056;
+pub const TALLY_FAR_LEN: usize = 24;
+
+pub const TALLY_LEN: usize = 3080;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
