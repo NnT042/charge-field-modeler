@@ -1,0 +1,13 @@
+START Wed Nov 18 23:24:31 CST 2026
+pn_3_l03_h0125 done Thu Nov 19 00:33:43 CST 2026
+FSELF l03_h0125 proton:-101.6,10.0,14.0,4.2,2.6,-0.5;neutron:5.4,-3.0,3.1,2.5,4.1,-5.0
+pn_2.05_l03_h0125 done Thu Nov 19 00:42:39 CST 2026
+pn_3_l06 done Thu Nov 19 01:02:25 CST 2026
+FSELF l06 proton:-86.3,25.6,-2.9,-0.3,1.2,-3.2;neutron:4.6,2.0,-0.9,2.0,0.4,-7.8
+pn_2.05_l06 done Thu Nov 19 01:07:30 CST 2026
+pn_4_l06 done Thu Nov 19 01:14:06 CST 2026
+pn_3_l10 done Thu Nov 19 01:25:09 CST 2026
+FSELF l10 proton:-82.5,-51.5,-0.1,1.5,0.9,-6.8;neutron:-6.1,-7.8,2.5,1.0,1.8,-8.8
+pn_2.05_l10 done Thu Nov 19 01:29:00 CST 2026
+pn_4_l10 done Thu Nov 19 01:32:51 CST 2026
+ALL DONE Thu Nov 19 01:32:51 CST 2026

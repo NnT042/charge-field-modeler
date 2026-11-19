@@ -11,11 +11,17 @@ minutes on the 3060 (12 GB) or the 5060 (8 GB). DSMC is limited by memory bandwi
 arithmetic: every step reads and writes every photon (64 bytes) several times (sort, collide,
 move).
 
-Rules from §15.14 (converged field): h about λ, dt at most λ/5. So halving λ costs:
-- cells: (h_old/h_new)^3 = 8x for the same domain
-- photons: 8x, to keep the same count per cell
-- steps: 2x
-- total: about 16x the work, and 8x the memory.
+Rules from §15.14 (converged field): h about λ, dt at most λ/5. In report_deuteron λ sets the
+cross-section σ only; the photon count (n_a 8000) does not change. So halving λ costs:
+- cells: (h_old/h_new)^3 = 8x for the same domain (cheap: the cell arrays are small)
+- photons: the same
+- steps: 2x, plus a longer warm-up (about R_D²/λ)
+- total: roughly 2-3x the work, and about the same memory.
+
+Correction (2026-11-19): an earlier draft assumed the photons per cell stay fixed (16x the work).
+They don't. The λ 0.15 runs (§15.50) ran locally on the 5060 in a few hours each. Rented GPUs
+pay off only where the photon count itself must grow (finer h at FIXED photons per cell, the
+furnace, many seeds).
 
 ## Candidate rented GPUs
 
@@ -30,12 +36,10 @@ Bandwidth ratio is the speed-up to expect, not the shader-core count.
 
 ## Experiments ranked by what they would teach us
 
-### A. Resolution check of today's results (cheap, first)
-λ 0.3 → 0.15 for the frozen p-n pair at d 2.05 and 3, plus the He3 at 2.05. About 16x the work and
-56M photons (~3.6 GB photons + sort buffers, ~8-10 GB): fits a 4090. About 10 min x 16 / 2.8 ≈ 1 h
-per run, so ~$0.50 a run on a 4090. Question: do the push numbers, the beam-fate shares and the
-near-exit collision count (§15.49) hold when h halves? If they move by more than the seed spread
-(~15), every λ 0.3 result is resolution-bound.
+### A. Resolution check of today's results — DONE locally (§15.50)
+λ 0.15/0.3/0.6/1.0 and h 0.125 at λ 0.3 ran on our own GPUs. Halving h at λ 0.3 raises the push
+11-28% (above the seed spread); local pairing recovers most of that. The sign and trends hold at
+every λ. Not needed on a rented GPU.
 
 ### B. Fine grid near the bodies (the "high-resolution grid")
 The beam is 0.222 wide and the clear hole 0.222; the cell is 0.25. At h 0.05 (λ 0.05) the beam spans
@@ -64,15 +68,17 @@ fused nucleons are bound by one shared through-stream along the main axis).
   - The arrival histograms take at most 4 bodies (HIST_MAX_BODIES).
   - A "furnace" of, say, 8 protons + 8 neutrons needs 16+ tags, or untagged bodies with tallies
     off.
-- Scale: λ 0.1 over R_D 8 with 16 bodies ≈ 27x the cells of λ 0.3 R_D 6 x (8/6)^3 = ~64x photons
-  ≈ 450M photons, ~30 GB plus buffers → H100 80GB, or a 5090 at R_D 6 with fewer photons per cell.
-  Several hours per run, roughly $5-15.
+- Scale (corrected 2026-11-19): at the same n_a, R_D 8 is (8/6)^3 ≈ 2.4x the photons (~17M, fits
+  our 12 GB card). The cost is time: dt ≤ λ/5 = 0.02 and a long free run. For "stellar" density,
+  raise n_a itself (more photons per volume, not just a smaller λ). That is the knob that needs a
+  big card: 10x n_a ≈ 170M photons ≈ 11 GB of photons plus buffers → 5090/H100.
 - Readouts: pair distances over time, which pairs stay within 2.5 for 100+ tu, axis alignment of
   close pairs (pole-to-pole vs equator-to-pole), whether a shared axial stream forms (flux along the
   line of centres).
 
 ## Engine work before renting (all useful on our own GPUs too)
 1. Near-exit counter results (§15.49) decide whether random pairing is inventing beam collisions.
+   Done: mostly not (it adds ~14%); the medium is thick (§15.49-15.50).
 2. Lift the 7-body tag limit (widen the tag field or drop the tag on extra bodies).
 3. Headless "multi-GPU / multi-seed" runner on Linux: the exe already runs self-contained; check
    Vulkan on the rented box with `vulkaninfo` (NVIDIA_DRIVER_CAPABILITIES must include graphics).

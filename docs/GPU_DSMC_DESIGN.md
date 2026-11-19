@@ -4662,6 +4662,81 @@ Mathis), and the denser fields where the H atom held (λ 0.1) make this
 worse. A resolution check (λ 0.15, h halved; docs/VAST_PLAN.md A) would
 separate grid effects from the physics.
 
+### 15.50 Is the field too dense? λ sweep and grid check (2026-11-19)
+
+User question (route A): does the beam scatter because the bodies must
+sit this close to fuse, or because we have been running in a field far
+too dense? Same frozen p-n setup as §15.48-15.49 (trace bodies, through
+release, beam 0.222, random pairing, seed 49344). λ changes σ only: the
+ambient count (n_a 8000) stays the same, so a larger λ is a thinner
+field in collisions, not in photons. reference/tc50 (ESTELLE q50.sh; the
+λ 0.15 runs on ISABELLE, h 0.15, dt 0.03, warm-up 300).
+
+Proton push toward the neutron (negative = pushed apart):
+
+| λ | h | d 2.05 | d 3 | d 4 |
+|---|---|---|---|---|
+| 0.15 | 0.15 | −1900 | −742 | |
+| 0.3 | 0.25 | −1758 | −833 | −287 |
+| 0.3 | 0.125 | −1955 | −1065 | |
+| 0.3 | 0.25, local pairing | −1825 | −1126 | |
+| 0.6 | 0.25 | −1444 | −943 | −408 |
+| 1.0 | 0.25 | −1071 | −915 | −491 |
+
+Beam reaching the proton (share of neutron releases captured by it; a
+CLEAN capture, with no collision first, is 0.000 in every run):
+
+| λ (h) | d 2.05 | d 3 | near-pole collisions per release, d 3: total / fresh beam |
+|---|---|---|---|
+| 0.15 (0.15) | 0.41 | 0.27 | 36.9 / 0.71 |
+| 0.3 (0.25) | 0.33 | 0.19 | 14.3 / 0.67 |
+| 0.3 (0.125) | 0.34 | 0.22 | 13.2 / 0.67 |
+| 0.6 (0.25) | 0.25 | 0.15 | 5.2 / 0.44 |
+| 1.0 (0.25) | 0.18 | 0.13 | 2.5 / 0.27 |
+
+- **The repulsion is not a dense-field artefact.** A field with 7x fewer
+  collisions (λ 0.15 → 1.0) still pushes the pair apart at every
+  distance. At d 3 the push hardly moves (−742 to −943). At d 4 it GROWS
+  as the field thins (−287 → −491): the beam's momentum carries farther
+  before it spreads. Only at contact (2.05) does a thinner field push
+  less.
+- **Why: momentum conservation.** The neutron sends its beam toward the
+  proton. Collisions only pass that momentum around. Some reaches the
+  proton in the neutron's own photons ("from n1": −758 at λ 0.15, −486
+  at λ 1.0, d 3). The rest is handed to ambient photons, which then
+  strike the proton's facing side: the ambient difference is about 0 at
+  λ 0.15 and −400 at λ 1.0. The two shares trade off, and the total stays
+  near −750 to −950. Collisions can spread outward momentum, but never
+  turn it around. A thick field spends it near the neutron; a thin field
+  carries it farther.
+- **The proton is a stopper, not a pipe.** Even at λ 1.0, no beam photon
+  is captured clean. At d 3, 8% of releases first collide INSIDE the
+  proton (in its clear hole): the beam enters the through channel and is
+  then captured or scattered there, and its momentum stays in the
+  proton. Mathis binds fused nucleons with a shared through-stream and
+  outside charge pressure (grav4). A stream that passes through the
+  proton and out of its far pole would hand on its momentum instead of
+  depositing it. What the proton does with axial photons in its hole is
+  a mechanics decision (§15.48 question 1), not a density setting.
+- **Near-pole collisions scale with 1/λ.** Collisions × λ is 2.5-5.5 in
+  every run, so §15.49's count belongs to the medium. Fresh-beam hits
+  stay under 1 per release.
+- **Grid check.** At λ 0.3, halving h (0.25 → 0.125) raises the push 28%
+  at d 3 and 11% at 2.05. The two seeds agree within 15, so this is a
+  resolution effect: 0.25 cells smear the beam's momentum sideways.
+  Local pairing in 0.25 cells gives nearly the fine-grid answer (−1126
+  vs −1065 at d 3, −1825 vs −1955 at 2.05). So local pairing is a cheap
+  stand-in for halving h. Signs and trends hold at every resolution;
+  magnitudes at h 0.25 random pairing are 10-30% low.
+- Gravity plays no part here: inside R_D 6 it is about 1e-17 of the
+  charge push (quantumg.html, see the gravity note under §15.43).
+
+Default candidates (user decides): local pairing on, which recovers
+most of the h λ/2 result at no extra cost; λ 0.3 for screens, since the
+sign and trend do not depend on λ. λ is still free: no Mathis density
+at proton scale. The sweep says it matters less than the absorbing
+proton does.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
