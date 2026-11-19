@@ -574,6 +574,87 @@ fn beam_near(p: ptr<function, GpuPhoton>, q_c0: u32) {
 const FLAG_PIPED: u32 = 1u << 24u;
 const FLAG_LANE: u32 = 1u << 25u;
 const TALLY_FAR: u32 = 3056u;
+const TALLY_CHAN: u32 = 3080u;
+
+// Doc §15.53 channel spin rule (halbach.pdf; test knob). Bit 14 of maze_mode
+// on, eta = bits 16..23 / 255. Called for a pair holding a piped photon,
+// instead of the scattering exchange. Nothing is randomised:
+//  - co-moving (d_a.d_b >= 0): side by side, nothing happens;
+//  - head-on, lab axial spins parallel (helicities opposite: photon meets
+//    antiphoton, "opposite twice, and so the same"): they pass through and
+//    spin each other up, eta of the relative linear energy going into spin;
+//  - head-on, lab axial spins antiparallel (same species): they catch and
+//    force one another apart, i.e. swap velocities (bounce back), and eta of
+//    their outer spin energy goes to linear.
+// The relative velocity alone is rescaled, so momentum is exact; the energy
+// moved is exact (the restack keeps a level's energy). A bounced photon
+// reverses with its spin unchanged, so its helicity flips (reflected photons
+// are antiphotons).
+fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
+    var bi = ((*pa).c[2] & 7u);
+    if (bi == 0u) {
+        bi = ((*pb).c[2] & 7u);
+    }
+    let slot = TALLY_CHAN + min(max(bi, 1u) - 1u, 3u) * 4u;
+    let da = (*pa).b.xyz;
+    let db = (*pb).b.xyz;
+    if (dot(da, db) >= 0.0) {
+        atomicAdd(&tallies[slot + 2u], 1);
+        return;
+    }
+    let eta = f32((params.maze_mode >> 16u) & 255u) / 255.0;
+    let kappa = params.rough_kappa;
+    let ra = exp2(f32((*pa).c[3]));
+    let rb = exp2(f32((*pb).c[3]));
+    let ia = kappa * select(ra, 1.0, params.stacking != 0u) * ra * ra;
+    let ib = kappa * select(rb, 1.0, params.stacking != 0u) * rb * rb;
+    let va = da * (*pa).d.w;
+    let vb = db * (*pb).d.w;
+    let vcm = (va + vb) * 0.5;
+    var u = va - vb;
+    let wa0 = (*pa).d.xyz;
+    let wb0 = (*pb).d.xyz;
+    var wa = wa0;
+    var wb = wb0;
+    let ea = 0.5 * ia * dot(wa0, wa0);
+    let eb = 0.5 * ib * dot(wb0, wb0);
+    let up = (*pa).b.w * (*pb).b.w < 0.0;
+    var de = 0.0;
+    if (up) {
+        // Pass through; relative linear energy (1/4)|u|^2 (unit masses)
+        // gives eta of itself to the two spins, half each.
+        de = eta * 0.25 * dot(u, u);
+        u = u * sqrt(1.0 - eta);
+        var axa = select(sign((*pa).b.w) * da, wa0 / max(length(wa0), 1e-12), length(wa0) > 1e-9);
+        var axb = select(sign((*pb).b.w) * db, wb0 / max(length(wb0), 1e-12), length(wb0) > 1e-9);
+        wa = axa * sqrt(2.0 * (ea + 0.5 * de) / ia);
+        wb = axb * sqrt(2.0 * (eb + 0.5 * de) / ib);
+        atomicAdd(&tallies[slot], 1);
+    } else {
+        // Bounce (velocity swap), and eta of the outer spin energy to linear.
+        de = -eta * (ea + eb);
+        wa = wa0 * sqrt(1.0 - eta);
+        wb = wb0 * sqrt(1.0 - eta);
+        let ul = length(u);
+        u = -u * sqrt(max(ul * ul - 4.0 * de, 0.0)) / max(ul, 1e-12);
+        atomicAdd(&tallies[slot + 1u], 1);
+    }
+    atomicAdd(&tallies[slot + 3u], i32(de * TALLY_SCALE));
+    if (params.stacking != 0u) {
+        wa = restack(pa, wa, wa - wa0);
+        wb = restack(pb, wb, wb - wb0);
+    }
+    let nva = vcm + 0.5 * u;
+    let nvb = vcm - 0.5 * u;
+    let sa = length(nva);
+    let sb = length(nvb);
+    let nda = nva / max(sa, 1e-12);
+    let ndb = nvb / max(sb, 1e-12);
+    (*pa).b = vec4<f32>(nda, axial_helicity(pa, wa, nda));
+    (*pb).b = vec4<f32>(ndb, axial_helicity(pb, wb, ndb));
+    (*pa).d = vec4<f32>(wa, sa);
+    (*pb).d = vec4<f32>(wb, sb);
+}
 
 // Doc §15.52: collisions within 1 outside body 0's envelope and within 45
 // deg of its axis, by pole, s bin (<0.5, <1) and partner pair.
@@ -642,6 +723,15 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
     let a_emitted = (pa.c[0] & FLAG_KIND_EMITTED) != 0u;
     let b_emitted = (pb.c[0] & FLAG_KIND_EMITTED) != 0u;
     if (params.d5_far_zone_gate != 0u && !a_emitted && !b_emitted && !within) {
+        return;
+    }
+
+    // Doc §15.53: in channel spin mode a pair holding a piped photon spin-
+    // exchanges instead of scattering (and is not counted as a collision).
+    if (((params.maze_mode >> 14u) & 1u) != 0u && ((pa.c[0] | pb.c[0]) & FLAG_PIPED) != 0u) {
+        chan_collide(&pa, &pb);
+        photons[slot_a] = pa;
+        photons[slot_b] = pb;
         return;
     }
 

@@ -2102,6 +2102,27 @@ struct SrcTab {
 /// Doc §15.52: collisions per unit time within 1 outside body 0's envelope
 /// and within 45 deg of its axis, by pole and partner pair (a ambient, o body
 /// 0's own photon, x another body's).
+/// Doc §15.53: channel spin rule events per body per unit time.
+fn chan_line<S: AsRef<str>>(chan: &[i64], n: usize, classes: &[S], time: f64) -> String {
+    let mut parts = Vec::new();
+    for b in 0..n.min(4) {
+        let c = &chan[b * 4..b * 4 + 4];
+        if c.iter().all(|&v| v == 0) {
+            continue;
+        }
+        let cl = classes[b].as_ref();
+        parts.push(format!(
+            "{}{b} pass (spin-up) {:.0}, bounce (spin-down) {:.0}, co-moving {:.0}, energy to spin {:+.2}",
+            &cl[..1],
+            c[0] as f64 / time,
+            c[1] as f64 / time,
+            c[2] as f64 / time,
+            c[3] as f64 / (super::gpu_types::TALLY_SCALE * time)
+        ));
+    }
+    format!("events per unit time: {}", parts.join(" | "))
+}
+
 fn far_line(far: &[i64], time: f64) -> String {
     if far.len() < 24 {
         return String::new();
@@ -2305,7 +2326,7 @@ fn report_deuteron() {
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"));
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {}", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"));
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2332,6 +2353,9 @@ fn report_deuteron() {
         // angle in degrees.
         config.rough.pipe_lane = env("CFM_D_PIPE_LANE", "0") == "1";
         config.rough.pipe_swirl = env("CFM_D_PIPE_SWIRL", "0").parse::<f64>().unwrap().to_radians();
+        // Doc §15.53: CFM_D_PIPE_SPIN=1 channel spin rule, CFM_D_PIPE_ETA energy share.
+        config.rough.pipe_spin = env("CFM_D_PIPE_SPIN", "0") == "1";
+        config.rough.pipe_spin_eta = env("CFM_D_PIPE_ETA", "0").parse().unwrap();
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
@@ -2421,6 +2445,9 @@ fn report_deuteron() {
         println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
         if t.hole_pass[0] > 0 {
             println!("alone {cl:<7}: pipe: photons turned onto the axis per unit time: {:.0}", t.hole_pass[0] as f64 / (cal as f64 * dt));
+        }
+        if t.chan.iter().any(|&v| v != 0) {
+            println!("alone {cl:<7}: channel: {}", chan_line(&t.chan, 1, &[cl.to_string()], cal as f64 * dt));
         }
         let st = src_tab(&t, 0, cal as f64 * dt);
         if !src_dir.is_empty() {
@@ -2756,6 +2783,9 @@ fn report_deuteron() {
         if src_tot.hole_pass.iter().take(n).any(|&v| v > 0) {
             let pp: Vec<String> = (0..n).map(|b| format!("{}{b} {:.0}", &classes[b][..1], src_tot.hole_pass[b] as f64 / time)).collect();
             println!("pipe: photons turned onto the axis per unit time: {}", pp.join(", "));
+        }
+        if src_tot.chan.iter().any(|&v| v != 0) {
+            println!("channel: {}", chan_line(&src_tot.chan, n, &classes, time));
         }
         // Doc §15.48: what happens to the neutrons' polar beams.
         if src_tot.beam.len() >= 27 {

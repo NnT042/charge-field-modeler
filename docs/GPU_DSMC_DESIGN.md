@@ -4935,6 +4935,127 @@ Candidate next screens (user decides):
   photons swap or stack spin and keep their linear momentum, in place of
   the lane. This is the mechanism version of the lane knob.
 
+### 15.53 Lane distance sweep and a channel spin-exchange rule (2026-11-19)
+
+The user picked the three candidates in order: lane sweep plus a second
+seed, then the spin-exchange rule ("a vital piece we might have been
+missing"), then a radius-held helix.
+
+**1. Lane sweep (p and n both piped 90° + lane, λ 0.3).** Runs:
+reference/tc53. ESTELLE ran q53.sh (2.2 calibrates; 2.5 and 2.75 reuse its
+FSELF). ISABELLE ran q53_pn_* (each one calibrates itself). Force is
+toward the other body, so positive means attraction.
+
+| d | proton | neutron |
+|---|---|---|
+| 2.05, seed 49344 (§15.52) | +55 | +43 |
+| 2.05, seed 7177 | +61 | +36 |
+| 2.2 | −2 | +7 |
+| 2.35 | −159 | −42 |
+| 2.5 | −282 | −26 |
+| 2.75 | −420 | −25 |
+| 3 | −410 | −15 |
+
+- **The second seed reproduces the attraction at contact.** The two seeds
+  are within 7.
+- **The well is very narrow.** The sign changes near 2.2, which is 0.15
+  radii from contact. Beyond that the push on the proton grows until 2.75
+  and then levels off at about −415.
+- **Overall the pair is still repelled.** The well is about 60 deep; the
+  repulsion outside it is about 415. A free pair released at 3 would
+  separate. It would only stay together if it were already in contact.
+- Almost all of the repulsion acts on the proton. The neutron is only
+  weakly repelled (−15 to −42), and is even pulled slightly at 2.2.
+
+**2. Channel spin-exchange rule (mechanism candidate for the lane).**
+
+What Mathis says (search_mathis):
+- halbach.pdf: a photon and an antiphoton meeting head-on spin each other
+  up and attract, and he calls this "what happens along the nuclear pole".
+- Same-spin photons meeting head-on spin each other down and repel; their
+  spin energy becomes linear energy.
+- Total energy is conserved, but spin energy alone is not.
+- Photons travelling side by side do almost nothing.
+- A reversed photon is an antiphoton, so in lab terms "opposite spins
+  head-on" means parallel lab axial spins (b.w_a·b.w_b < 0 for a head-on
+  pair).
+
+Code (test knobs, all off by default; `RoughParams::pipe_spin`,
+`pipe_spin_eta`):
+- `CFM_D_PIPE_SPIN=1` with `CFM_D_PIPE_ETA=η` turns it on. It sets
+  maze_mode bit 14, with η·255 in bits 16..23. It is ignored when the
+  lane is on.
+- Any pair that holds a FLAG_PIPED photon goes to `chan_collide` in
+  dsmc_collide.wgsl instead of the normal rough-sphere collision. Channel
+  events do not count as collisions.
+- **Co-moving pairs** (dot(dir_a, dir_b) ≥ 0): nothing happens.
+- **Head-on with parallel lab spins** ("pass", spin-up): the pair keeps
+  passing. η of the relative linear energy ¼|u|² goes into the two outer
+  spins, half each, along their current spin axes. u shrinks by √(1−η).
+- **Head-on with antiparallel lab spins** ("bounce", spin-down): the pair
+  bounces, so u becomes −u. η of the outer spin energy goes into |u|².
+- In both cases the centre-of-mass velocity is untouched, so momentum is
+  exact, and total energy is exact.
+- The new tally TALLY_CHAN (3080, 4 per body) counts pass, bounce and
+  co-moving events, plus the energy moved to spin. It prints as
+  "channel:" lines.
+
+Results (both bodies piped 90°, λ 0.3; proton / neutron push toward each
+other):
+
+| rule | d 2.05 | d 3 |
+|---|---|---|
+| pipe 90°, no lane (§15.52) | −1707 (p only) | −794 (p only) |
+| lane (above) | +55 / +43 | −410 / −15 |
+| spin rule η 0 | −400 / +23 | −555 / −25 |
+| spin rule η 0.3 | −601 / +15 | −612 / +2 |
+
+Channel events per unit time on the proton at d 2.05:
+
+| η | pass | bounce | co-moving | energy to spin |
+|---|---|---|---|---|
+| 0 | 10687 | 7117 | 11479 | 0 |
+| 0.3 | 14903 | 11594 | 28034 | +1235 |
+
+The neutron has about 900 pass, 700 bounce and 750 co-moving events.
+
+- **The spin rule recovers about 75% of the lane's effect at contact**
+  (−1707 to −400), but it does not turn the push into a pull. The proton
+  is still repelled. The neutron is pulled slightly, +23 at contact and
+  +15 at η 0.3.
+- **Bounces are the difference from the lane.** About 40% of head-on
+  events are bounces. A bounce sends the piped photon from the neutron's
+  beam back out of the hole toward the neutron, and the proton's outgoing
+  photon back into the proton. That reflects the beam's momentum off the
+  proton face instead of passing it through. At η 0 a pass is exactly the
+  lane, so all of the lost attraction comes from the bounces.
+- **η 0.3 makes it worse at both distances.** Pass events outnumber
+  bounces, so net linear energy turns into spin (+1235 per unit time).
+  Photons slow down in the hole, more of them stay in it longer (co-moving
+  events go up from 11k to 28k), and proton captures rise from about 7500
+  to 8100. Slower piped photons are captured instead of passed.
+- **Open reading of "attract".** Energy conservation forces a spin-up to
+  take linear energy, so it slows the closing pair. That is the opposite
+  of attraction in the sense of speeding up. "Attract" might instead mean
+  "the pair stays together and passes on", which is what η 0 does. That is
+  a mechanics decision for the user.
+- The spin direction of the incoming stream decides the pass/bounce
+  split. The neutron's beam meets the proton's own polar outflow, and with
+  this pole pairing about 60% of head-on events are spin-up. A pairing
+  with more spin-up events would come closer to the lane result.
+
+**3. Next: the helix radius from a real photon trace (user, 2026-11-19).**
+- The user's helix is not an ideal helix. It is the linear trace of a
+  photon with at least 4 stacked spin levels, which approximates one.
+  Its radius is set by the spin levels.
+- Plan: find the spin levels whose trace radius is just below the pole
+  channel (hole radius 0.222 in proton radii). Use that photon flavour
+  for piped photons. Its stored spin energies (levels and speeds) would
+  then set the exchange amounts in the channel rule, instead of the η
+  knob.
+- The guidance needs a radius-held step (rigid circular step or radial
+  re-projection), so it does not leak out as in §15.52.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

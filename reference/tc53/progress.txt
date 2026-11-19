@@ -1,0 +1,6 @@
+START Thu Nov 19 13:01:53 CST 2026
+pn_2.2_lane90pn done Thu Nov 19 13:49:13 CST 2026
+FSELF proton:-95.4,-10.5,6.5,-1.2,-0.6,-3.0;neutron:1.3,0.4,-3.7,-2.0,3.0,-0.1
+pn_2.5_lane90pn done Thu Nov 19 13:59:14 CST 2026
+pn_2.75_lane90pn done Thu Nov 19 14:09:15 CST 2026
+ALL DONE Thu Nov 19 14:09:15 CST 2026

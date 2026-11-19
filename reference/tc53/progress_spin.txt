@@ -1,0 +1,5 @@
+START Thu Nov 19 14:09:44 CST 2026
+pn_3_spin0 done Thu Nov 19 14:32:49 CST 2026
+FSELF proton:-99.9,-3.5,11.3,-0.5,5.0,-8.8;neutron:6.1,-0.9,-8.1,-1.5,-4.7,-3.0
+pn_2.05_spin0 done Thu Nov 19 14:43:39 CST 2026
+ALL DONE Thu Nov 19 14:43:39 CST 2026

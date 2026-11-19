@@ -154,6 +154,9 @@ pub struct Totals {
     /// deg of its axis: [pole (0 N, 1 S)][s bin (<0.5, <1)][partner pair],
     /// len gpu_types::TALLY_FAR_LEN.
     pub far: Vec<i64>,
+    /// Doc §15.53: channel spin rule events per body, len
+    /// gpu_types::TALLY_CHAN_LEN ([pass, bounce, co-moving, energy*SCALE] x 4).
+    pub chan: Vec<i64>,
     /// Doc §15.13: cell-steps run in parallel collision rounds.
     pub par_cells: i64,
 }
@@ -301,6 +304,7 @@ impl Totals {
         add_vec(&mut self.xcoll, &other.xcoll);
         add_vec(&mut self.beam, &other.beam);
         add_vec(&mut self.far, &other.far);
+        add_vec(&mut self.chan, &other.chan);
         self.par_cells += other.par_cells;
     }
 
@@ -507,6 +511,7 @@ impl Totals {
             add_vec(&mut self.xcoll, &grab(TALLY_XCOLL, 25));
             add_vec(&mut self.beam, &grab(super::gpu_types::TALLY_BEAM, super::gpu_types::TALLY_BEAM_LEN));
             add_vec(&mut self.far, &grab(super::gpu_types::TALLY_FAR, super::gpu_types::TALLY_FAR_LEN));
+            add_vec(&mut self.chan, &grab(super::gpu_types::TALLY_CHAN, super::gpu_types::TALLY_CHAN_LEN));
         }
         self.par_cells += raw[super::gpu_types::TALLY_PAR_CELLS] as i64;
     }
@@ -928,7 +933,9 @@ impl DsmcEngine {
                 super::config::MazeSpeed::Relative => 0,
             } | if c.rough.polar_release_normal { 2048 } else { 0 }
                 | if c.rough.polar_release_through { 4096 } else { 0 }
-                | if c.rough.local_pairing { 8192 } else { 0 },
+                | if c.rough.local_pairing { 8192 } else { 0 }
+                // Doc §15.53: bit 14 = channel spin rule, bits 16..23 = eta*255.
+                | if c.rough.pipe_spin && !c.rough.pipe_lane { 16384 | (((c.rough.pipe_spin_eta.clamp(0.0, 1.0) * 255.0).round() as u32) << 16) } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);

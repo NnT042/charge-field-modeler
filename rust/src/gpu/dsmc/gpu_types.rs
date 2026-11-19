@@ -530,7 +530,13 @@ pub const TALLY_BEAM_LEN: usize = 67;
 pub const TALLY_FAR: usize = 3056;
 pub const TALLY_FAR_LEN: usize = 24;
 
-pub const TALLY_LEN: usize = 3080;
+/// Doc §15.53 channel spin rule events, per body (4) x [passes (spin-up),
+/// bounces (spin-down), co-moving skips, energy moved (spin-up positive,
+/// spin-down negative; TALLY_SCALE)].
+pub const TALLY_CHAN: usize = 3080;
+pub const TALLY_CHAN_LEN: usize = 16;
+
+pub const TALLY_LEN: usize = 3096;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],
