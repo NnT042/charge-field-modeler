@@ -1,0 +1,5 @@
+START Thu Nov 19 19:21:00 CST 2026
+pn_2.05_edge1q done Thu Nov 19 19:44:27 CST 2026
+FSELF proton:-98.3,-12.9,11.4,-3.4,-3.1,-0.3;neutron:-2.4,7.9,6.1,-2.9,-5.6,-3.3
+pn_3_edge1q done Thu Nov 19 19:55:22 CST 2026
+ALL DONE Thu Nov 19 19:55:22 CST 2026

@@ -5164,6 +5164,72 @@ On the proton with the quantum rule at d 2.05, there are 14.0k passes,
   pairing. Antiparallel pole pairings, or a neutron beam with mixed
   helicity, would change the split.
 
+### 15.55 Edge-on passing in the hole: no bounce (2026-11-19)
+
+**User framing (2026-11-19).** The helix was a thought experiment about
+two opposed flows swirling down one drain from both ends and passing each
+other. If both flows are funnelled into the same pipe, they should often
+meet side by side, in the edge-on spin-transfer position, not head-on.
+Wave-tracing them down the channel, and rechecking whether an electron can
+be held on without falling in, wait for the high-resolution rented runs.
+
+**Rule (test knob `CFM_D_PIPE_EDGE`, with `CFM_D_PIPE_SPIN=1`; maze_mode
+bits 24..25).**
+- An edge-on contact does not reverse axial motion, so in `chan_collide` a
+  head-on pair of opposed flows always passes. Only spin is exchanged.
+- `EDGE=1`: the §15.53 split is kept (parallel lab spins spin up). A
+  spin-down no longer bounces; its freed spin energy goes to linear speed
+  along each photon's own direction. Momentum and energy stay exact.
+- `EDGE=2`: the same, with the split reversed. This is the gear reading:
+  for two bodies side by side spinning about the travel axis, parallel
+  spins move their surfaces opposite ways at the contact and grind (spin
+  down), while antiparallel spins mesh (spin up). halbach.pdf's head-on
+  wording and the gear picture disagree, so both are run.
+- With η 0 and no quantum, `EDGE=1` changes no velocities, so it is the
+  §15.52 lane by construction and is not run again.
+
+**Results (calibrated, λ 0.3, h 0.25, both bodies piped 90°; proton /
+neutron push toward each other; proton captures per unit time at
+d 2.05):**
+
+| rule | d 2.05 | d 3 | captures |
+|---|---|---|---|
+| lane (= edge, η 0) (§15.53) | +61 / +36 | −410 / −15 | ~7400 |
+| bounce, η 0 (§15.53) | −400 / +23 | −555 / −25 | ~7500 |
+| bounce, η 0.3 (§15.53) | −601 / +15 | −612 / +2 | ~8100 |
+| bounce, quantum (§15.54) | −768 / +15 | −650 / −6 | 8433 |
+| **edge, η 0.3** | **−237 / +19** | | 7869 |
+| edge, quantum, gear split | −374 / +29 | −496 / −31 | 8004 |
+| edge, quantum | −477 / +24 | −564 / −15 | 8218 |
+
+Channel events on the proton at d 2.05 (spin-up, spin-down, co-moving):
+edge η 0.3 15.6k / 12.4k / 30.9k; edge quantum 13.0k / 10.2k / 30.4k;
+gear split 8.3k / 12.7k / 24.9k.
+
+- **Removing the bounce helps at every setting.** With the same energy
+  rule, edge-on passing cuts the contact push from −601 to −237 (η 0.3)
+  and from −768 to −477 (quantum). At η 0.3 it recovers about 85% of the
+  no-lane push (−1707) while still spending linear speed on spin, as the
+  user's c-is-average decision asks.
+- **The push tracks proton captures.** Across all seven rules the contact
+  push gets worse as the proton captures more of the beam (lane ~7400,
+  edge η 0.3 7869, gear 8004, quantum 8218, bounce quantum 8433). Anything
+  that slows or turns back piped photons in the hole lets the proton
+  absorb them.
+- **The quantum exchange costs more than η 0.3,** even though it moves
+  less energy into spin (+759 against +1093). Each quantum event is a
+  large step for a slow photon, so a few photons stall and are captured.
+  The proportional rule slows all of them a little.
+- **The gear split beats the head-on split** (−374 against −477). It turns
+  more events into spin-downs (12.7k against 10.2k), and in edge mode a
+  spin-down speeds the photons up.
+- At d 3 every channel rule stays near −500 to −600, against −410 for the
+  lane. The well still lives only near contact.
+- None of the rules beats the lane. Any spin exchange that takes linear
+  energy costs some attraction at h 0.25. Whether the spin it builds pays
+  back (for example by changing what the proton emits) cannot show up
+  until the trace is resolved (high-resolution runs).
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

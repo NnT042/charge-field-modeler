@@ -618,7 +618,11 @@ fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
     var wb = wb0;
     let ea = 0.5 * ia * dot(wa0, wa0);
     let eb = 0.5 * ib * dot(wb0, wb0);
-    let up = (*pa).b.w * (*pb).b.w < 0.0;
+    // Doc §15.55 edge mode (bits 24..25): 1 = no bounce, a spin-down pair
+    // passes and its spin energy goes to linear along its own directions;
+    // 2 = also reverse which pairing spins up (gear reading).
+    let edge = (params.maze_mode >> 24u) & 3u;
+    let up = ((*pa).b.w * (*pb).b.w < 0.0) != (edge == 2u);
     // Doc §15.54 quantum mode (bit 15; photon5.pdf "one particle loses a
     // spin and one gains", limat.pdf): a spin-up gives each photon one
     // saturated level, (1/2) kappa edge0^2, paid from the relative linear
@@ -652,7 +656,7 @@ fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
         wa = wa0 * sqrt(keepa);
         wb = wb0 * sqrt(keepb);
         let ul = length(u);
-        u = -u * sqrt(max(ul * ul - 4.0 * de, 0.0)) / max(ul, 1e-12);
+        u = select(-u, u, edge != 0u) * sqrt(max(ul * ul - 4.0 * de, 0.0)) / max(ul, 1e-12);
         atomicAdd(&tallies[slot + 1u], 1);
     }
     atomicAdd(&tallies[slot + 3u], i32(de * TALLY_SCALE));

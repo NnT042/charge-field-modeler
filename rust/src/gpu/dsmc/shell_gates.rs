@@ -2338,7 +2338,7 @@ fn report_deuteron() {
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {} quantum {}, held helix level {} (radius {:.4})", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"), env("CFM_D_PIPE_QUANTUM", "0"), env("CFM_D_PIPE_HELIX", "0"), helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap()));
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {} quantum {} edge {}, held helix level {} (radius {:.4})", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"), env("CFM_D_PIPE_QUANTUM", "0"), env("CFM_D_PIPE_EDGE", "0"), env("CFM_D_PIPE_HELIX", "0"), helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap()));
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2371,6 +2371,9 @@ fn report_deuteron() {
         // Doc §15.54: CFM_D_PIPE_QUANTUM=1 one-level exchange; CFM_D_PIPE_HELIX=L
         // holds the swirl at the outer orbit radius of a levels-1..L photon.
         config.rough.pipe_quantum = env("CFM_D_PIPE_QUANTUM", "0") == "1";
+        // Doc §15.55: CFM_D_PIPE_EDGE=1 edge-on passing (no bounce), =2 the
+        // same with the gear reading of which spin pairing spins up.
+        config.rough.pipe_edge = env("CFM_D_PIPE_EDGE", "0").parse().unwrap();
         config.rough.pipe_helix_r = helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap());
         config.h = h;
         config.photon_fraction = phi;
