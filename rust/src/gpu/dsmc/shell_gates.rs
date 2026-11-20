@@ -2259,6 +2259,97 @@ fn src_print(b: usize, classes: &[&str], s: &SrcTab, alone: Option<&SrcTab>, q: 
     );
 }
 
+/// Doc §15.56: meridional bubble map taken inside report_deuteron (same
+/// bins and JSON keys as report_flowmap, plus tags for up to 4 bodies).
+/// Bodies must sit on the z axis (the map averages round it).
+struct BubbleMap {
+    dr: f64,
+    r_max: f64,
+    nr: usize,
+    nz: usize,
+    snaps: u32,
+    cnt: Vec<f64>,
+    vr: Vec<f64>,
+    vz: Vec<f64>,
+    vp: Vec<f64>,
+    tags: Vec<[f64; 5]>,
+    plus: Vec<f64>,
+}
+
+impl BubbleMap {
+    fn new(r_d: f64) -> Self {
+        let dr = 0.1;
+        let r_max = (r_d - 1.0).min(5.0);
+        let nr = (r_max / dr).round() as usize;
+        let nz = (2.0 * r_max / dr).round() as usize;
+        let c = nr * nz;
+        BubbleMap { dr, r_max, nr, nz, snaps: 0, cnt: vec![0.0; c], vr: vec![0.0; c], vz: vec![0.0; c], vp: vec![0.0; c], tags: vec![[0.0; 5]; c], plus: vec![0.0; c] }
+    }
+
+    fn add(&mut self, photons: &[GpuPhoton]) {
+        self.snaps += 1;
+        for p in photons {
+            if p.c[0] & FLAG_ALIVE == 0 || p.c[0] & (1u32 << 20) != 0 {
+                continue;
+            }
+            let (x, y, z) = (p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
+            let r = (x * x + y * y).sqrt();
+            if r >= self.r_max || z.abs() >= self.r_max {
+                continue;
+            }
+            let sp = p.d[3] as f64;
+            let (vx, vy, vz) = (p.b[0] as f64 * sp, p.b[1] as f64 * sp, p.b[2] as f64 * sp);
+            let (vr, vp) = if r > 1e-9 { ((x * vx + y * vy) / r, (x * vy - y * vx) / r) } else { (0.0, 0.0) };
+            let i = ((r / self.dr) as usize).min(self.nr - 1) * self.nz + (((z + self.r_max) / self.dr) as usize).min(self.nz - 1);
+            self.cnt[i] += 1.0;
+            self.vr[i] += vr;
+            self.vz[i] += vz;
+            self.vp[i] += vp;
+            self.tags[i][(((p.c[0] >> 17) & 7) as usize).min(4)] += 1.0;
+            if p.c[0] & FLAG_SPECIES_PLUS != 0 {
+                self.plus[i] += 1.0;
+            }
+        }
+    }
+
+    fn write(&self, out: &str, head: &str, n_a: f64, bodies: &[(String, DVec3, DVec3)]) {
+        let cells = self.nr * self.nz;
+        let (dr, nz, snaps) = (self.dr, self.nz, self.snaps.max(1) as f64);
+        let vol = |ir: usize| 2.0 * std::f64::consts::PI * (ir as f64 + 0.5) * dr * dr * dr;
+        let col = |f: &dyn Fn(usize) -> f64| -> String { (0..cells).map(|i| format!("{:.4}", f(i))).collect::<Vec<_>>().join(",") };
+        let mut js = format!("{{{head},\"slice\":0,\"snaps\":{},\"dr\":{dr},\"r_max\":{},\"nr\":{},\"nz\":{nz},", self.snaps, self.r_max, self.nr);
+        js += &format!(
+            "\"bodies\":[{}],",
+            bodies.iter().map(|(c, x, a)| format!("{{\"class\":\"{c}\",\"x\":{},\"z\":{},\"axis_x\":{},\"axis_y\":{},\"axis_z\":{}}}", x.x, x.z, a.x, a.y, a.z)).collect::<Vec<_>>().join(",")
+        );
+        js += &format!("\"dens\":[{}],", col(&|i| self.cnt[i] / (snaps * vol(i / nz) * n_a)));
+        js += &format!("\"count\":[{}],", col(&|i| self.cnt[i]));
+        js += &format!("\"vr\":[{}],", col(&|i| self.vr[i] / self.cnt[i].max(1.0)));
+        js += &format!("\"vz\":[{}],", col(&|i| self.vz[i] / self.cnt[i].max(1.0)));
+        js += &format!("\"vphi\":[{}],", col(&|i| self.vp[i] / self.cnt[i].max(1.0)));
+        js += &format!("\"tag_amb\":[{}],", col(&|i| self.tags[i][0] / self.cnt[i].max(1.0)));
+        for b in 0..4 {
+            js += &format!("\"tag_b{b}\":[{}],", col(&|i| self.tags[i][b + 1] / self.cnt[i].max(1.0)));
+        }
+        js += &format!("\"plus\":[{}]}}", col(&|i| self.plus[i] / self.cnt[i].max(1.0)));
+        std::fs::write(out, js).unwrap();
+        println!("bubble map: wrote {out} ({} snapshots, {} x {nz} cells, index = iR * nz + iz)", self.snaps, self.nr);
+        // Text digest on the axis and the equator (density / ambient, vR, vz).
+        let probe = |rr: f64, zz: f64| -> String {
+            let ir = ((rr / dr) as usize).min(self.nr - 1);
+            let i = ir * nz + (((zz + self.r_max) / dr) as usize).min(nz - 1);
+            let c = self.cnt[i].max(1.0);
+            format!("({rr:.1},{zz:+.1}) dens {:.3} vR {:+.3} vz {:+.3} amb {:.2}", self.cnt[i] / (snaps * vol(ir) * n_a), self.vr[i] / c, self.vz[i] / c, self.tags[i][0] / c)
+        };
+        for zz in [-4.0, -3.0, -2.5, -2.0, -1.5, 0.0, 1.5, 2.0, 2.5, 3.0, 4.0] {
+            println!("bubble map axis {}", probe(0.05, zz));
+        }
+        for rr in [1.5, 2.0, 2.5, 3.0, 4.0] {
+            println!("bubble map side {} | {}", probe(rr, 0.0), probe(rr, 1.0));
+        }
+    }
+}
+
 /// Report (doc §15.17): a free deuteron. A proton and a neutron start pole
 /// to pole and move under the photon traffic alone. Self-force rule (user
 /// decision (b), 2026-10-01): each body's own isolated self-force, measured
@@ -2585,9 +2676,19 @@ fn report_deuteron() {
     let pairs_ij: Vec<(usize, usize)> = (0..n).flat_map(|i| (i + 1..n).map(move |k| (i, k))).collect();
     let n_g = if free3d { pairs_ij.len() } else { n - 1 };
     let mut gap_hist: Vec<Vec<f64>> = vec![Vec::new(); n_g];
+    // CFM_D_MAP=path (doc §15.56): bubble map JSON, a photon snapshot every
+    // CFM_D_MAP_EVERY steps (20) of the main loop.
+    let map_out = env("CFM_D_MAP", "");
+    let map_every: u32 = env("CFM_D_MAP_EVERY", "20").parse().unwrap();
+    let mut bmap = if map_out.is_empty() { None } else { Some(BubbleMap::new(r_d)) };
     for s in 1..=steps {
         let t = engine.step_flux(&ctx);
         steps_done = s;
+        if let Some(m) = bmap.as_mut() {
+            if s % map_every == 0 {
+                m.add(&engine.read_photons(&ctx));
+            }
+        }
         if freeze {
             src_tot.add(&t);
         }
@@ -2762,6 +2863,11 @@ fn report_deuteron() {
         println!("distance {i}-{j} ({}-{}): range {mn:.3} .. {mx:.3}; last quarter mean {:.3}", classes[i], classes[j], tail.iter().sum::<f64>() / tail.len().max(1) as f64);
     }
     println!("drift of the stack centre {:+.3}", (x.iter().sum::<DVec3>() / n as f64).dot(e));
+    if let Some(m) = &bmap {
+        let head = format!("\"layout\":\"{pair}\",\"sep\":{sep0},\"lambda\":{lambda},\"n_a\":{n_a},\"phi\":{phi},\"r_d\":{r_d},\"hole\":{d_hole},\"pipe\":\"{}\",\"lane\":{}", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_LANE", "0"));
+        let bl: Vec<(String, DVec3, DVec3)> = (0..n).map(|b| (classes[b].to_string(), x[b], q[b] * DVec3::Z)).collect();
+        m.write(&map_out, &head, n_a, &bl);
+    }
     // Doc §15.21 screen summary: mean interaction force per body over the
     // run, its component toward the cluster centre (+ = compressive), and
     // toward each touching neighbour; mean tilting torque.

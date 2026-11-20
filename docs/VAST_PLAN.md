@@ -84,6 +84,35 @@ fused nucleons are bound by one shared through-stream along the main axis).
    Vulkan on the rented box with `vulkaninfo` (NVIDIA_DRIVER_CAPABILITIES must include graphics).
 4. Optional: the nested near-body grid (B), which is the bigger win.
 
+## Status 2026-11-19 (night): the photon cap comes first
+
+- **The engine holds at most ~19M photons per run on any card.** The photon buffer is one
+  storage binding, and our cards report a 2 GiB binding limit (`report_deuteron` clamps the
+  capacity to 19M for that reason). A rented 24-80 GB card does not raise this by itself.
+  Check `max_storage_buffer_binding_size` on the rented box (the gpu tests print it); some
+  NVIDIA drivers report 4 GiB, which would give ~2x.
+- So experiment B (high resolution) needs engine work first: split the photon buffer across
+  several bindings (raises the cap with memory), or the nested near-body grid (lowers the
+  photons needed). Both are useful on our own cards too.
+- What a rented card can do with no engine work: C (many seeds or settings side by side; a
+  24 GB card fits several of our ~7M-photon jobs at once), and runs up to 19M photons faster.
+- The overnight local queue (reference/tc56) includes a hi-res pilot at the cap: n_a 16000
+  (~14.5M photons) and h 0.125, same mean free path. If the lane / edge results move a lot
+  between h 0.25 and h 0.125, the buffer split is worth doing before renting.
+
+## Morning checklist (user does the account and payment steps)
+1. Vast.ai account, add a small credit (user only; Claude does not enter payment details).
+2. Add an SSH public key to the account (ESTELLE's `~/.ssh/id_ed25519.pub`, or a new key).
+3. Pick an offer: RTX 4090 or 5090, reliability ≥ 0.98, an Ubuntu 22.04/24.04 CUDA template.
+   Set `NVIDIA_DRIVER_CAPABILITIES=all` in the template env (otherwise there is no Vulkan
+   inside the container).
+4. On the box: `apt install libvulkan1 vulkan-tools`, `vulkaninfo --summary` (must list the
+   NVIDIA GPU, not llvmpipe), install rustup, clone the repo, build with
+   `cargo build --manifest-path rust/Cargo.toml --profile fast --features gpu --tests`.
+5. Run the gates once (`gpu::dsmc`, 23 pass), note the binding limit, then a queue script
+   modelled on reference/tc56/q56e.sh; scp results back.
+6. Destroy the instance when done (storage bills while stopped).
+
 ## Setup steps (to walk through with the user later)
 Pick a 4090/5090 offer with a CUDA/Ubuntu template → add an SSH key → confirm Vulkan
 (`vulkaninfo --summary`) → build the Linux exe (or build on the box) → copy a queue script like
