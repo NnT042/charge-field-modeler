@@ -619,12 +619,24 @@ fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
     let ea = 0.5 * ia * dot(wa0, wa0);
     let eb = 0.5 * ib * dot(wb0, wb0);
     let up = (*pa).b.w * (*pb).b.w < 0.0;
+    // Doc §15.54 quantum mode (bit 15; photon5.pdf "one particle loses a
+    // spin and one gains", limat.pdf): a spin-up gives each photon one
+    // saturated level, (1/2) kappa edge0^2, paid from the relative linear
+    // energy if it can be afforded (else a plain pass); a spin-down strips
+    // each photon's whole outer level into linear energy.
+    let quantum = ((params.maze_mode >> 15u) & 1u) != 0u;
+    let quant = 0.5 * kappa * params.spin_edge0 * params.spin_edge0;
     var de = 0.0;
     if (up) {
         // Pass through; relative linear energy (1/4)|u|^2 (unit masses)
         // gives eta of itself to the two spins, half each.
-        de = eta * 0.25 * dot(u, u);
-        u = u * sqrt(1.0 - eta);
+        let erel = 0.25 * dot(u, u);
+        if (quantum) {
+            de = select(0.0, 2.0 * quant, erel >= 2.0 * quant);
+        } else {
+            de = eta * erel;
+        }
+        u = u * sqrt(max(1.0 - de / max(erel, 1e-12), 0.0));
         var axa = select(sign((*pa).b.w) * da, wa0 / max(length(wa0), 1e-12), length(wa0) > 1e-9);
         var axb = select(sign((*pb).b.w) * db, wb0 / max(length(wb0), 1e-12), length(wb0) > 1e-9);
         wa = axa * sqrt(2.0 * (ea + 0.5 * de) / ia);
@@ -632,9 +644,13 @@ fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
         atomicAdd(&tallies[slot], 1);
     } else {
         // Bounce (velocity swap), and eta of the outer spin energy to linear.
-        de = -eta * (ea + eb);
-        wa = wa0 * sqrt(1.0 - eta);
-        wb = wb0 * sqrt(1.0 - eta);
+        // Quantum: only a stacked level (c[3] > 0) can be lost; a base
+        // photon keeps its own axial spin.
+        let keepa = select(1.0 - eta, select(1.0, 0.0, (*pa).c[3] > 0u), quantum);
+        let keepb = select(1.0 - eta, select(1.0, 0.0, (*pb).c[3] > 0u), quantum);
+        de = -(1.0 - keepa) * ea - (1.0 - keepb) * eb;
+        wa = wa0 * sqrt(keepa);
+        wb = wb0 * sqrt(keepb);
         let ul = length(u);
         u = -u * sqrt(max(ul * ul - 4.0 * de, 0.0)) / max(ul, 1e-12);
         atomicAdd(&tallies[slot + 1u], 1);

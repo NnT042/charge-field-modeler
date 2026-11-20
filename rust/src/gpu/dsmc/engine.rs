@@ -935,7 +935,7 @@ impl DsmcEngine {
                 | if c.rough.polar_release_through { 4096 } else { 0 }
                 | if c.rough.local_pairing { 8192 } else { 0 }
                 // Doc §15.53: bit 14 = channel spin rule, bits 16..23 = eta*255.
-                | if c.rough.pipe_spin && !c.rough.pipe_lane { 16384 | (((c.rough.pipe_spin_eta.clamp(0.0, 1.0) * 255.0).round() as u32) << 16) } else { 0 },
+                | if c.rough.pipe_spin && !c.rough.pipe_lane { 16384 | (if c.rough.pipe_quantum { 32768 } else { 0 }) | (((c.rough.pipe_spin_eta.clamp(0.0, 1.0) * 255.0).round() as u32) << 16) } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);
@@ -1060,6 +1060,7 @@ impl DsmcEngine {
             let fan = if body.signs[3] * body.speeds[3] < 0.0 { -1.0 } else { 1.0 };
             let on = if !pipe { 0.0 } else if r.pipe_lane { 2.0 } else { 1.0 };
             data[b * BALLKEY_STRIDE + 49] = [on, r.pipe_cos as f32, r.pipe_mouth as f32, (fan * r.pipe_swirl) as f32];
+            data[b * BALLKEY_STRIDE + 50] = [if pipe { r.pipe_helix_r as f32 } else { 0.0 }, 0.0, 0.0, 0.0];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

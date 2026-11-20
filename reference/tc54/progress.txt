@@ -1,0 +1,5 @@
+START Thu Nov 19 17:10:01 CST 2026
+pn_2.05_quantum done Thu Nov 19 17:33:25 CST 2026
+FSELF proton:-74.1,16.1,10.3,-0.9,-1.4,-5.6;neutron:15.1,-0.0,7.5,5.0,-4.7,-3.0
+pn_3_quantum done Thu Nov 19 17:41:20 CST 2026
+ALL DONE Thu Nov 19 17:41:20 CST 2026

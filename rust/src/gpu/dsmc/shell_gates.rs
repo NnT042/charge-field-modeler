@@ -2102,6 +2102,18 @@ struct SrcTab {
 /// Doc §15.52: collisions per unit time within 1 outside body 0's envelope
 /// and within 45 deg of its axis, by pole and partner pair (a ambient, o body
 /// 0's own photon, x another body's).
+/// Doc §15.54: helix radius (proton radii) for a photon with levels 1..top:
+/// the orbit radius (amplitude / 2) of its outermost orbital level, over the
+/// level-12 amplitude (the proton scale of the 0.222 trace hole). 0 = off.
+fn helix_radius_of(top: u8) -> f64 {
+    use crate::spin_stack::SpinLevel;
+    if top == 0 {
+        return 0.0;
+    }
+    let outer = (1..=top).rev().map(SpinLevel::new).find(|l| l.is_orbital());
+    outer.map_or(0.0, |l| l.orbit_radius() / crate::types::level_amplitude(12))
+}
+
 /// Doc §15.53: channel spin rule events per body per unit time.
 fn chan_line<S: AsRef<str>>(chan: &[i64], n: usize, classes: &[S], time: f64) -> String {
     let mut parts = Vec::new();
@@ -2326,7 +2338,7 @@ fn report_deuteron() {
     // CFM_D_SPEED: surface (default, doc §15.29) | rest (§15.27, recaptured by the
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
-    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {}", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"));
+    println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {} quantum {}, held helix level {} (radius {:.4})", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"), env("CFM_D_PIPE_QUANTUM", "0"), env("CFM_D_PIPE_HELIX", "0"), helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap()));
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
@@ -2356,6 +2368,10 @@ fn report_deuteron() {
         // Doc §15.53: CFM_D_PIPE_SPIN=1 channel spin rule, CFM_D_PIPE_ETA energy share.
         config.rough.pipe_spin = env("CFM_D_PIPE_SPIN", "0") == "1";
         config.rough.pipe_spin_eta = env("CFM_D_PIPE_ETA", "0").parse().unwrap();
+        // Doc §15.54: CFM_D_PIPE_QUANTUM=1 one-level exchange; CFM_D_PIPE_HELIX=L
+        // holds the swirl at the outer orbit radius of a levels-1..L photon.
+        config.rough.pipe_quantum = env("CFM_D_PIPE_QUANTUM", "0") == "1";
+        config.rough.pipe_helix_r = helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap());
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };

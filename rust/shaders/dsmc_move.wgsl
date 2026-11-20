@@ -224,7 +224,7 @@ fn body_of(x: vec3<f32>) -> u32 {
     return 4u;
 }
 
-const BALLKEY_STRIDE: u32 = 50u;
+const BALLKEY_STRIDE: u32 = 51u;
 fn bk(b: u32, s: u32, j: u32) -> vec4<f32> { return ballkeys[b * BALLKEY_STRIDE + s * 4u + j]; }
 // Doc §15.45 trace copies (gpu_types::BALLKEY_COPY_*): copy 0 is the real
 // ball; copies 1.. are the same body at fixed time offsets along its trace.
@@ -803,7 +803,28 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     // by (azimuthal speed x dt / helix radius); the walls take the change.
     if (params.body_model == 2u && (ph.c[0] & FLAG_PIPED) != 0u && (ph.c[2] & 7u) != 0u) {
         let bg = (ph.c[2] & 7u) - 1u;
-        if (ballkeys[bg * BALLKEY_STRIDE + 49u].w != 0.0) {
+        let hk = ballkeys[bg * BALLKEY_STRIDE + 50u];
+        if (ballkeys[bg * BALLKEY_STRIDE + 49u].w != 0.0 && hk.x > 0.0) {
+            // Doc §15.54 radius-held helix: the photon's own stacked-spin
+            // trace. The velocity turns about the axis by |v_perp| dt / r_h
+            // each step (r_h fixed), so the straight steps are chords of a
+            // circle of radius r_h about a guide line parallel to the axis:
+            // no radial drift. The body takes each turn (the fan reading,
+            // rhrule.pdf), as at the mouth, so momentum stays consistent.
+            let ax = bodies[bg].axis.xyz;
+            let v_old = ph.b.xyz;
+            let vp = length(v_old - dot(v_old, ax) * ax);
+            let phi = sign(ballkeys[bg * BALLKEY_STRIDE + 49u].w) * vp * ph.d.w * params.dt / (hk.x * bodies[bg].center.w);
+            let v_new = normalize(v_old * cos(phi) + cross(ax, v_old) * sin(phi) + ax * dot(ax, v_old) * (1.0 - cos(phi)));
+            let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+            let dpg = -(v_new - v_old) * ph.d.w * m;
+            let tqg = cross(ph.a.xyz - bodies[bg].center.xyz, dpg);
+            for (var a = 0u; a < 3u; a = a + 1u) {
+                atomicAdd(&tallies[TALLY_SH_DP + bg * 3u + a], i32(dpg[a] * TALLY_SCALE));
+                atomicAdd(&tallies[TALLY_SH_TORQUE + bg * 3u + a], i32(tqg[a] * TALLY_SCALE));
+            }
+            ph.b = vec4<f32>(v_new, ph.b.w);
+        } else if (ballkeys[bg * BALLKEY_STRIDE + 49u].w != 0.0) {
             let ax = bodies[bg].axis.xyz;
             let rel = ph.a.xyz - bodies[bg].center.xyz;
             let perp = rel - dot(rel, ax) * ax;

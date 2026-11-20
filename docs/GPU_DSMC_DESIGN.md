@@ -5056,6 +5056,114 @@ The neutron has about 900 pass, 700 bounce and 750 co-moving events.
 - The guidance needs a radius-held step (rigid circular step or radial
   re-projection), so it does not leak out as in §15.52.
 
+### 15.54 Trace-radius helix and quantum spin exchange (2026-11-19)
+
+**User decision (2026-11-19).**
+- c is the observed average speed of detectable photons, not a hard limit
+  (charge3.html: "The speed of light may be an average"). So a head-on
+  spin-up spends a share of linear speed.
+- That share should come from the stacked-spin energies of the piped
+  photon's flavour, not from the free η knob.
+- The user's framing of attraction: nothing is pulled. Apparent attraction
+  is a damping of matter's push, and the outside field pushes in on the
+  sides a neighbour's emission does not cancel. Removing repulsion is
+  progress. Our pair screens (pair minus lone self-force) already include
+  that outside push.
+
+**1. Trace reach of real spin stacks.**
+`spin_stack::report_trace_reach` (ignored test) samples the lab-frame
+trace of a stack and reports its reach in proton radii (the proton is
+level 12, amplitude 512).
+
+| stack | sum of orbit radii | sampled max reach |
+|---|---|---|
+| levels 1-4 | 0.0137 | 0.0112 |
+| levels 1-8 | 0.123 | 0.097 |
+| levels 1-10 | 0.248 | 0.192 |
+| levels 1-11 | 0.498 | 0.43 |
+
+- The hole radius is 0.222. Levels 1-10 fit it best (reach 0.19), but
+  level 10 is a meson / moving-electron stack, and bohr3.pdf says the hole
+  admits photons, not electrons.
+- Levels 1-8 is the largest photon-tier flavour. We use the outer orbit
+  radius of the top orbital level as the helix radius: 0.0625 for level 8,
+  0.125 for level 10.
+
+**2. Radius-held helix (test knob `CFM_D_PIPE_HELIX=L`).**
+- Ballkey row 50 holds the helix radius r_h. For a piped photon in the
+  hole, the move step turns the velocity about the body axis by
+  φ = sign(helicity)·|v_perp|·dt / (r_h·R). That is a circular step at
+  fixed radius, so the photon no longer drifts out of the hole as in
+  §15.52. Clean captures inside the hole fall to 0.001.
+- Every turn is charged to the body (TALLY_SH_DP / TORQUE), the "fan"
+  reading of rhrule.pdf. An uncharged version gave the same axial result.
+- The tilt at the mouth (`CFM_D_PIPE_SWIRL`, 45° here) gives the helix its
+  sideways speed. That speed comes out of axial speed.
+
+**3. Quantum spin exchange (test knob `CFM_D_PIPE_QUANTUM=1`, with
+`CFM_D_PIPE_SPIN=1`).**
+- photon5.pdf: energy transfer is quantized, "one particle loses a spin
+  and one gains". limat.pdf: head-on pairs spin each other up into the next
+  level, or cancel and are stripped.
+- A pass spends one engine quantum per photon (2 × ½κ·edge0², κ 0.4) from
+  the pair's relative linear energy, if there is enough. Otherwise
+  nothing changes.
+- A bounce strips one stacked level from each photon and returns its
+  energy to linear motion. A base photon (k = 0) keeps its own axial spin.
+  The first build also stripped k = 0, which zeroed the helicity, so every
+  later event counted as a bounce. That is fixed.
+- The amounts are the engine's stacking quantum, not Mathis's tier-energy
+  table. The table's level energies are far larger than one photon's
+  linear energy in natural units, so a single collision cannot pay them.
+  This is stated as a limit of the scale model.
+
+**Results (calibrated, FSELF subtracted, λ 0.3, h 0.25, both bodies piped
+90°; proton / neutron push toward each other):**
+
+| rule | d 2.05 | d 3 |
+|---|---|---|
+| lane, straight (§15.53) | +61 / +36 | −410 / −15 |
+| spin rule η 0 (§15.53) | −400 / +23 | −555 / −25 |
+| spin rule, quantum | −768 / +15 | −650 / −6 |
+| lane + helix level 8, 45° | −1089 / −15 | |
+| lane + helix level 10, 45° | −1084 / +6 | |
+| helix level 8 + spin rule η 0 | −1773 / +74 | |
+
+On the proton with the quantum rule at d 2.05, there are 14.0k passes,
+11.4k bounces and 30.3k co-moving events per unit time. Energy to spin is
++937 and captures are 8433, up from about 7500 for η 0.
+
+- **Slowing the axial transit makes the push more repulsive, every time.**
+  Spending speed on spin-up (η 0.3 in §15.53, the quantum rule here) and
+  tilting into a helix both slow the piped photons along the axis. The
+  proton then captures them instead of passing them through, and the
+  captured beam momentum is pushed onto the proton face.
+- **The helix radius does not matter.** Level 8 and level 10 give the same
+  result to within noise (−1089 and −1084). The cost is all in the mouth
+  tilt. The helix is contained, but a 45° tilt cuts axial speed by 29%.
+- **Helix and spin rule together are the worst case** (−1773). The
+  helix keeps photons in the hole longer, which more than doubles channel
+  events (28k passes, 26k bounces), and bounces reflect the beam.
+- **At h 0.25, an internal-trace helix is the same as the straight pipe.**
+  Read as the photon's own trace (no change in its center-of-mass path),
+  the level-8 helix radius (0.0625 R) is a quarter of a cell. DSMC
+  pairs and moves photons by center of mass, so the model cannot tell
+  that helix from the straight lane.
+
+**Next options.**
+- **High resolution.** Cells smaller than the hole (h ≤ 0.05) would let an
+  internal-trace helix change who collides with whom. That needs the
+  rented-GPU plan (VAST_PLAN): the cell count grows as 1/h³, and the
+  photons per cell must stay high enough for pairing.
+- **Untilted helix.** Keep the full speed c on the axis and carry the
+  helix only as the trace (spin), not as a center-of-mass tilt. This is
+  the lane result with spin state attached. It tests whether helicity
+  matching in the hole (pass versus bounce) can do better than the plain
+  lane at contact.
+- **Pole pairing.** About 55% of head-on events are spin-up with this
+  pairing. Antiparallel pole pairings, or a neutron beam with mixed
+  helicity, would change the split.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

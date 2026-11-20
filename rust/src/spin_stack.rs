@@ -429,6 +429,44 @@ mod tests {
 
     const EPS: f64 = 1e-9;
 
+    /// Doc §15.54 (user, 2026-11-19): how far the base photon's path strays
+    /// from the stack centre for a photon with levels 1..L, as a fraction of
+    /// the proton (level-12 amplitude 512, the scale of the trace's 0.222
+    /// clear hole). Max 3D distance and max distance from each axis line
+    /// (the travel line of the linear trace), sampled over incommensurate
+    /// level rates.
+    #[test]
+    #[ignore]
+    fn report_trace_reach() {
+        let scale = level_amplitude(12);
+        for top in 4u8..=12 {
+            let mut st = SpinStack::new();
+            st.set_velocity(1, 1.0);
+            for l in 2..=top {
+                st.activate_next();
+                // Incommensurate sub-c rates so the sampled angles fill in.
+                let v = if l == top { 1.0 } else { 1.0 };
+                st.set_velocity(l, v);
+            }
+            let mut max3: f64 = 0.0;
+            let mut maxp = [0.0f64; 3];
+            let dt = 0.05;
+            let n = 4_000_000usize;
+            for i in 0..n {
+                // Jitter each level's phase with a golden-ratio sequence.
+                st.advance(dt * (1.0 + 0.3819660112 * ((i % 7) as f64) / 7.0), 1.0);
+                let (pos, _) = st.compose();
+                max3 = max3.max(pos.length());
+                maxp[0] = maxp[0].max((pos.y * pos.y + pos.z * pos.z).sqrt());
+                maxp[1] = maxp[1].max((pos.x * pos.x + pos.z * pos.z).sqrt());
+                maxp[2] = maxp[2].max((pos.x * pos.x + pos.y * pos.y).sqrt());
+            }
+            let orb: f64 = (1..=top).map(|l| { let lv = SpinLevel::new(l); if lv.is_orbital() { lv.orbit_radius() } else { 0.0 } }).sum();
+            println!("levels 1..{top:2}: sum of orbit radii {orb:6.1} ({:.4}) | max |pos| {max3:6.1} ({:.4}) | max off x/y/z line {:.4} {:.4} {:.4} (proton radii)",
+                orb / scale, max3 / scale, maxp[0] / scale, maxp[1] / scale, maxp[2] / scale);
+        }
+    }
+
     fn approx_zero(v: f64) -> bool {
         v.abs() < EPS
     }
