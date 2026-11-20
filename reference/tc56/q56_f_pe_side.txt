@@ -1,0 +1,46 @@
+
+running 1 test
+=== deuteron: pe axial, sep0 3, mass 7e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force electron: (-6.4, +2.3, -2.3) per unit time
+self-torque electron: (+0.0, +0.0, +0.0) per unit time
+alone electron: photon spin torque: net along axis +0.00, across 0.00 | in along axis: S- +0.00 S+ +0.00 N- +0.00 N+ +0.00 | out along axis +0.00 | selective in (S+ and N-) +0.00
+alone electron: collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 18169 a-a 18169 (3494) a-o 0 (0) a-x 0 (0) o-o 0 (0) o-x 0 (0) x-x 0 (0) | S total 18266 a-a 18266 (3509) a-o 0 (0) a-x 0 (0) o-o 0 (0) o-x 0 (0) x-x 0 (0)
+push by source, body 0 electron (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  recoil of what it sends out      :                   |      +0.0 /      +0.0 /     +0.0 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |      +0.0 /      +0.0 /     +0.0 |     +0.0 /     +0.0 /     +0.0
+self-force proton : (-106.6, +3.9, +27.6) per unit time
+self-torque proton : (-1.4, +0.3, -2.6) per unit time
+alone proton : photon spin torque: net along axis +1.60, across 0.14 | in along axis: S- +1.65 S+ +2.92 N- +1.20 N+ +2.09 | out along axis +6.26 | selective in (S+ and N-) +4.12
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 69226 a-a 50725 (15538) a-o 17029 (6336) a-x 0 (0) o-o 1471 (649) o-x 0 (0) x-x 0 (0) | S total 68833 a-a 50377 (15453) a-o 16986 (6299) a-x 0 (0) o-o 1471 (645) o-x 0 (0) x-x 0 (0)
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2864 /       0 |    -686.1 /      +0.0 /   -686.1 |     +2.6 /     +0.0 /     +2.6 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2870 /       0 |    +709.1 /      +0.0 /   +709.1 |     +1.9 /     +0.0 /     +1.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:     973 /       0 |    -172.8 /      +0.0 /   -172.8 |     +1.1 /     +0.0 /     +1.1 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:     986 /       0 |    +178.2 /      +0.0 /   +178.2 |     +0.4 /     +0.0 /     +0.4 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      -0.8 /      +0.0 /     -0.8 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |     +27.6 /      +0.0 /    +27.6 |     +1.4 /     +0.0 /     +1.4
+rotation: inertia 0e0, L_spin 0e0, damp 0
+layout custom: orients [PoleOn, PoleOn], start [(0.0, 0.0, 0.0), (2.5, 0.0, 0.0)]
+t   10.02: gaps 2.7147 | interaction (x,z): p (+39,-9) e (+9,+12) | max lateral y 0.100 | pos (-0.00,+0.00,-0.00) (+2.71,-0.10,+0.06) | e1 on p0: r 2.71 lat +1 | contact steps 0 | captures/time 7689 0
+t   20.04: gaps 3.1355 | interaction (x,z): p (+73,-35) e (+3,-13) | max lateral y 0.135 | pos (-0.00,+0.00,-0.00) (+3.12,-0.13,+0.27) | e1 on p0: r 3.14 lat +5 | contact steps 0 | captures/time 7639 0
+t   30.06: gaps 3.2685 | interaction (x,z): p (+63,-24) e (-16,+4) | max lateral y 0.321 | pos (-0.00,+0.00,-0.00) (+3.23,-0.32,+0.34) | e1 on p0: r 3.27 lat +6 | contact steps 0 | captures/time 7660 0
+t   40.08: gaps 3.3719 | interaction (x,z): p (+114,-17) e (+7,+1) | max lateral y 0.355 | pos (-0.00,+0.00,-0.00) (+3.32,-0.35,+0.46) | e1 on p0: r 3.37 lat +8 | contact steps 0 | captures/time 7701 0
+t   50.10: gaps 3.4285 | interaction (x,z): p (+50,-31) e (+2,-6) | max lateral y 0.231 | pos (-0.00,+0.00,-0.00) (+3.38,-0.23,+0.54) | e1 on p0: r 3.43 lat +9 | contact steps 0 | captures/time 7708 0
+t   60.12: gaps 3.5876 | interaction (x,z): p (+39,-20) e (+0,+3) | max lateral y 0.169 | pos (-0.00,+0.00,-0.00) (+3.54,-0.17,+0.54) | e1 on p0: r 3.59 lat +9 | contact steps 0 | captures/time 7670 0
+t   70.14: gaps 3.7696 | interaction (x,z): p (+88,-33) e (+3,+1) | max lateral y 0.328 | pos (-0.00,+0.00,-0.00) (+3.70,-0.33,+0.61) | e1 on p0: r 3.77 lat +9 | contact steps 0 | captures/time 7713 0
+t   80.16: gaps 3.9631 | interaction (x,z): p (+50,-12) e (-5,+4) | max lateral y 0.383 | pos (-0.00,+0.00,-0.00) (+3.89,-0.38,+0.67) | e1 on p0: r 3.96 lat +10 | contact steps 0 | captures/time 7674 0
+t   90.18: gaps 4.1100 | interaction (x,z): p (+43,-16) e (+2,-8) | max lateral y 0.285 | pos (-0.00,+0.00,-0.00) (+4.03,-0.29,+0.76) | e1 on p0: r 4.11 lat +11 | contact steps 0 | captures/time 7702 0
+t  100.20: gaps 4.2262 | interaction (x,z): p (+106,-22) e (-2,+5) | max lateral y 0.145 | pos (-0.00,+0.00,-0.00) (+4.15,-0.14,+0.76) | e1 on p0: r 4.23 lat +10 | contact steps 0 | captures/time 7655 0
+t  110.22: gaps 4.4369 | interaction (x,z): p (+86,-30) e (+6,-0) | max lateral y 0.237 | pos (-0.00,+0.00,-0.00) (+4.35,-0.24,+0.81) | e1 on p0: r 4.44 lat +10 | contact steps 0 | captures/time 7710 0
+t  120.24: gaps 4.7176 | interaction (x,z): p (+84,-27) e (-0,-4) | max lateral y 0.313 | pos (-0.00,+0.00,-0.00) (+4.62,-0.31,+0.87) | e1 on p0: r 4.72 lat +11 | contact steps 0 | captures/time 7685 0
+stopped at t 125.82: gaps [4.80274743748923], centres [-0.0004852615006137177, 0.8939027642884274]
+distance 0-1 (proton-electron): range 2.500 .. 4.803; last quarter mean 4.457
+drift of the stack centre +0.447
+screen body 0 proton  at (-0.00,+0.00,-0.00) axis (+0.00,+0.00,+1.00): force (+71,+50,-23) |90| inward +61 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,+0)
+screen body 1 electron at (+4.70,-0.37,+0.89) axis (+0.00,+0.00,+1.00): force (+0,-0,+0) |1| inward -0 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,+0)
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 300 filtered out; finished in 1542.08s
+

@@ -5230,6 +5230,52 @@ gear split 8.3k / 12.7k / 24.9k.
   back (for example by changing what the proton emits) cannot show up
   until the trace is resolved (high-resolution runs).
 
+### 15.56 Overnight tc56: high-res lane, free He3, tilt, three-body screens, electron, bubble maps (2026-11-20)
+
+Standard config (§15.55) unless noted. ESTELLE ran reference/tc56/q56e.sh. ISABELLE ran
+q56_a..f. Results are in reference/tc56. Frozen numbers are pair minus lone self-force, toward the
+partner.
+
+| run | setup | result |
+|---|---|---|
+| hi-res lane | p-n 2.05, n_a 16000, h 0.125 (14.5M photons) | p **+219**, n +14 (h 0.25: +61/+36, +50/+35) |
+| hi-res edge η 0.3 | same, PIPE_EDGE 1, η 0.3 | p −336, n +10 (h 0.25: −237) |
+| map, no lane | p-n 2.05 | p −1758, n −68 |
+| map, lane | p-n 2.05 | p +50, n +35 |
+| map, d 4 | p-n 4, no lane | p −287, n −15 |
+| p-n-p frozen | 2.05, no lane | outer p −1697 / −1630, n ≈0 |
+| p-n-p frozen + lane | 2.05 | outer p **+41 / +57** |
+| n-p-n frozen | 2.05, no lane | outer n −52 / −55 |
+| n-p-n frozen + lane | 2.05 | outer n **+411 / +394** |
+| tilt 10° + lane | p-n 2.05, positions held, axes free | p **−825**, axis stays at ~10° and slowly precesses |
+| free He3 + lane | p-n-p 2.05, free move + rotate | holds ~100 tu, then the lower proton runs out, the top one follows; apart by t 366 |
+| free e, polar start | e at 2.5 on the p pole | falls in to contact (1.2) at ~63° from the pole and stays pressed there (+40) for 500 tu |
+| free e, side start | e at 2.5 on the equator | pushed out to 4.8; the run stopped at t 126 |
+
+Findings:
+- **Resolution raises the lane, it does not erase it.** Halving h (at 2x photons, same λ) turns
+  the lane proton +61 into +219. The edge rule moves the other way (−237 → −336). So the lane is
+  not an h 0.25 artefact. The buffer split for higher resolution is worth doing.
+- **The lane carries to three bodies.** Both p-n-p and n-p-n turn attractive at contact with the
+  lane. n-p-n is the strongest result so far (+400 on each neutron). Without the lane p-n-p is
+  the usual −1700 and n-p-n only −50.
+- **Free He3 still comes apart.** The frozen well is small (+41/+57) and only ~0.15 wide (§15.53).
+  With no damping, a drift of 0.03 in gap plus 0.04 of lateral slip moves the mouths off line and
+  the push runs away. The lower proton goes first.
+- **Tilt kills the lane.** 10° of proton tilt takes it from +61 to −825, with a sideways push
+  (+394 in x) and a torque of ~230. The gyroscopic spin (L_spin 8.75e5) turns that torque into a
+  slow precession (axis y 0.01 → 0.08 in 290 tu), not a swing back into line. The windsock
+  righting is not seen at this spin; it would need either a smaller L_spin or a dissipation of the
+  precession.
+- **Electron is not held off.** From the pole it falls to contact at mid-latitude and stays
+  pressed on. From the equator the disc emission blows it away. Nothing settles at a distance.
+- **Bubble maps (CFM_D_MAP works).** With the lane, the pair becomes one through-pipe: dense jets
+  leave both outer poles (density ~4x ambient at z ±2, |vz| 0.8). Without the lane, the proton's
+  outer jet is gone and the neutron's stream ends at the proton. At d 4 only the neutron's outer
+  jet is strong. The side probes (R 1.5-4) are the same in all three runs (density 0.95-0.98, a
+  slight inflow). The "acting as one" shows along the axis, not as a reinforced equatorial wall,
+  at this resolution.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
