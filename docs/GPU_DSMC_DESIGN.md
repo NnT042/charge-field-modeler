@@ -5276,6 +5276,36 @@ Findings:
   slight inflow). The "acting as one" shows along the axis, not as a reinforced equatorial wall,
   at this resolution.
 
+### 15.57 First rented queue (Vast RTX 5090): free triples with the lane, tilt without gyroscope (2026-11-21)
+
+scripts/vast/q57.sh on one RTX 5090 (4 jobs at once, all 8 done in 1 h 34 min, $0.52/h). Same
+config as §15.56. Results in reference/tc57. The box reports the same 2 GiB storage-binding
+limit as ours (max_buffer_size 4 GiB), so the 19M-photon cap stands. The gpu::dsmc gates pass
+one per process; in one process the later GpuContext::new calls fail in this container.
+
+| run | outcome |
+|---|---|
+| free n-p-n + lane, seeds 49344 / 1 / 2 | all come apart: the middle proton slides out sideways from t ~150; it leaves by t ~350 |
+| free n-p-n + lane, hi-res | the same, faster (out by t ~200) |
+| free p-n-p + lane, seeds 1 / 2 | the lower proton (body 0, −z) leaves first, as in §15.56 |
+| free p-n-p + lane, hi-res | the same, faster (lower proton out by t ~150) |
+| tilt 10° + lane, L_spin 0 | the tilt grows to ~33° (t 160), swings round, ends ~30° off in another direction; lane force −1100..−2000 |
+
+Findings:
+- **n-p-n is a squeeze instability.** The frozen screen pulls each outer neutron in (+400), but
+  nothing holds the middle proton on the axis. A sideways slip of ~0.1 grows and the proton is
+  pushed out sideways. On two seeds the neutrons then close up (gap 4.1 → 2.9) and the end
+  screen shows them pulling toward each other (+100 / +50). On the others the gap stays at 4.4.
+- **p-n-p always loses the lower proton first** (4 of 4 runs with §15.56). That is not noise.
+  The through-flow runs one way along the axis, so the two ends of the chain differ.
+- **Higher resolution separates faster.** The frozen lane well is stronger at h 0.125 (+219),
+  but the free triples fly apart sooner. The deeper well does not give a lateral restoring force.
+- **No windsock righting without the gyroscope either.** The tilt torque first increases the
+  tilt (10° → 33°), so it is not restoring at this configuration. The tilted proton loses the
+  lane at once.
+- The missing piece in every free run is a lateral (sideways) restoring force on the axis. The
+  lane gives a pull along the line of centres only.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

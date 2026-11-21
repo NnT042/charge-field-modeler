@@ -1,0 +1,68 @@
+
+running 1 test
+=== deuteron: pnp axial, sep0 3, mass 7e6, damp 0, fixed centre true, lambda 0.3, n_a 16000, h 0.125, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe 'pn' within 90 deg, mouth 0.2222222222, lane 1, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force neutron: (+10.4, -0.7, -6.4) per unit time
+self-torque neutron: (+1.5, -3.8, -8.7) per unit time
+alone neutron: photon spin torque: net along axis +2.31, across 0.21 | in along axis: S- +3.15 S+ +5.46 N- +2.65 N+ +4.57 | out along axis +13.53 | selective in (S+ and N-) +8.11
+alone neutron: collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 168384 a-a 77752 (24893) a-o 61284 (21282) a-x 0 (0) o-o 29348 (15094) o-x 0 (0) x-x 0 (0) | S total 167284 a-a 77987 (25001) a-o 60506 (21058) a-x 0 (0) o-o 28791 (14852) o-x 0 (0) x-x 0 (0)
+alone neutron: pipe: photons turned onto the axis per unit time: 492
+push by source, body 0 neutron (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    7164 /       0 |    -512.8 /      +0.0 /   -512.8 |     +0.3 /     +0.0 /     +0.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    7184 /       0 |    +524.0 /      +0.0 /   +524.0 |     +4.0 /     +0.0 /     +4.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1266 /       0 |     -86.0 /      +0.0 /    -86.0 |     +1.1 /     +0.0 /     +1.1 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1268 /       0 |     +79.6 /      +0.0 /    +79.6 |     +1.9 /     +0.0 /     +1.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |     -11.2 /      +0.0 /    -11.2 |     +2.7 /     +0.0 /     +2.7
+  total                            :                   |      -6.4 /      +0.0 /     -6.4 |     +4.1 /     +0.0 /     +4.1
+self-force proton : (-161.7, -21.2, +24.3) per unit time
+self-torque proton : (+4.8, -4.7, -7.0) per unit time
+alone proton : photon spin torque: net along axis +3.56, across 0.52 | in along axis: S- +3.34 S+ +5.73 N- +2.52 N+ +4.38 | out along axis +12.40 | selective in (S+ and N-) +8.25
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 140568 a-a 102340 (31528) a-o 35135 (13091) a-x 0 (0) o-o 3093 (1369) o-x 0 (0) x-x 0 (0) | S total 139858 a-a 102018 (31452) a-o 34783 (12952) a-x 0 (0) o-o 3057 (1345) o-x 0 (0) x-x 0 (0)
+alone proton : pipe: photons turned onto the axis per unit time: 1201
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    6246 /       0 |   -1177.8 /      +0.0 /  -1177.8 |     +2.9 /     +0.0 /     +2.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    6270 /       0 |   +1200.5 /      +0.0 /  +1200.5 |     +1.7 /     +0.0 /     +1.7 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    2072 /       0 |    -315.2 /      +0.0 /   -315.2 |     +1.5 /     +0.0 /     +1.5 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    2082 /       0 |    +317.8 /      +0.0 /   +317.8 |     +2.7 /     +0.0 /     +2.7 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      -1.1 /      +0.0 /     -1.1 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |     +24.3 /      +0.0 /    +24.3 |     +6.7 /     +0.0 /     +6.7
+rotation: inertia 2.8e6, L_spin 8.75e5, damp 0
+layout custom: orients [PoleOn, PoleOn, PoleOn], start [(0.0, 0.0, -2.05), (0.0, 0.0, 0.0), (0.0, 0.0, 2.05)]
+t   10.02: gaps 2.0485 4.0968 2.0483 | interaction (x,z): p (+130,+231) n (-38,+11) p (-16,-220) | max lateral y 0.001 | pos (+0.00,+0.00,-2.05) (-0.00,-0.00,+0.00) (-0.00,-0.00,+2.05) | axes (-0.00,+0.00,+1.00) (+0.00,+0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 11 21 23 | contact steps 0 | captures/time 15042 16131 15007
+t   20.04: gaps 2.0440 4.0871 2.0431 | interaction (x,z): p (+98,+171) n (+12,-39) p (-49,-240) | max lateral y 0.003 | pos (+0.00,+0.00,-2.04) (-0.00,-0.00,+0.00) (-0.00,-0.00,+2.04) | axes (-0.00,-0.00,+1.00) (-0.00,-0.00,+1.00) (-0.00,-0.00,+1.00) | net torque 16 33 10 | contact steps 0 | captures/time 15040 16058 15028
+t   30.06: gaps 2.0373 4.0738 2.0366 | interaction (x,z): p (+137,+11) n (+37,-34) p (-96,-53) | max lateral y 0.006 | pos (+0.01,+0.01,-2.04) (-0.00,-0.00,+0.00) (-0.00,-0.00,+2.04) | axes (-0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 17 1 43 | contact steps 0 | captures/time 15176 16095 15168
+t   40.08: gaps 2.0317 4.0628 2.0311 | interaction (x,z): p (+180,-215) n (+8,-12) p (+22,+124) | max lateral y 0.010 | pos (+0.01,+0.01,-2.03) (-0.00,-0.01,+0.00) (-0.01,-0.00,+2.03) | axes (-0.00,-0.00,+1.00) (-0.00,-0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 23 0 29 | contact steps 0 | captures/time 15371 16123 15292
+t   50.10: gaps 2.0314 4.0594 2.0281 | interaction (x,z): p (+155,-439) n (-30,+16) p (-3,+304) | max lateral y 0.017 | pos (+0.02,+0.02,-2.03) (-0.01,-0.01,+0.00) (-0.01,-0.01,+2.03) | axes (+0.00,-0.00,+1.00) (+0.00,-0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 11 11 8 | contact steps 0 | captures/time 15597 16088 15406
+t   60.12: gaps 2.0386 4.0686 2.0302 | interaction (x,z): p (+236,-573) n (-30,+2) p (+30,+344) | max lateral y 0.026 | pos (+0.03,+0.03,-2.04) (-0.01,-0.01,+0.00) (-0.02,-0.01,+2.03) | axes (-0.00,-0.00,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 25 14 10 | contact steps 0 | captures/time 15632 16052 15466
+t   70.14: gaps 2.0534 4.0894 2.0367 | interaction (x,z): p (+189,-476) n (-44,-39) p (+50,+184) | max lateral y 0.036 | pos (+0.04,+0.04,-2.05) (-0.01,-0.02,+0.01) (-0.02,-0.02,+2.04) | axes (+0.00,-0.00,+1.00) (-0.00,+0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 73 35 4 | contact steps 0 | captures/time 15671 16030 15360
+t   80.16: gaps 2.0749 4.1185 2.0449 | interaction (x,z): p (+133,-511) n (-61,-12) p (+69,-12) | max lateral y 0.050 | pos (+0.05,+0.05,-2.06) (-0.02,-0.03,+0.01) (-0.03,-0.02,+2.05) | axes (+0.00,-0.00,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 101 8 39 | contact steps 0 | captures/time 15659 16090 15240
+t   90.18: gaps 2.1069 4.1556 2.0511 | interaction (x,z): p (+233,-807) n (+12,+28) p (+162,-166) | max lateral y 0.066 | pos (+0.06,+0.07,-2.09) (-0.03,-0.04,+0.02) (-0.03,-0.03,+2.07) | axes (+0.00,-0.00,+1.00) (-0.00,+0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 182 32 11 | contact steps 0 | captures/time 16025 16132 15078
+t  100.20: gaps 2.1545 4.2043 2.0539 | interaction (x,z): p (+228,-1179) n (+45,+43) p (+136,-237) | max lateral y 0.085 | pos (+0.08,+0.08,-2.12) (-0.04,-0.05,+0.03) (-0.04,-0.04,+2.08) | axes (+0.00,-0.01,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 256 16 11 | contact steps 0 | captures/time 16369 16154 15077
+t  110.22: gaps 2.2233 4.2695 2.0527 | interaction (x,z): p (+338,-1597) n (-10,+50) p (+144,-254) | max lateral y 0.107 | pos (+0.09,+0.11,-2.16) (-0.05,-0.06,+0.05) (-0.04,-0.04,+2.11) | axes (+0.01,-0.01,+1.00) (-0.00,+0.00,+1.00) (+0.00,+0.00,+1.00) | net torque 331 7 21 | contact steps 0 | captures/time 16669 16073 15104
+t  120.24: gaps 2.3207 4.3583 2.0477 | interaction (x,z): p (+469,-2045) n (-40,+33) p (+168,-184) | max lateral y 0.133 | pos (+0.11,+0.13,-2.22) (-0.07,-0.08,+0.09) (-0.05,-0.05,+2.13) | axes (+0.01,-0.02,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 463 9 33 | contact steps 0 | captures/time 16967 16215 15120
+t  130.26: gaps 2.4521 4.4789 2.0418 | interaction (x,z): p (+506,-2312) n (+38,+36) p (+95,+152) | max lateral y 0.165 | pos (+0.14,+0.16,-2.30) (-0.08,-0.10,+0.13) (-0.05,-0.06,+2.17) | axes (+0.01,-0.02,+1.00) (-0.00,+0.00,+1.00) (-0.00,-0.00,+1.00) | net torque 523 20 51 | contact steps 0 | captures/time 17250 16103 15363
+t  140.28: gaps 2.6209 4.6398 2.0403 | interaction (x,z): p (+628,-2450) n (+50,-21) p (+128,+428) | max lateral y 0.203 | pos (+0.16,+0.20,-2.40) (-0.10,-0.13,+0.18) (-0.06,-0.08,+2.22) | axes (+0.01,-0.03,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 629 12 78 | contact steps 0 | captures/time 17432 16226 15514
+t  150.30: gaps 2.8257 4.8425 2.0462 | interaction (x,z): p (+684,-2176) n (+48,-8) p (+157,+539) | max lateral y 0.248 | pos (+0.20,+0.25,-2.53) (-0.13,-0.15,+0.24) (-0.07,-0.09,+2.29) | axes (+0.02,-0.03,+1.00) (-0.00,+0.00,+1.00) (-0.00,+0.00,+1.00) | net torque 607 9 87 | contact steps 0 | captures/time 17167 16175 15650
+t  160.32: gaps 3.0619 5.0830 2.0604 | interaction (x,z): p (+641,-1702) n (+44,+14) p (+165,+578) | max lateral y 0.298 | pos (+0.24,+0.30,-2.68) (-0.15,-0.18,+0.31) (-0.08,-0.11,+2.37) | axes (+0.02,-0.04,+1.00) (-0.00,+0.00,+1.00) (-0.01,+0.00,+1.00) | net torque 510 29 173 | contact steps 0 | captures/time 16920 16190 15720
+t  170.34: gaps 3.3227 5.3552 2.0833 | interaction (x,z): p (+505,-1237) n (+33,+36) p (+190,+705) | max lateral y 0.355 | pos (+0.28,+0.35,-2.85) (-0.18,-0.22,+0.39) (-0.10,-0.14,+2.47) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.01,+0.00,+1.00) | net torque 361 29 159 | contact steps 0 | captures/time 16577 16238 15904
+t  180.36: gaps 3.6015 5.6549 2.1175 | interaction (x,z): p (+571,-847) n (+47,+15) p (+224,+836) | max lateral y 0.416 | pos (+0.33,+0.42,-3.03) (-0.22,-0.26,+0.46) (-0.11,-0.16,+2.57) | axes (+0.03,-0.04,+1.00) (-0.00,+0.00,+1.00) (-0.01,+0.00,+1.00) | net torque 220 21 187 | contact steps 0 | captures/time 16294 16174 16123
+t  190.38: gaps 3.8932 5.9800 2.1661 | interaction (x,z): p (+439,-553) n (+56,-40) p (+293,+1113) | max lateral y 0.480 | pos (+0.38,+0.48,-3.23) (-0.26,-0.29,+0.53) (-0.13,-0.19,+2.69) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.01,+0.00,+1.00) | net torque 116 20 266 | contact steps 0 | captures/time 16015 16225 16396
+t  200.40: gaps 4.1926 6.3302 2.2340 | interaction (x,z): p (+309,-343) n (+65,-60) p (+270,+1398) | max lateral y 0.546 | pos (+0.43,+0.55,-3.43) (-0.29,-0.34,+0.60) (-0.14,-0.21,+2.83) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.02,+0.01,+1.00) | net torque 91 16 280 | contact steps 0 | captures/time 15785 16315 16632
+t  210.42: gaps 4.4975 6.7065 2.3244 | interaction (x,z): p (+256,-202) n (+106,-31) p (+370,+1621) | max lateral y 0.615 | pos (+0.49,+0.61,-3.64) (-0.34,-0.38,+0.67) (-0.15,-0.24,+2.98) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.02,+0.00,+1.00) | net torque 41 19 294 | contact steps 0 | captures/time 15756 16320 16813
+t  220.44: gaps 4.8057 7.1106 2.4413 | interaction (x,z): p (+268,-146) n (+56,-21) p (+490,+1855) | max lateral y 0.685 | pos (+0.54,+0.69,-3.87) (-0.38,-0.42,+0.72) (-0.16,-0.26,+3.15) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.02,+0.01,+1.00) | net torque 21 14 319 | contact steps 0 | captures/time 15728 16263 16964
+t  230.46: gaps 5.1167 7.5432 2.5862 | interaction (x,z): p (+102,-76) n (+42,-35) p (+432,+1944) | max lateral y 0.756 | pos (+0.59,+0.76,-4.10) (-0.43,-0.46,+0.77) (-0.17,-0.29,+3.33) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.03,+0.01,+1.00) | net torque 12 19 354 | contact steps 0 | captures/time 15610 16314 17064
+t  240.48: gaps 5.4295 8.0043 2.7603 | interaction (x,z): p (+140,-45) n (+60,-22) p (+476,+1914) | max lateral y 0.828 | pos (+0.65,+0.83,-4.34) (-0.48,-0.51,+0.80) (-0.17,-0.32,+3.54) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.03,+0.01,+1.00) | net torque 22 24 338 | contact steps 0 | captures/time 15599 16307 17037
+t  250.50: gaps 5.7434 8.4912 2.9612 | interaction (x,z): p (+86,-100) n (+74,-39) p (+416,+1634) | max lateral y 0.900 | pos (+0.70,+0.90,-4.59) (-0.53,-0.55,+0.83) (-0.17,-0.35,+3.76) | axes (+0.03,-0.04,+1.00) (+0.00,+0.00,+1.00) (-0.03,+0.01,+1.00) | net torque 19 26 330 | contact steps 0 | captures/time 15487 16342 16848
+stopped at t 253.08: gaps [5.82456961131066, 8.620247352578572, 3.016673228046017], centres [-4.657592637664249, 0.8353534604730138, 3.8222391771912347]
+distance 0-1 (proton-neutron): range 2.031 .. 5.825; last quarter mean 4.842
+distance 0-2 (proton-proton): range 4.059 .. 8.620; last quarter mean 7.200
+distance 1-2 (neutron-proton): range 2.028 .. 3.017; last quarter mean 2.501
+drift of the stack centre +0.000
+screen body 0 proton  at (+0.71,+0.92,-4.66) axis (+0.03,-0.04,+1.00): force (+306,+348,-778) |905| inward -866 | toward neighbours | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,-0)
+screen body 1 neutron at (-0.54,-0.56,+0.84) axis (+0.00,+0.00,+1.00): force (+24,+26,-5) |36| inward +28 | toward neighbours p2:+0 | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,+0)
+screen body 2 proton  at (-0.17,-0.36,+3.82) axis (-0.03,+0.01,+1.00): force (+177,+69,+582) |612| inward -565 | toward neighbours n1:-603 | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,-0,+0)
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 300 filtered out; finished in 2844.04s
+
