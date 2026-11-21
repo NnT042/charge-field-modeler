@@ -5306,6 +5306,95 @@ Findings:
 - The missing piece in every free run is a lateral (sideways) restoring force on the axis. The
   lane gives a pull along the line of centres only.
 
+### 15.58 tc58: sideways stiffness, tilt curve, flips, photon/antiphoton sweep (2026-11-21)
+
+Two machines overnight with the same config as §15.56 (h 0.25). ESTELLE ran reference/tc58/q58e.sh
+(the flips and the φ sweep). ISABELLE ran 16 queue jobs (the stiffness, tilt and electron runs).
+Results are in reference/tc58. Every screen is frozen. Forces are the pair force minus the force
+on the body alone. "Toward" means toward the partner; "relative sideways" means the force on the
+displaced body minus the mean force on the others.
+
+**Sideways stiffness (the middle body moved by dx along x):**
+
+| run | relative sideways force on the middle body | pull along the axis on the end bodies |
+|---|---|---|
+| n-p-n + lane, dx 0 (§15.56) | 0 | +411 / +394 |
+| n-p-n + lane, dx 0.05 | **+154 (outward)** | +374 / +343 |
+| n-p-n + lane, dx 0.1 (2 seeds) | **+200 / +189 (outward)** | +333 / +315, +325 / +324 |
+| n-p-n + lane, dx 0.2 | **+145 (outward)** | +229 / +210 |
+| n-p-n, no lane, dx 0.1 | **−185 (restoring)**, plus +322 along y | −65 / −55 (the ends push apart) |
+| p-n-p + lane, dx 0 (§15.56) | 0 | +41 / +57 |
+| p-n-p + lane, dx 0.05 | −2 | **−145 / −120** |
+| p-n-p + lane, dx 0.1 | +43 (outward) | **−404 / −354** |
+| p-n-p + lane, dx 0.2 | +170 (outward) | **−1007 / −819** |
+
+**Tilt curve (p-n + lane, gap 2.05, proton axis tilted toward +x; 0° = +61 from §15.56):**
+
+| tilt | pull along the axis on the proton | sideways force on the proton (+x) | torque on the tilted axis |
+|---|---|---|---|
+| 2° | −68 | +196 | 100, **more tilt** |
+| 5° | −332 | +321 | 200, more tilt |
+| 10° | −813 | +373 | 229, more tilt |
+| 20° | −1653 | +92 | 55, more tilt |
+| neutron tilted 10° instead | −892 on the proton | −505 | 629 on the *untilted proton*, 15 on the neutron |
+
+**Flips (p-n-p + lane, rotation on, free unless marked frozen):**
+
+| run | outcome |
+|---|---|
+| frozen, middle neutron flipped | +54 / +72 (the default is +41 / +57) |
+| frozen, all three flipped | +60 / +39 |
+| free, middle neutron flipped | both protons leave together, symmetrically (each gap 2.04 → 3.9 by t 300) |
+| free, all three flipped | the **upper** proton leaves first (gap 2.05 → 4.7); the lower one holds to t ~240 and then follows |
+
+**Photon/antiphoton share φ (p-n, gap 2.05; the default is φ 0.667):**
+
+| φ | without lane, p / n | with lane, p / n | net spin torque on the lone proton |
+|---|---|---|---|
+| 0.5 | −1739 / −78 | +48 / +36 | +6.1 |
+| 0.8 | −1726 / −53 | +65 / +31 | −0.3 |
+| 1.0 | −1712 / −63 | +61 / +42 | −1.3 |
+
+At φ 1.0 the S− and N− intake is zero, as it should be. The lone-proton spin torque moves from
++6 to −1, and in the pair the neutron's goes from +6 to −5.
+
+**Free electron at the proton's pole** (pe, start gap 2.5, mass 7e6, 10000 steps): at every φ
+(0.5, 0.8, 1.0) it falls to contact (r 1.20–1.21) at about 65° from the pole and sits there. This
+is the same as §15.56 at φ 0.667.
+
+Findings:
+- **The lane is a knife edge.** The pull exists only with the bodies exactly on the line and
+  the axes exactly parallel. A 0.05 sideways slip, or a 2° tilt, gives a force that grows the
+  error: an outward kick of about 150–200 that sets in at once and does not grow in proportion
+  to the slip. A 2° tilt flips the pull along the axis to a push (+61 → −68), and the tilt torque
+  makes the tilt worse. Near zero the slope is about 3000 per unit of slip and about 50 per degree
+  of tilt. That explains why every free triple in §15.57 came apart.
+- **In p-n-p the off-axis neutron unbinds the ends.** At dx 0.05 the protons are already pushed
+  apart (−145). By dx 0.2 the push is about −1000. The relative sideways force is small;
+  the failure is along the axis.
+- **Without the lane the middle proton is held sideways (−185), but the ends push apart.** With
+  the lane the ends pull together but the middle is pushed out. The lane trades sideways hold for
+  pull along the line. One seed only; the +322 force along y (at right angles to the slip) is
+  large and needs a second seed before it is trusted.
+- **A tilted neutron steers the proton.** Tilting the neutron 10° hardly torques the neutron (15).
+  The untilted proton instead takes a 629 torque and a −505 sideways push toward the point where
+  the neutron's tilted beam crosses the proton's height (x ≈ −0.36). The proton is drawn to follow
+  the neutron's beam. This is the first sign of an alignment response, but it runs body to body,
+  not back toward the axis.
+- **The flips give a mirror check, and it passes.** The proton that leaves first is always the one
+  at the tail of the chain's axis direction: the lower one by default, the upper one with
+  everything flipped. With only the middle flipped, both leave together. Flips barely change the
+  frozen pull. So the one-sided breakup in §15.57 comes from the through-flow direction, not from
+  a bias fixed in the lab frame.
+- **φ does not change the pair forces** (all within ±15 of each other, both with and without the
+  lane). It only moves the spin torques, as expected. The electron's hold point does not depend
+  on φ.
+- Next: find a mechanism that gives a sideways restoring force on the axis without losing the
+  lane's pull, for example through-flow that narrows toward the axis, or rotation or gyroscopic
+  coupling that turns the outward kick into precession. The photon-mix knob (born-larger photons,
+  hit box = the outer spin radius) is the other open item. Resolution and photon-count work
+  comes after these.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
