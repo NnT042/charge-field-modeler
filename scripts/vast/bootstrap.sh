@@ -31,10 +31,15 @@ cd "$HOME"
 [ -d cfm ] || git clone -q https://github.com/NnT042/charge-field-modeler.git cfm
 cd cfm && git pull -q
 cargo build --manifest-path rust/Cargo.toml --profile fast --features gpu --tests 2>&1 | tail -3
-BIN=$(cargo test --manifest-path rust/Cargo.toml --profile fast --features gpu --no-run 2>&1 | grep -o 'target/fast/deps/[^ )]*' | head -1)
-echo "test binary: rust/$BIN"
-ln -sf "$HOME/cfm/rust/$BIN" "$HOME/cfm_test"
+# New cargo puts the test binary under target/fast/build/.../out/; take the path printed for src/lib.rs.
+BIN=$(cargo test --manifest-path rust/Cargo.toml --profile fast --features gpu --no-run 2>&1 | grep 'src/lib.rs' | sed 's/.*(\(.*\))/\1/')
+[ -n "$BIN" ] || { echo "STOP: test binary not found"; exit 1; }
+echo "test binary: $BIN"
+rm -f "$HOME/cfm_test"; ln -s "$HOME/cfm/$BIN" "$HOME/cfm_test"
 cd rust
-"$HOME/cfm_test" gpu::dsmc --test-threads=1 2>&1 | tail -4
+# One test per process: in a Vast container repeated GpuContext::new in one process fails.
+for t in $("$HOME/cfm_test" gpu::dsmc --list 2>/dev/null | grep ': test' | grep -v report_ | sed 's/: test//'); do
+  if "$HOME/cfm_test" --exact "$t" 2>&1 | grep -q 'test result: ok'; then echo "ok"; else echo "FAIL $t"; fi
+done | sort | uniq -c
 "$HOME/cfm_test" --ignored --nocapture --exact gpu::tests::bench_particle_stream 2>&1 | grep -E "adapter:|limits:" || true
 echo "BOOTSTRAP OK"
