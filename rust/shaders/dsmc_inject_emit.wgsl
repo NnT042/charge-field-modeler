@@ -45,6 +45,7 @@ struct Params {
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
+    mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -158,15 +159,45 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if (chi > 0.0) {
             flags = flags | FLAG_SPECIES_PLUS;
         }
-        // E1 (doc §11d): ambient photons are always born at stiffness k=0.
-        out.c = vec4<u32>(flags, 0u, 0u, 0u);
+        // E1 (doc §11d): ambient photons are born at stiffness k=0, except
+        // under the §15.59 photon mix (stacking only): level kb drawn from
+        // the cumulative shares, every inner level full (edge c), the outer
+        // level at edge spin_edge0 along travel with sense chi (grav4.pdf:
+        // photon/antiphoton = the outer spin's left/right). Birth level is
+        // kept in flag bits 26-27 (mass-doubling knob).
+        var kb = 0u;
+        if (params.stacking != 0u && params.mix_c0 < 1.0) {
+            let uk = rand01(params.seed_hi, params.seed_lo, id, 40u);
+            if (uk >= params.mix_c0) { kb = 1u; }
+            if (uk >= params.mix_c1) { kb = 2u; }
+            if (uk >= params.mix_c2) { kb = 3u; }
+            kb = min(kb, params.stack_max_level);
+        }
+        out.c = vec4<u32>(flags | (kb << FLAG_BIRTH_SHIFT), 0u, 0u, kb);
         // Doc §13: helical spin along travel at edge speed spin_edge0
         // (photon2.html), sense = chirality (clockwise from behind = +dir,
-        // quark.html right-hand rule). R = 1 at k = 0. Speed c.
-        out.d = vec4<f32>(dir * (chi * params.spin_edge0), 1.0);
+        // quark.html right-hand rule). R = 2^kb (1 at k = 0). Speed c.
+        out.d = vec4<f32>(dir * (chi * params.spin_edge0 / exp2(f32(kb))), 1.0);
         out.e = vec4<f32>(0.0);
         out.f = vec4<f32>(0.0);
         out.g = vec4<f32>(0.0);
+        let inner_mode = (params.mix_flags >> 1u) & 3u;
+        for (var j = 0u; j < kb; j = j + 1u) {
+            var ax = chi * dir;
+            if (inner_mode == 1u) {
+                ax = dir;
+            } else if (inner_mode == 2u) {
+                ax = -dir;
+            } else if (inner_mode == 3u) {
+                ax = rand_unit_vec(params.seed_hi, params.seed_lo, id, 41u + 2u * j);
+            }
+            let wj = vec4<f32>(ax / exp2(f32(j)), 0.0);
+            if (j == 0u) { out.e = wj; } else if (j == 1u) { out.f = wj; } else { out.g = wj; }
+        }
+        if (kb > 0u) {
+            // b.w = helicity of the axial (level 0) spin, as axial_helicity().
+            out.b.w = dot(out.e.xyz, dir) / max(params.spin_edge0, 1e-6);
+        }
         atomicAdd(&tallies[60], 1); // TALLY_INJECTED
     } else {
         // --- emitted: find owning body by walking per-body counts ---

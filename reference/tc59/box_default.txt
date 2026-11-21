@@ -1,0 +1,24 @@
+   --> src\gpu\dsmc\shell_gates.rs:911:9
+    |
+911 |     let LAMBDA: f64 = env("CFM_C_LAMBDA", "3").parse().unwrap();
+    |         ^^^^^^ help: convert the identifier to snake case: `lambda`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+    Finished `fast` profile [optimized] target(s) in 0.32s
+running 1 test
+test gpu::dsmc::shell_gates::report_photon_mix ... === photon mix field box: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: Match, mass_doubling: false, size_xsec: false, size_ceiling: 0 }, n_a 8000, lambda 0.3, h 0.25, R_D 6, dt 0.06, 400 steps, phi 0.6666666667 ===
+live census (1 in 64, second half): by current level [0.000, 0.000, 0.000, 0.000], by birth level [0.000, 0.000, 0.000, 0.000]
+per unit time: collisions 15451956, stack events 509714, unstack events 80, capped 1183510, size-xsec clamps 0, escaped by level [503677.0, 318526.0, 44244.0, 31314.0]
+by radius (birth level: count [share now at level 0 1 2 3] mean outer edge in c):
+  r 0.0-1.5: | born 0: 113312 [0.371 0.495 0.037 0.098] edge 0.438
+  r 1.5-3.0: | born 0: 784983 [0.384 0.482 0.044 0.090] edge 0.425
+  r 3.0-4.5: | born 0: 2115607 [0.417 0.451 0.045 0.087] edge 0.452
+  r 4.5-7.0: | born 0: 4105064 [0.510 0.387 0.046 0.058] edge 0.575
+wall 46 s
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 302 filtered out; finished in 52.58s
+running 0 tests
+running 0 tests
+running 0 tests
+running 0 tests
+running 0 tests

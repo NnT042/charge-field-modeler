@@ -1220,6 +1220,7 @@ fn two_body_config(centers: &[DVec3], classes: &[&str], n_a: f64, lambda: f64, c
         maze: MazeMode::Swept,
         speed_mode: SpeedMode::BodyFree,
         g_max: 12.0,
+        photon_mix: photon_mix_from_env(),
         ..twist_rough(true, SpeedMode::PinnedC)
     };
     let mut c = ball_config(Boundary::SphereEscape { r_d: 6.0 }, PROTON_STATES[0], rough, 1.0 / (lambda * n_a), n_a, cap, seed);
@@ -3405,4 +3406,194 @@ fn report_ball_loop() {
             println!("  r {:.3}-{:.3}: {}", ir as f64 * 0.125, ir as f64 * 0.125 + 0.125, row.join(" "));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Doc §15.59 photon mix (user, 2026-11-21): ambient photons born larger.
+// ---------------------------------------------------------------------------
+
+/// Reads the photon-mix test knobs (all off by default):
+/// CFM_P_MIX "w0,w1,w2,w3" birth shares by level (1,0,0,0);
+/// CFM_P_INNER match | plus | minus | random (match);
+/// CFM_P_MASS 1 = mass 2^(birth level); CFM_P_SIZE 1 = hit box = outer
+/// radius; CFM_P_CEIL NTC ceiling level (highest level with a share).
+pub(crate) fn photon_mix_from_env() -> super::config::PhotonMix {
+    use super::config::{InnerAxes, PhotonMix};
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let w: Vec<f64> = env("CFM_P_MIX", "1,0,0,0").split(',').map(|s| s.trim().parse().unwrap()).collect();
+    assert!(w.len() == 4, "CFM_P_MIX needs 4 shares");
+    let weights = [w[0], w[1], w[2], w[3]];
+    let top = (0..4).rev().find(|&k| weights[k] > 0.0).unwrap_or(0) as u32;
+    let inner = match env("CFM_P_INNER", "match").as_str() {
+        "plus" => InnerAxes::Plus,
+        "minus" => InnerAxes::Minus,
+        "random" => InnerAxes::Random,
+        "match" => InnerAxes::Match,
+        o => panic!("CFM_P_INNER {o}"),
+    };
+    PhotonMix {
+        weights,
+        inner,
+        mass_doubling: env("CFM_P_MASS", "0") == "1",
+        size_xsec: env("CFM_P_SIZE", "0") == "1",
+        size_ceiling: env("CFM_P_CEIL", &top.to_string()).parse().unwrap(),
+    }
+}
+
+/// Census of live photons with r in [r0, r1) of `c`, per birth level:
+/// (count, share now at each current level 0..3, mean outer edge speed in c).
+fn mix_census(ph: &[GpuPhoton], c: DVec3, r0: f64, r1: f64) -> [(usize, [f64; 4], f64); 4] {
+    let mut out = [(0usize, [0.0f64; 4], 0.0f64); 4];
+    for p in ph {
+        if p.c[0] & FLAG_ALIVE == 0 {
+            continue;
+        }
+        let r = (DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64) - c).length();
+        if r < r0 || r >= r1 {
+            continue;
+        }
+        let kb = ((p.c[0] >> 26) & 3) as usize;
+        let k = p.c[3].min(3) as usize;
+        let w = p.level_omega(p.c[3]);
+        let edge = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt() * (2.0f64).powi(p.c[3] as i32);
+        out[kb].0 += 1;
+        out[kb].1[k] += 1.0;
+        out[kb].2 += edge;
+    }
+    for o in out.iter_mut() {
+        if o.0 > 0 {
+            let n = o.0 as f64;
+            for s in o.1.iter_mut() {
+                *s /= n;
+            }
+            o.2 /= n;
+        }
+    }
+    out
+}
+
+/// Doc §15.59 gate: the photon-mix birth. With a mix, ambient photons are
+/// born at the drawn level with every inner level at edge c, the outer at
+/// edge spin_edge0 along travel with the photon/antiphoton sense, the birth
+/// level in the flags; inner axes follow the mode. With the default mix
+/// every photon is born at k = 0 (the engine before the knob).
+#[test]
+fn photon_mix_birth() {
+    use super::config::{InnerAxes, PhotonMix};
+    let ctx = GpuContext::new().expect("GPU");
+    for (mix, label) in [
+        (PhotonMix::default(), "default"),
+        (PhotonMix { weights: [1.0, 1.0, 1.0, 1.0], inner: InnerAxes::Match, ..PhotonMix::default() }, "match"),
+        (PhotonMix { weights: [0.0, 0.0, 0.0, 1.0], inner: InnerAxes::Minus, ..PhotonMix::default() }, "minus"),
+        (PhotonMix { weights: [0.0, 1.0, 1.0, 0.0], inner: InnerAxes::Plus, ..PhotonMix::default() }, "plus"),
+        (PhotonMix { weights: [0.0, 0.0, 1.0, 0.0], inner: InnerAxes::Random, ..PhotonMix::default() }, "random"),
+    ] {
+        let mut config = two_body_config(&[], &[], 2000.0, 3.0, 400_000, 0x5159, 0.05);
+        config.rough.photon_mix = mix;
+        config.sigma = 0.0;
+        let mut engine = DsmcEngine::new(&ctx, config);
+        engine.run_steady(&ctx, 1, 1, 1);
+        let ph = engine.read_photons(&ctx);
+        let mut n = [0usize; 4];
+        let mut n_plus = 0usize;
+        let mut amb = 0usize;
+        let mut random_dot = 0.0;
+        for p in &ph {
+            if p.c[0] & FLAG_ALIVE == 0 {
+                continue;
+            }
+            amb += 1;
+            let k = p.c[3];
+            assert_eq!((p.c[0] >> 26) & 3, k, "{label}: birth bits != level");
+            n[k as usize] += 1;
+            let chi = if p.c[0] & FLAG_SPECIES_PLUS != 0 { 1.0 } else { -1.0 };
+            if chi > 0.0 {
+                n_plus += 1;
+            }
+            let d = DVec3::new(p.b[0] as f64, p.b[1] as f64, p.b[2] as f64);
+            let wo = DVec3::from(p.level_omega(k));
+            let r = (2.0f64).powi(k as i32);
+            assert!((wo * r - d * chi).length() < 1e-4, "{label}: outer spin not chi*dir at edge c");
+            for j in 0..k {
+                let wj = DVec3::from(p.level_omega(j)) * (2.0f64).powi(j as i32);
+                assert!((wj.length() - 1.0).abs() < 1e-4, "{label}: inner level {j} not full");
+                match mix.inner {
+                    InnerAxes::Match => assert!((wj - d * chi).length() < 1e-4, "{label}: inner axis"),
+                    InnerAxes::Plus => assert!((wj - d).length() < 1e-4, "{label}: inner axis"),
+                    InnerAxes::Minus => assert!((wj + d).length() < 1e-4, "{label}: inner axis"),
+                    InnerAxes::Random => random_dot += wj.dot(d),
+                }
+            }
+        }
+        let share: Vec<f64> = n.iter().map(|&x| x as f64 / amb.max(1) as f64).collect();
+        println!("{label}: {amb} ambient, level shares {share:.3?}, photon share {:.3}, random inner <w.d> {:.4}", n_plus as f64 / amb.max(1) as f64, random_dot / amb.max(1) as f64);
+        assert!(amb > 5000, "{label}: too few photons");
+        assert!((n_plus as f64 / amb as f64 - 2.0 / 3.0).abs() < 0.03, "{label}: photon share");
+        let s: f64 = mix.weights.iter().sum();
+        for k in 0..4 {
+            assert!((share[k] - mix.weights[k] / s).abs() < 0.03, "{label}: level {k} share");
+        }
+        if mix.inner == InnerAxes::Random {
+            assert!((random_dot / amb as f64).abs() < 0.05, "random inner axes are not isotropic");
+        }
+    }
+}
+
+/// Doc §15.59 report: a field with no bodies, fed with the photon mix from
+/// the CFM_P_* knobs. Ambient enters at R_D and crosses the ball; at the end
+/// the population is read back and binned by radius, so the shells show how
+/// a born mix ages on its way in. Knobs: CFM_C_NA (8000), CFM_C_LAMBDA
+/// (0.3), CFM_C_H (0.25), CFM_F_RD (6), CFM_C_DT (0.06), CFM_C_SEED,
+/// CFM_P_STEPS (400; second half averaged), CFM_I_PHI.
+#[test]
+#[ignore]
+fn report_photon_mix() {
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let ctx = GpuContext::new().expect("GPU");
+    let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.3").parse().unwrap();
+    let r_d: f64 = env("CFM_F_RD", "6").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", "0.06").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let steps: u32 = env("CFM_P_STEPS", "400").parse().unwrap();
+    let mut config = two_body_config(&[], &[], n_a, lambda, 19_000_000, seed, dt);
+    config.h = env("CFM_C_H", "0.25").parse().unwrap();
+    config.boundary = Boundary::SphereEscape { r_d };
+    config.photon_fraction = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let mix = config.rough.photon_mix;
+    println!("=== photon mix field box: {mix:?}, n_a {n_a}, lambda {lambda}, h {}, R_D {r_d}, dt {dt}, {steps} steps, phi {} ===", config.h, config.photon_fraction);
+    let mut engine = DsmcEngine::new(&ctx, config);
+    let t0 = std::time::Instant::now();
+    let half = steps / 2;
+    let rep = engine.run_steady(&ctx, half, steps - half, (steps - half).max(1));
+    let t = &rep.totals;
+    let time = (steps - half) as f64 * dt;
+    let live: i64 = t.live_level.iter().sum();
+    println!(
+        "live census (1 in 64, second half): by current level {:.3?}, by birth level {:.3?}",
+        t.live_level.iter().map(|&x| x as f64 / live.max(1) as f64).collect::<Vec<_>>(),
+        t.live_birth.iter().map(|&x| x as f64 / live.max(1) as f64).collect::<Vec<_>>()
+    );
+    println!(
+        "per unit time: collisions {:.0}, stack events {:.0}, unstack events {:.0}, capped {:.0}, size-xsec clamps {:.0}, escaped by level {:?}",
+        t.collisions as f64 / time,
+        t.stack_events as f64 / time,
+        t.unstack_events as f64 / time,
+        t.stack_capped as f64 / time,
+        t.size_overflow as f64 / time,
+        t.esc_level.iter().map(|&x| (x as f64 / time).round()).collect::<Vec<_>>()
+    );
+    let ph = engine.read_photons(&ctx);
+    println!("by radius (birth level: count [share now at level 0 1 2 3] mean outer edge in c):");
+    for (r0, r1) in [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, r_d + 1.0)] {
+        let cen = mix_census(&ph, DVec3::ZERO, r0, r1);
+        let mut line = format!("  r {r0:.1}-{r1:.1}:");
+        for (kb, (n, s, e)) in cen.iter().enumerate() {
+            if *n > 0 {
+                line += &format!(" | born {kb}: {n} [{:.3} {:.3} {:.3} {:.3}] edge {:.3}", s[0], s[1], s[2], s[3], e);
+            }
+        }
+        println!("{line}");
+    }
+    println!("wall {:.0} s", t0.elapsed().as_secs_f64());
 }

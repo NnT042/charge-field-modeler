@@ -279,11 +279,74 @@ pub struct RoughParams {
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
+    /// Doc §15.59 photon-size knob (user, 2026-11-21). Test knob; the
+    /// default reproduces the engine before it.
+    pub photon_mix: PhotonMix,
+}
+
+/// How the inner (already full) levels of a born-larger ambient photon point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InnerAxes {
+    /// Along travel with the outer level's sense (chi * dir).
+    Match,
+    /// All +dir.
+    Plus,
+    /// All -dir.
+    Minus,
+    /// Each inner level on its own isotropic random axis.
+    Random,
+}
+
+/// Doc §15.59 (user 2026-11-20/21): ambient photons born at stacking level
+/// k with every inner level full (edge c), outer level at edge c along
+/// travel with the chirality chi (grav4.pdf: photon/antiphoton = the outer
+/// spin's left/right). Mass per birth level and a hit box set by the outer
+/// spin radius (arp.pdf: larger photons suffer more collisions).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PhotonMix {
+    /// Share of ambient photons born at k = 0..3 (normalised on upload).
+    pub weights: [f64; 4],
+    pub inner: InnerAxes,
+    /// Stacking mode only: linear mass = 2^(birth level) instead of 1
+    /// (each spin doubles the energy, photon2/howell3). Collision stacking
+    /// later keeps the birth mass.
+    pub mass_doubling: bool,
+    /// Stacking mode only: pair cross-section sigma * ((R1+R2)/2)^2 with
+    /// R = 2^(current outer level).
+    pub size_xsec: bool,
+    /// NTC ceiling level for `size_xsec` (candidates drawn at
+    /// sigma * 4^ceiling). Pairs above it are clamped and tallied.
+    pub size_ceiling: u32,
+}
+
+impl Default for PhotonMix {
+    fn default() -> Self {
+        PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0 }
+    }
+}
+
+impl PhotonMix {
+    /// GPU packing: cumulative shares c0..c2 and flags (bit 0 mass, bits
+    /// 1-2 inner, bit 3 size, bits 4-5 ceiling).
+    pub fn pack(&self) -> ([f32; 3], u32) {
+        let s: f64 = self.weights.iter().sum();
+        assert!(s > 0.0 && self.weights.iter().all(|w| *w >= 0.0), "photon mix weights");
+        let c0 = self.weights[0] / s;
+        let c1 = c0 + self.weights[1] / s;
+        let c2 = c1 + self.weights[2] / s;
+        let inner = match self.inner {
+            InnerAxes::Match => 0,
+            InnerAxes::Plus => 1,
+            InnerAxes::Minus => 2,
+            InnerAxes::Random => 3,
+        };
+        ([c0 as f32, c1 as f32, c2 as f32], self.mass_doubling as u32 | (inner << 1) | ((self.size_xsec as u32) << 3) | (self.size_ceiling.min(3) << 4))
+    }
 }
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0 } }
     }
 }
 

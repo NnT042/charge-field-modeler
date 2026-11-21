@@ -278,6 +278,13 @@ pub struct GpuParams {
     /// Doc §15.9: 0 off, 1 fixed maze frame, 2 swept (level-9 phase),
     /// 3 isotropic; bit 8 = MazeSpeed::EjectC (doc §15.14).
     pub maze_mode: u32,
+
+    /// Doc §15.59 photon mix: cumulative birth-level shares and flags
+    /// (see `PhotonMix::pack`).
+    pub mix_c0: f32,
+    pub mix_c1: f32,
+    pub mix_c2: f32,
+    pub mix_flags: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side
@@ -536,7 +543,13 @@ pub const TALLY_FAR_LEN: usize = 24;
 pub const TALLY_CHAN: usize = 3080;
 pub const TALLY_CHAN_LEN: usize = 16;
 
-pub const TALLY_LEN: usize = 3096;
+/// Doc §15.59 photon mix: live census by current level [k] and birth level
+/// [k] (1 in 64 photons sampled per step), and size-xsec acceptance clamps.
+pub const TALLY_LIVE_LEVEL: usize = 3096;
+pub const TALLY_LIVE_BIRTH: usize = 3100;
+pub const TALLY_SIZE_OVERFLOW: usize = 3104;
+
+pub const TALLY_LEN: usize = 3108;
 
 /// Doc §15/§15.8 ball keyframe buffer, per body: 9 keyframes x 4 vec4
 /// [(centre, radius), (omega, 0), (centre velocity, 0), frame quaternion],

@@ -36,6 +36,7 @@ struct Params {
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, grain_mode: u32, maze_mode: u32,
+    mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -598,7 +599,7 @@ fn wall_contact(p: ptr<function, GpuPhoton>, gv: vec3<f32>, gw: vec3<f32>, n: ve
 // gv + sw x n; the twist grip acts on (w - tw).n.
 fn wall_contact_general(p: ptr<function, GpuPhoton>, gv: vec3<f32>, sw: vec3<f32>, tw: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     let r = exp2(f32((*p).c[3]));
-    let m = select(r, 1.0, params.stacking != 0u);
+    let m = photon_mass((*p).c[0], (*p).c[3]);
     let kappa = params.rough_kappa;
     let inertia = kappa * m * r * r;
     var v = (*p).b.xyz * (*p).d.w;
@@ -663,7 +664,7 @@ fn wall_contact_general(p: ptr<function, GpuPhoton>, gv: vec3<f32>, sw: vec3<f32
 // spin units (edge speed r|w| in c), so L = kappa m r^2 R_ph w.
 fn photon_spin_am(p: ptr<function, GpuPhoton>) -> vec3<f32> {
     let r = exp2(f32((*p).c[3]));
-    let m = select(r, 1.0, params.stacking != 0u);
+    let m = photon_mass((*p).c[0], (*p).c[3]);
     return params.rough_kappa * m * r * r * PHOTON_R_WORLD * (*p).d.xyz;
 }
 
@@ -714,6 +715,10 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if ((ph.c[0] & FLAG_ALIVE) == 0u) {
         cell_of[idx] = params.num_cells + 1u; // dead bucket (num_cells = held-photon parking, §15.11)
         return;
+    }
+    if ((idx & 63u) == 0u && (params.mix_flags != 0u || params.mix_c0 < 1.0)) {
+        atomicAdd(&tallies[TALLY_LIVE_LEVEL + min(ph.c[3], 3u)], 1);
+        atomicAdd(&tallies[TALLY_LIVE_BIRTH + ((ph.c[0] >> FLAG_BIRTH_SHIFT) & 3u)], 1);
     }
 
     // Doc §15.11 holding tank: a held photon rides the core until its
@@ -816,7 +821,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             let vp = length(v_old - dot(v_old, ax) * ax);
             let phi = sign(ballkeys[bg * BALLKEY_STRIDE + 49u].w) * vp * ph.d.w * params.dt / (hk.x * bodies[bg].center.w);
             let v_new = normalize(v_old * cos(phi) + cross(ax, v_old) * sin(phi) + ax * dot(ax, v_old) * (1.0 - cos(phi)));
-            let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+            let m = photon_mass(ph.c[0], ph.c[3]);
             let dpg = -(v_new - v_old) * ph.d.w * m;
             let tqg = cross(ph.a.xyz - bodies[bg].center.xyz, dpg);
             for (var a = 0u; a < 3u; a = a + 1u) {
@@ -834,7 +839,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 let vaz = dot(v_old, cross(ax, perp / pl));
                 let phi = vaz * ph.d.w * params.dt / pl;
                 let v_new = v_old * cos(phi) + cross(ax, v_old) * sin(phi) + ax * dot(ax, v_old) * (1.0 - cos(phi));
-                let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                let m = photon_mass(ph.c[0], ph.c[3]);
                 let dpg = -(v_new - v_old) * ph.d.w * m;
                 let tqg = cross(rel, dpg);
                 for (var a = 0u; a < 3u; a = a + 1u) {
@@ -964,7 +969,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                 if (!now_held) {
                     tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                 }
-                let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                let m = photon_mass(ph.c[0], ph.c[3]);
                 let bcm = bodies[b].center.xyz;
                 tally_src_in(b, scat, v_before * m, cross(xh - bcm, v_before * m));
                 if (now_held) {
@@ -1256,7 +1261,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     let perp = rel - za * ax;
                     let ca = dot(ph.b.xyz, ax);
                     if (ca * za < 0.0 && abs(ca) >= pk.y && dot(perp, perp) <= pk.z * pk.z * rr * rr) {
-                        let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                        let m = photon_mass(ph.c[0], ph.c[3]);
                         var nd = ax * sign(ca);
                         // Doc §15.52 swirl: a helix about the axis, turning
                         // with the body (pk.w = signed helix angle).
@@ -1308,7 +1313,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                     ph.b = vec4<f32>(dir, axial_helicity(&ph, ph.d.xyz, dir));
                     ph.d = vec4<f32>(ph.d.xyz, 1.0);
                     ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
-                    let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                    let m = photon_mass(ph.c[0], ph.c[3]);
                     let v_after = dir;
                     let dp = -(v_after - v_before) * m;
                     let tqe = cross(pos_in - ce, v_before * m) - cross(pos - ce, v_after * m);
@@ -1399,7 +1404,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         tally_spin(TALLY_SPIN_OUT + b * 3u, photon_spin_am(&ph));
                         ph.c[0] = (ph.c[0] & ~(FLAG_EMIT_MASK | FLAG_XHIT)) | ((b + 1u) << FLAG_EMIT_SHIFT);
                     }
-                    let m = select(exp2(f32(ph.c[3])), 1.0, params.stacking != 0u);
+                    let m = photon_mass(ph.c[0], ph.c[3]);
                     let v_after = select(ph.b.xyz * ph.d.w, vec3<f32>(0.0), (ph.c[0] & FLAG_HELD) != 0u);
                     let dp = -(v_after - v_before) * m;
                     // Doc §15.20: torque about the body centre, absorbed on

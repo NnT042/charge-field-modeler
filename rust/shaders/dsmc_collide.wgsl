@@ -53,6 +53,7 @@ struct Params {
     glancing_bias: u32, stacking: u32, stack_max_level: u32, unstack_edge: f32,
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, _pad14a: u32, maze_mode: u32,
+    mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
 };
 
 // Doc §15.47: bit 13 of maze_mode = local (nearest-neighbour) pairing. The
@@ -154,8 +155,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     // stacking: E1 stiffness, m = R = 2^k.
     let ra = exp2(f32((*pa).c[3]));
     let rb = exp2(f32((*pb).c[3]));
-    let ma = select(ra, 1.0, params.stacking != 0u);
-    let mb = select(rb, 1.0, params.stacking != 0u);
+    let ma = photon_mass((*pa).c[0], (*pa).c[3]);
+    let mb = photon_mass((*pb).c[0], (*pb).c[3]);
     let kappa = params.rough_kappa;
     let ia = kappa * ma * ra * ra;
     let ib = kappa * mb * rb * rb;
@@ -394,7 +395,12 @@ fn main(
     // that config value is a safe, cheap ceiling -- see DsmcConfig doc.
     // Off -> size_max = 1 -> sigma_eff = sigma (bit-identical to HEAD).
     let k_max_ntc = min(params.emit_stiffness_level, 7u);
-    let size_max: f32 = select(1.0, exp2(f32(k_max_ntc)), params.sigma_size_scaling != 0u);
+    var size_max: f32 = select(1.0, exp2(f32(k_max_ntc)), params.sigma_size_scaling != 0u);
+    // Doc §15.59 photon mix: hit box = outer spin radius (stacking), NTC at
+    // the configured ceiling level.
+    if ((params.mix_flags & 8u) != 0u) {
+        size_max = exp2(f32((params.mix_flags >> 4u) & 3u));
+    }
     let sigma_eff = params.sigma * size_max * size_max;
 
     if (lid.x == 0u) {
@@ -606,8 +612,8 @@ fn chan_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>) {
     let kappa = params.rough_kappa;
     let ra = exp2(f32((*pa).c[3]));
     let rb = exp2(f32((*pb).c[3]));
-    let ia = kappa * select(ra, 1.0, params.stacking != 0u) * ra * ra;
-    let ib = kappa * select(rb, 1.0, params.stacking != 0u) * rb * rb;
+    let ia = kappa * photon_mass((*pa).c[0], (*pa).c[3]) * ra * ra;
+    let ib = kappa * photon_mass((*pb).c[0], (*pb).c[3]) * rb * rb;
     let va = da * (*pa).d.w;
     let vb = db * (*pb).d.w;
     let vcm = (va + vb) * 0.5;
@@ -730,11 +736,14 @@ fn try_pair(i: u32, j: u32, key_base: u32, draw0: u32, g_max: f32, size_max: f32
     if (accept_p > 1.0) {
         atomicAdd(&tallies[TALLY_ACCEPT_OVERFLOW_IDX], 1);
     }
-    if (params.sigma_size_scaling != 0u) {
+    if (params.sigma_size_scaling != 0u || (params.mix_flags & 8u) != 0u) {
         // sigma_pair / sigma_max = ((m1+m2)/2)^2 / size_max^2; sigma
         // itself cancels (doc §11d).
         let size_pair = (m_a + m_b) * 0.5;
         accept_p = accept_p * (size_pair * size_pair) / (size_max * size_max);
+        if (accept_p > 1.0) {
+            atomicAdd(&tallies[TALLY_SIZE_OVERFLOW_IDX], 1);
+        }
     }
     if (rand01(params.seed_hi, params.seed_lo, key_base, draw0 + 2u) >= accept_p) {
         return;

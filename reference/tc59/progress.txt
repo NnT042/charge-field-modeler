@@ -1,0 +1,12 @@
+START Sat Nov 21 10:22:12 CST 2026
+eq_match done Sat Nov 21 10:22:54 CST 2026
+eq_plus done Sat Nov 21 10:24:08 CST 2026
+eq_minus done Sat Nov 21 10:24:57 CST 2026
+eq_random done Sat Nov 21 10:25:46 CST 2026
+eq_plus_mass_size done Sat Nov 21 10:50:43 CST 2026
+eq_minus_mass_size done Sat Nov 21 11:15:29 CST 2026
+eq_random_mass_size done Sat Nov 21 11:39:33 CST 2026
+eq_random_mass done Sat Nov 21 11:40:24 CST 2026
+eq_random_size done Sat Nov 21 11:50:01 CST 2026
+k0_size done Sat Nov 21 12:02:50 CST 2026
+ALL DONE Sat Nov 21 12:02:50 CST 2026

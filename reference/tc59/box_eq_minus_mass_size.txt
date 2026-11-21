@@ -1,0 +1,9 @@
+test gpu::dsmc::shell_gates::report_photon_mix ... === photon mix field box: PhotonMix { weights: [1.0, 1.0, 1.0, 1.0], inner: Minus, mass_doubling: true, size_xsec: true, size_ceiling: 3 }, n_a 8000, lambda 0.3, h 0.25, R_D 6, dt 0.06, 400 steps, phi 0.6666666667 ===
+live census (1 in 64, second half): by current level [0.209, 0.207, 0.173, 0.411], by birth level [0.235, 0.241, 0.255, 0.269]
+per unit time: collisions 543320584, stack events 187864, unstack events 150, capped 684621339, size-xsec clamps 0, escaped by level [207090.0, 202885.0, 165971.0, 362633.0]
+by radius (birth level: count [share now at level 0 1 2 3] mean outer edge in c):
+  r 0.0-1.5: | born 0: 119004 [0.889 0.111 0.000 0.000] edge 0.150 | born 1: 121726 [0.000 0.747 0.234 0.019] edge 0.347 | born 2: 128922 [0.000 0.000 0.457 0.543] edge 0.831 | born 3: 136219 [0.000 0.000 0.000 1.000] edge 1.078
+  r 1.5-3.0: | born 0: 472352 [0.887 0.113 0.000 0.000] edge 0.150 | born 1: 483968 [0.000 0.749 0.233 0.018] edge 0.347 | born 2: 510155 [0.000 0.000 0.457 0.543] edge 0.831 | born 3: 538830 [0.000 0.000 0.000 1.000] edge 1.076
+  r 3.0-4.5: | born 0: 565855 [0.887 0.113 0.000 0.000] edge 0.151 | born 1: 579728 [0.000 0.749 0.233 0.018] edge 0.347 | born 2: 614982 [0.000 0.000 0.456 0.544] edge 0.832 | born 3: 651225 [0.000 0.000 0.000 1.000] edge 1.077
+  r 4.5-7.0: | born 0: 765588 [0.892 0.108 0.000 0.000] edge 0.214 | born 1: 772676 [0.000 0.755 0.228 0.017] edge 0.376 | born 2: 790208 [0.000 0.000 0.466 0.534] edge 0.818 | born 3: 803684 [0.000 0.000 0.000 1.000] edge 1.065
+wall 1482 s

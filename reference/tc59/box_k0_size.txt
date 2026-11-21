@@ -1,0 +1,9 @@
+test gpu::dsmc::shell_gates::report_photon_mix ... === photon mix field box: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: Match, mass_doubling: false, size_xsec: true, size_ceiling: 3 }, n_a 8000, lambda 0.3, h 0.25, R_D 6, dt 0.06, 400 steps, phi 0.6666666667 ===
+live census (1 in 64, second half): by current level [0.590, 0.315, 0.002, 0.093], by birth level [1.000, 0.000, 0.000, 0.000]
+per unit time: collisions 73888164, stack events 296120, unstack events 31, capped 61158600, size-xsec clamps 0, escaped by level [638966.0, 165479.0, 5933.0, 25224.0]
+by radius (birth level: count [share now at level 0 1 2 3] mean outer edge in c):
+  r 0.0-1.5: | born 0: 96429 [0.442 0.477 0.001 0.080] edge 0.477
+  r 1.5-3.0: | born 0: 686810 [0.486 0.436 0.003 0.075] edge 0.462
+  r 3.0-4.5: | born 0: 1943935 [0.548 0.365 0.000 0.087] edge 0.538
+  r 4.5-7.0: | born 0: 3995877 [0.641 0.248 0.002 0.109] edge 0.717
+wall 766 s

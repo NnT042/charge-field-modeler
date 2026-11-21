@@ -94,6 +94,9 @@ pub struct Totals {
     pub unstack_events: i64,
     pub stack_capped: i64,
     pub esc_level: [i64; 4],
+    pub live_level: [i64; 4],
+    pub live_birth: [i64; 4],
+    pub size_overflow: i64,
 
     // --- Doc §14: permeable shell bodies (per body) ---
     pub sh_entries: [i64; 4],
@@ -242,7 +245,10 @@ impl Totals {
         self.stack_capped += other.stack_capped;
         for k in 0..4 {
             self.esc_level[k] += other.esc_level[k];
+            self.live_level[k] += other.live_level[k];
+            self.live_birth[k] += other.live_birth[k];
         }
+        self.size_overflow += other.size_overflow;
         for b in 0..4 {
             self.sh_entries[b] += other.sh_entries[b];
             self.sh_exits[b] += other.sh_exits[b];
@@ -429,6 +435,14 @@ impl Totals {
         for k in 0..4 {
             self.esc_level[k] += raw[TALLY_ESC_LEVEL + k] as i64;
         }
+        {
+            use super::gpu_types::{TALLY_LIVE_BIRTH, TALLY_LIVE_LEVEL, TALLY_SIZE_OVERFLOW};
+            for k in 0..4 {
+                self.live_level[k] += raw[TALLY_LIVE_LEVEL + k] as i64;
+                self.live_birth[k] += raw[TALLY_LIVE_BIRTH + k] as i64;
+            }
+            self.size_overflow += raw[TALLY_SIZE_OVERFLOW] as i64;
+        }
         use super::gpu_types::{
             TALLY_SH_CLEAN, TALLY_SH_CONTACTS, TALLY_SH_DP, TALLY_SH_ENTRIES, TALLY_SH_EXITS, TALLY_SH_EXIT_BAND, TALLY_SH_EXIT_BAND_HEL,
             TALLY_SH_THROUGH, TALLY_SH_TORQUE, TALLY_SH_WORK,
@@ -608,6 +622,7 @@ impl DsmcEngine {
             assert!(config.rough.speed_mode != SpeedMode::PinnedC || config.rough.g_max == 2.0, "PinnedC: g_max is exactly 2");
             assert!(config.rough.stack_max_level <= 3, "stacking storage holds levels 0..=3");
             assert!(!config.rough.stacking || config.emit_stiffness_level == 0, "stacking: photons are born at level 0");
+            assert!(config.rough.stacking || config.rough.photon_mix == super::config::PhotonMix::default(), "photon mix (doc §15.59) needs stacking");
         }
         if config.body_model != BodyModel::Absorber {
             assert!(config.exchange_rule == ExchangeRule::RoughSphere, "Shells bodies use the rough-sphere photon mechanics");
@@ -937,6 +952,10 @@ impl DsmcEngine {
                 // Doc §15.53: bit 14 = channel spin rule, bits 16..23 = eta*255.
                 // Doc §15.54 bit 15 = quantum; §15.55 bits 24..25 = edge mode.
                 | if c.rough.pipe_spin && !c.rough.pipe_lane { 16384 | (if c.rough.pipe_quantum { 32768 } else { 0 }) | (((c.rough.pipe_spin_eta.clamp(0.0, 1.0) * 255.0).round() as u32) << 16) | ((c.rough.pipe_edge.min(3)) << 24) } else { 0 },
+            mix_c0: c.rough.photon_mix.pack().0[0],
+            mix_c1: c.rough.photon_mix.pack().0[1],
+            mix_c2: c.rough.photon_mix.pack().0[2],
+            mix_flags: c.rough.photon_mix.pack().1,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);

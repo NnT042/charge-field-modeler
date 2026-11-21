@@ -206,3 +206,24 @@ fn axial_helicity(p: ptr<function, GpuPhoton>, w_outer: vec3<f32>, d: vec3<f32>)
     return dot(w0, d) / max(params.spin_edge0, 1e-6);
 }
 
+
+// Doc §15.59 photon mix: birth level in photon flag bits 26-27.
+const FLAG_BIRTH_SHIFT: u32 = 26u;
+
+// Linear mass of a photon with flags c0 at level k. E1 (stacking off):
+// m = 2^k. Stacking: 1, or 2^(birth level) with the mass-doubling knob.
+fn photon_mass(c0: u32, k: u32) -> f32 {
+    if (params.stacking == 0u) {
+        return exp2(f32(k));
+    }
+    if ((params.mix_flags & 1u) != 0u) {
+        return exp2(f32((c0 >> FLAG_BIRTH_SHIFT) & 3u));
+    }
+    return 1.0;
+}
+
+// Doc 15.59 photon mix (gpu_types.rs): live census by current level and by
+// birth level (1 in 64 photons sampled per step), size-xsec clamp count.
+const TALLY_LIVE_LEVEL: u32 = 3096u;
+const TALLY_LIVE_BIRTH: u32 = 3100u;
+const TALLY_SIZE_OVERFLOW_IDX: u32 = 3104u;
