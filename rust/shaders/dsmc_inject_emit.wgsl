@@ -117,7 +117,23 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 
         var pos: vec3<f32>;
         var dir: vec3<f32>;
-        if (params.boundary_mode == 1u) {
+        var inside_body = false;
+        if ((params.mix_flags & 64u) != 0u) {
+            // Doc §15.59 pre-fill (one dispatch at t = 0, engine.prefill_ball):
+            // uniform in the escape sphere, isotropic, so the ball starts at
+            // the field density instead of empty (the empty start sends one
+            // converging wave to the centre, tc59 step 0). Slots that land
+            // inside a body are left dead.
+            let u = rand01(params.seed_hi, params.seed_lo, id, 1u);
+            let r = params.boundary_extent * pow(u, 1.0 / 3.0);
+            pos = center + rand_unit_vec(params.seed_hi, params.seed_lo, id, 2u) * r;
+            dir = rand_unit_vec(params.seed_hi, params.seed_lo, id, 4u);
+            for (var i = 0u; i < params.n_bodies; i = i + 1u) {
+                if (length(pos - bodies[i].center.xyz) < bodies[i].center.w) {
+                    inside_body = true;
+                }
+            }
+        } else if (params.boundary_mode == 1u) {
             // PeriodicBox: uniform fill of the whole box, isotropic direction
             // (used once at t=0 -- there is no ongoing boundary flux to inject
             // in a periodic domain, the population is exactly conserved).
@@ -155,7 +171,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 
         out.a = vec4<f32>(pos, bitcast<f32>(id));
         out.b = vec4<f32>(dir, chi);
-        var flags = FLAG_ALIVE;
+        var flags = select(FLAG_ALIVE, 0u, inside_body);
         if (chi > 0.0) {
             flags = flags | FLAG_SPECIES_PLUS;
         }

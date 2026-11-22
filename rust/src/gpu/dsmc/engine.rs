@@ -607,6 +607,8 @@ pub struct DsmcEngine {
     /// unexercised by the B1 gates, both of which use Forced emission) when
     /// `config.emission_mode == Forced`.
     pump_rate_ema: Vec<f64>,
+    /// Doc §15.59: set only during the prefill_ball dispatch (mix_flags bit 6).
+    prefill_pending: bool,
 }
 
 impl DsmcEngine {
@@ -759,6 +761,7 @@ impl DsmcEngine {
             ambient_remainder: 0.0,
             emit_remainder,
             pump_rate_ema,
+            prefill_pending: false,
         }
     }
 
@@ -955,7 +958,7 @@ impl DsmcEngine {
             mix_c0: c.rough.photon_mix.pack().0[0],
             mix_c1: c.rough.photon_mix.pack().0[1],
             mix_c2: c.rough.photon_mix.pack().0[2],
-            mix_flags: c.rough.photon_mix.pack().1,
+            mix_flags: c.rough.photon_mix.pack().1 | if self.prefill_pending { 64 } else { 0 },
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);
@@ -1100,6 +1103,26 @@ impl DsmcEngine {
     /// One dispatch; the caller decides how often to call this (a single
     /// burst for a transport-only gate, or every step for a steady-state
     /// loop).
+    /// Doc §15.59 (tc59 step 0): fills the escape sphere once with ambient
+    /// photons at the field density n_a, uniform and isotropic, with the
+    /// configured photon mix, so a run starts from a full field instead of an
+    /// empty ball (whose first inflow converges on the centre and, with the
+    /// hit box on, lingers there for ~100 time units). Call right after
+    /// `new`. Slots inside a body stay dead. Returns the photons placed.
+    pub fn prefill_ball(&mut self, ctx: &GpuContext) -> u32 {
+        let r_d = match self.config.boundary {
+            Boundary::SphereEscape { r_d } => r_d,
+            Boundary::PeriodicBox { .. } => return 0,
+        };
+        let n = (self.config.n_ambient * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3)) as u32;
+        let zeros = vec![0u32; self.config.bodies.len()];
+        self.prefill_pending = true;
+        self.inject_batch(ctx, n, &zeros);
+        self.prefill_pending = false;
+        self.write_params(ctx);
+        n
+    }
+
     pub fn inject_batch(&mut self, ctx: &GpuContext, n_ambient: u32, emit_counts: &[u32]) {
         let n_emit_total: u32 = emit_counts.iter().sum();
         let total = n_ambient + n_emit_total;

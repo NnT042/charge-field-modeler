@@ -4,7 +4,7 @@
 export PATH=/usr/bin:/bin:$PATH
 cd /c/Users/nnt04/Project/charge-field-modeler
 P=reference/tc59/progress_prof.txt
-run() { name=$1; shift; env "$@" cargo test --manifest-path rust/Cargo.toml --profile fast --features gpu report_photon_mix_profile -- --ignored --nocapture --test-threads=1 2>&1 | grep -E "===|^t |wall|panicked|periodic fill|columns|MAX_CELL" > reference/tc59/prof_$name.txt; echo "$name done $(date)" >> $P; }
+run() { name=$1; shift; env "$@" cargo test --manifest-path rust/Cargo.toml --profile fast --features gpu report_photon_mix_profile -- --ignored --nocapture --test-threads=1 2>&1 | grep -E "===|^t |wall|panicked|periodic fill|prefill|columns|MAX_CELL" > reference/tc59/prof_$name.txt; echo "$name done $(date)" >> $P; }
 echo "START $(date)" > $P
 EQ="CFM_P_MIX=1,1,1,1 CFM_P_INNER=random"
 run esc_k0 CFM_P_TIME=120

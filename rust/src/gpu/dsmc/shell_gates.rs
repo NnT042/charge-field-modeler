@@ -2493,6 +2493,10 @@ fn report_deuteron() {
             }
         }
         apply_level_speeds(&mut engine);
+        // CFM_P_PREFILL=1 (doc §15.59, tc59 step 0): start from a full field.
+        if env("CFM_P_PREFILL", "0") == "1" {
+            engine.prefill_ball(&ctx);
+        }
         engine
     };
     // 1. Self-force per class, body alone at the domain centre.
@@ -3631,6 +3635,9 @@ fn report_photon_mix_profile() {
         let n = (n_a * (2.0 * half).powi(3)) as u32;
         engine.inject_batch(&ctx, n, &[]);
         println!("periodic fill: {n} photons");
+    }
+    if !periodic && env("CFM_P_PREFILL", "0") == "1" {
+        println!("prefill: {} photons", engine.prefill_ball(&ctx));
     }
     let shells = [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 6.0)];
     println!("columns per shell r0-r1: density/n_a, mean v.r_hat, share at level 3");
