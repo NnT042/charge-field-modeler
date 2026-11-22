@@ -2558,6 +2558,9 @@ fn report_deuteron() {
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
         println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], DVec3::Z, cal as f64 * dt));
         println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
+        if env("CFM_P_CELLS", "0") == "1" {
+            println!("alone {cl:<7}: crowded cells: {}", crowded_cells(&engine, &ctx));
+        }
         if t.hole_pass[0] > 0 {
             println!("alone {cl:<7}: pipe: photons turned onto the axis per unit time: {:.0}", t.hole_pass[0] as f64 / (cal as f64 * dt));
         }
@@ -2959,6 +2962,9 @@ fn report_deuteron() {
             // Rigid turning: the spin axis moves along torque x axis.
             (tsum[b] / time).cross(q[b] * DVec3::Z).x, (tsum[b] / time).cross(q[b] * DVec3::Z).y, (tsum[b] / time).cross(q[b] * DVec3::Z).z
         );
+    }
+    if env("CFM_P_CELLS", "0") == "1" {
+        println!("crowded cells, pair run end: {}", crowded_cells(&engine, &ctx));
     }
 }
 
@@ -3623,7 +3629,11 @@ fn report_photon_mix_profile() {
     let snap: f64 = env("CFM_P_SNAP", "10").parse().unwrap();
     let periodic = env("CFM_P_BOX", "escape") == "periodic";
     let half: f64 = env("CFM_P_HALF", "4.5").parse().unwrap();
-    let mut config = two_body_config(&[], &[], n_a, lambda, 19_000_000, seed, dt);
+    // Only the slots the field needs (as report_deuteron): the full 19M cap
+    // asks for ~4 GiB of photon buffers and failed at start once (tc59).
+    let vol = if periodic { (2.0 * half).powi(3) } else { 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) };
+    let cap = ((n_a * vol * 1.6) as u32).min(19_000_000);
+    let mut config = two_body_config(&[], &[], n_a, lambda, cap, seed, dt);
     config.h = env("CFM_C_H", "0.25").parse().unwrap();
     config.boundary = if periodic { Boundary::PeriodicBox { half_extent: half } } else { Boundary::SphereEscape { r_d } };
     config.photon_fraction = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
@@ -3679,4 +3689,43 @@ fn report_photon_mix_profile() {
         println!("{line}");
     }
     println!("wall {:.0} s", t0.elapsed().as_secs_f64());
+}
+
+
+/// Doc §15.59: where the over-full collision cells are. Bins the live
+/// photons on the engine's own grid and lists the cells above MAX_CELL
+/// (2048, dsmc_collide.wgsl): how many, and the 6 fullest with their count
+/// and distance from the nearest body centre (in body radii).
+fn crowded_cells(engine: &DsmcEngine, ctx: &GpuContext) -> String {
+    let g = &engine.grid;
+    let ph = engine.read_photons(ctx);
+    let mut cnt = vec![0u32; g.num_cells as usize];
+    for p in &ph {
+        if p.c[0] & FLAG_ALIVE == 0 {
+            continue;
+        }
+        let x = (DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64) - g.min) / g.h;
+        let (i, j, k) = (x.x.floor() as i64, x.y.floor() as i64, x.z.floor() as i64);
+        if i < 0 || j < 0 || k < 0 || i >= g.dim[0] as i64 || j >= g.dim[1] as i64 || k >= g.dim[2] as i64 {
+            continue;
+        }
+        cnt[((k as u32 * g.dim[1] + j as u32) * g.dim[0] + i as u32) as usize] += 1;
+    }
+    let centers: Vec<DVec3> = engine.config.bodies.iter().map(|b| b.center).collect();
+    let mut over: Vec<(u32, DVec3)> = Vec::new();
+    for (c, &n) in cnt.iter().enumerate() {
+        if n > 2048 {
+            let c = c as u32;
+            let (i, j, k) = (c % g.dim[0], (c / g.dim[0]) % g.dim[1], c / (g.dim[0] * g.dim[1]));
+            over.push((n, g.min + DVec3::new(i as f64 + 0.5, j as f64 + 0.5, k as f64 + 0.5) * g.h));
+        }
+    }
+    over.sort_by(|a, b| b.0.cmp(&a.0));
+    let field = cnt.iter().filter(|&&n| n > 0).map(|&n| n as f64).sum::<f64>() / cnt.iter().filter(|&&n| n > 0).count().max(1) as f64;
+    let mut s = format!("{} cells over 2048 (mean occupied cell {:.0})", over.len(), field);
+    for (n, x) in over.iter().take(6) {
+        let (bi, d) = centers.iter().enumerate().map(|(b, c)| (b, (*x - *c).length())).fold((usize::MAX, f64::INFINITY), |a, v| if v.1 < a.1 { v } else { a });
+        s += &format!(" | {n} at ({:+.2},{:+.2},{:+.2}) {:.2} from body {bi}", x.x, x.y, x.z, d);
+    }
+    s
 }
