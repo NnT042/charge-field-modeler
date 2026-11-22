@@ -3597,3 +3597,79 @@ fn report_photon_mix() {
     }
     println!("wall {:.0} s", t0.elapsed().as_secs_f64());
 }
+
+/// Doc §15.59 step 0 (VAST_HITBOX_PLAN.md): is the hit-box pile-up a
+/// boundary artifact? A field box with no bodies under the CFM_P_* mix,
+/// snapshotted every CFM_P_SNAP time units up to CFM_P_TIME: density by
+/// radius (in units of n_a), mean radial direction of travel (v.r_hat,
+/// negative = inward stream) and share at level 3. CFM_P_BOX = escape (the
+/// normal ball, fed at R_D) or periodic (cube of half-size CFM_P_HALF, filled
+/// once, wraparound, no inflow or escape). Other knobs as report_photon_mix.
+#[test]
+#[ignore]
+fn report_photon_mix_profile() {
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
+    let ctx = GpuContext::new().expect("GPU");
+    let n_a: f64 = env("CFM_C_NA", "8000").parse().unwrap();
+    let lambda: f64 = env("CFM_C_LAMBDA", "0.3").parse().unwrap();
+    let r_d: f64 = env("CFM_F_RD", "6").parse().unwrap();
+    let dt: f64 = env("CFM_C_DT", "0.06").parse().unwrap();
+    let seed: u64 = env("CFM_C_SEED", "49344").parse().unwrap();
+    let t_end: f64 = env("CFM_P_TIME", "200").parse().unwrap();
+    let snap: f64 = env("CFM_P_SNAP", "10").parse().unwrap();
+    let periodic = env("CFM_P_BOX", "escape") == "periodic";
+    let half: f64 = env("CFM_P_HALF", "4.5").parse().unwrap();
+    let mut config = two_body_config(&[], &[], n_a, lambda, 19_000_000, seed, dt);
+    config.h = env("CFM_C_H", "0.25").parse().unwrap();
+    config.boundary = if periodic { Boundary::PeriodicBox { half_extent: half } } else { Boundary::SphereEscape { r_d } };
+    config.photon_fraction = env("CFM_I_PHI", "0.6666666667").parse().unwrap();
+    let mix = config.rough.photon_mix;
+    let r_out = if periodic { half } else { r_d };
+    println!("=== photon mix profile: box {}, {mix:?}, n_a {n_a}, lambda {lambda}, h {}, extent {r_out}, dt {dt}, to t {t_end} every {snap} ===", if periodic { "periodic" } else { "escape" }, config.h);
+    let mut engine = DsmcEngine::new(&ctx, config);
+    if periodic {
+        let n = (n_a * (2.0 * half).powi(3)) as u32;
+        engine.inject_batch(&ctx, n, &[]);
+        println!("periodic fill: {n} photons");
+    }
+    let shells = [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 6.0)];
+    println!("columns per shell r0-r1: density/n_a, mean v.r_hat, share at level 3");
+    let t0 = std::time::Instant::now();
+    let chunk = ((snap / dt).round() as u32).max(1);
+    let n_snap = (t_end / snap).round() as u32;
+    for s in 1..=n_snap {
+        let rep = engine.run_steady(&ctx, 0, chunk, chunk);
+        let ph = engine.read_photons(&ctx);
+        let mut cnt = [0.0f64; 4];
+        let mut vr = [0.0f64; 4];
+        let mut l3 = [0.0f64; 4];
+        let mut live = 0usize;
+        for p in &ph {
+            if p.c[0] & FLAG_ALIVE == 0 {
+                continue;
+            }
+            live += 1;
+            let x = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64);
+            let r = x.length();
+            if let Some(i) = shells.iter().position(|&(a, b)| r >= a && r < b) {
+                let v = DVec3::new(p.b[0] as f64, p.b[1] as f64, p.b[2] as f64);
+                cnt[i] += 1.0;
+                vr[i] += v.normalize_or_zero().dot(x / r.max(1e-9));
+                if p.c[3] >= 3 {
+                    l3[i] += 1.0;
+                }
+            }
+        }
+        let mut line = format!("t {:6.1} live {live:>9} coll/t {:>11.0}", s as f64 * snap, rep.totals.collisions as f64 / (chunk as f64 * dt));
+        for (i, &(a, b)) in shells.iter().enumerate() {
+            if a >= r_out {
+                continue;
+            }
+            let vol = 4.0 / 3.0 * std::f64::consts::PI * (b.min(r_out).powi(3) - a.powi(3));
+            let n = cnt[i].max(1.0);
+            line += &format!(" | {a:.1}-{:.1}: {:6.2} {:+.3} {:.3}", b.min(r_out), cnt[i] / vol / n_a, vr[i] / n, l3[i] / n);
+        }
+        println!("{line}");
+    }
+    println!("wall {:.0} s", t0.elapsed().as_secs_f64());
+}
