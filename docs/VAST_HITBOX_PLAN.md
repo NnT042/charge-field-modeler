@@ -1,81 +1,89 @@
-# Plan: hit-box photon runs on rented GPUs (draft, 2026-11-21)
+# Plan: hit-box photon runs on rented GPUs (2026-11-22)
 
-Follows doc §15.59 (tc59). Status: **draft for the user to approve; nothing has been run or rented yet.**
+Follows doc §15.59 (tc59). Status: **ready for your approval; nothing rented or run yet.**
 
-## Why this plan exists
+## Where things stand
 
-With the hit box on (`CFM_P_SIZE=1`, collision size = outer spin radius), the h 0.25 runs failed:
+Step 0 ran on our own machines (results in `reference/tc59`, commits 1174623 to 52a5c6d).
 
-- **Size only (ISABELLE, 4.6 h):** the p-n push was −121, but a lone proton, which should feel no net force, showed about 150. The grid overflowed 298 times.
-- **Size + mass (ISABELLE):** the photons piled up until up to 823 cells held more than the 2,048-photon cell limit. The lone-body leftover force reached ~60,000. After 100 min the GPU dropped out.
-- **Field box with no bodies, 24 time units:** the density in the middle was already ~11× the density at the edge, where before it was flat.
+- **The pile-up was the empty start, not the hit box.**
+  - A wraparound box stays flat at 1.00 with the hit box on, and the escape ball slowly settles.
+  - The pre-filled start (`CFM_P_PREFILL=1`) removes the pile-up: flat from the first snapshot.
+- **Pre-filled hit-box p-n runs at h 0.25:**
 
-## Step 0 first (on our own machines, cheap): what is the pile-up?
-
-**Rented time can't fix this until we know the cause.** If the pile-up is a model artifact, more resolution only fills the bigger GPU faster.
-
-**Leading suspect: the escape boundary.** The ball is fed from its edge as if the outside field streamed freely. With the hit box on, the inside is far more collisional:
-
-- the mean free path for two level-3 photons is λ/64 ≈ 0.005;
-- the mix average is ≈ λ/18 ≈ 0.017, against 0.3 before.
-
-So photons arrive faster than they can random-walk back out, and the inward streams meet and stall in the middle. A real field would be just as collisional outside the ball as inside it, with no inward stream.
-
-**Tests, all at h 0.25, all on ESTELLE:**
-
-1. **Long box run:** the no-body field box with the hit box on, run for 200 time units instead of 24, logging density by radius every 10 time units. If the core keeps climbing, it's a runaway, not a steady state.
-2. **Periodic box:** the same mix in the periodic box (wraparound, no inflow or escape). If the density stays flat there, the boundary is the cause.
-3. **Speed by radius:** add photon linear speed by radius to the box report. If photons slow down in the middle, part of the pile-up is a traffic jam (density ∝ 1/speed), not just trapping.
-
-Time: under an hour each. No new physics, only reporting.
-
-## Decision for the user (after step 0)
-
-**How collisional should a field of bigger photons be?** Right now the knob keeps the photon *count* per volume (n_a 8000) and lets the bigger hit box raise the collision rate up to 64×. Three options:
-
-- **A. Keep it** (bigger photons = more collisions at the same count). This is the literal reading of the hit box and of arp.pdf, which says larger photons collide more. It needs cells smaller than the mean free path (h ≲ 0.017) with ~10+ photons per cell. That is ~1.8 billion photons in today's R_D 6 ball, about 200 GB of photon records, and the engine's 2 GiB storage binding caps us at 19M photons. **Not reachable by rented hardware** without a new engine design (photon weighting or a continuum outer zone).
-- **B. Keep the field's average mean free path at 0.3.** Scale the base cross-section down so the mix-averaged collision rate matches the field we've used all along; the hit box then only sets *who* hits whom harder and more often relative to the rest. This runs at h 0.25 to 0.125 on hardware we have or can rent. It is a knob, labelled as one, and needs your sign-off.
-- **C. In between.** Pick a field mean free path (say 0.1) and run a resolution ladder to see whether the answers settle.
-
-**Boundary fix, needed for A and C, and for B if step 0 still shows a pile-up.** Feed the ball from a reservoir held at the field density, or give the ball an outer buffer shell where the field relaxes before it reaches the bodies. This is a modelling choice, also yours.
-
-## Rented runs (after the decisions above)
-
-Hardware: one RTX 5090 on Vast (§15.57: $0.52/h, 4 jobs at once, same 2 GiB binding limit as ours, so the 19M-photon cap stands). Scripts: `scripts/vast/bootstrap.sh`, `autostop.sh` (pauses 30 min after the queue ends, 12 h cap). Destroying the instance stays your button.
-
-**Resolution ladder.** The same runs at three cell sizes, raising n_a so each cell keeps ~125 photons, and shrinking R_D where needed to stay under 19M. The time step shrinks with h (c·dt < h), so finer rungs also need more steps:
-
-| h | n_a | R_D | photons (approx.) | relative work |
+| run | proton push | neutron push | proton take-in /tu | over-full cells |
 |---|---|---|---|---|
-| 0.25 | 8,000 | 6 | 11.6M | 1× (today) |
-| 0.177 | 22,600 | 4.5 | 13.8M | ~1.7× (1.2× photons, 1.4× steps) |
-| 0.125 | 64,000 | 3.2 | 14.0M | ~2.4× (1.2× photons, 2× steps) |
+| hit box only | −114 (empty start: −121) | +4 | 5,030 | none |
+| hit box + mass | −5,373 | +155 | 6,150 | a few, at the ball's edge |
+| mass only (no hit box) | −9,480 | +450 | 8,900 | none |
 
-R_D 3.2 leaves only ~1.2 of field past the p-n pair, so h 0.125 is for the lone proton only.
+- **The lone-proton leftover force is sideways** (~134 across the pair, ~12 along it), so the pair numbers are not swamped as I first said.
+- **The remaining over-full cells** (hit box + mass) are in the cell column on the pole axis at the ball's edge, 4–5 from the bodies, where the outgoing beam meets the incoming field. None are at the bodies.
+- **The open question is resolution.**
+  - With the hit box on, the average photon travels ~0.017 between hits (two level-3 photons ~0.005), but the cells are 0.25 across.
+  - Collision partners in one cell can be ~15 collision distances apart, which blurs the push near a body.
+  - We can't get cells down to 0.017: that needs ~1.8 billion photons, and the engine caps at 19 million.
+  - What we can do is shrink the cells in steps and see whether the answers stop moving.
 
-**Runs per rung, with the hit box on and the mix chosen in the decision:**
+## The ladder
 
-- lone proton (check: leftover force ≲ 10% of the pair signal);
-- frozen p-n at 2.05 (push, take-in rate, spin torque);
-- H atom (proton plus free electron), 3 seeds, to settle whether the heavy mix really pushes the electron out (tc59 saw it on one seed).
+Keep the ball at R_D 6, so the edge stays 4–5 from the bodies, and shrink the cells. The pre-filled start is used throughout. Settings otherwise as tc59 (tc56 standard, frozen p-n at 2.05, even mix, random inner spins).
 
-**Pass/fail per rung:**
+| rung | h | n_a | photons per cell | live photons | work vs rung 1 |
+|---|---|---|---|---|---|
+| 1 | 0.25 | 8,000 | ~125 | 7.2M | 1× |
+| 2 | 0.177 | 12,000 | ~66 | 10.9M | ~2× (1.5× photons, 1.4× steps) |
+| 3 | 0.125 | 16,000 | ~31 | 14.5M | ~4× (2× photons, 2× steps) |
 
-- no cell over the 2,048 limit;
-- density flat in the field away from the bodies;
-- lone-body leftover force small next to the signal;
-- the answer changes by less than ~20% between rungs.
+Rung 3 is the §15.57 "hi-res" setting, already proven on the Vast 5090. The time step stays at dt 0.06 (c·dt < h holds down to h 0.125, and §15.57 ran this way). Rung 1 repeats on the 5090 what we already have, which checks that the rented machine gives our numbers.
 
-**Cost guess** (rough; scaled from q59_a's 4.6 h on the RTX 5060 and §15.57's 5090 speed):
+**Runs:**
 
-- **h 0.25:** ~1.5 h per run, all 6 runs in one 4-job batch, about $2.
-- **h 0.177:** ~2.5 h per run, about $3 per batch.
-- **h 0.125:** ~3.5 h for the lone proton alone, about $2.
+| rung | runs | count |
+|---|---|---|
+| 1 | p-n hit box only; p-n hit box + mass; H atom hit box + mass, seeds 49344 / 1 / 2 (does the electron really leave?) | 5 |
+| 2 | the two p-n runs | 2 |
+| 3 | the two p-n runs | 2 |
 
-Ladder total: **~$10–15**, plus about half a day of wall clock. I'll measure the first rung before quoting the rest.
+Each p-n run also prints the lone proton and lone neutron, and the crowded-cell locator (`CFM_P_CELLS=1`) is on in all of them.
+
+**Pass test:**
+
+- the proton push and take-in change by less than ~20% from one rung to the next;
+- no over-full cells within 2 of a body;
+- the leftover force along the pair axis stays small next to the push.
+
+If the numbers still move at rung 3, the hit-box answer can't be trusted at any size we can run, and the next step is a design change (option B below), not more hardware.
+
+## Cost and time (estimate)
+
+These come from our own timings: hit-box p-n ~4.3 h on the 3060 and ~4.6 h on ISABELLE's 5060. I'm assuming the 5090 is ~3–4× faster, running 4 jobs at once ($0.52/h, §15.57).
+
+| rung | wall clock | cost |
+|---|---|---|
+| 1 | ~4–5 h | ~$3 |
+| 2 | ~5–6 h | ~$3 |
+| 3 | ~9–10 h | ~$5 |
+| total | ~one day | **~$11–15** |
+
+The autostop script pauses the instance 30 min after the queue ends (12 h cap per start). I'll time rung 1 and re-quote before going on.
+
+## What I need from you
+
+1. **Approve the ladder** (~$11–15).
+2. **Start the Vast instance** (61730368, or a fresh 5090) from your account; payment and account steps are yours. Once it's up I bootstrap it over ssh from the pushed `main` (the tc59 code is all pushed), run rung 1, and bring the results back. Destroying the instance stays your button.
+
+## Option B, for later or instead
+
+**B: hold the field's average mean free path at 0.3.** Scale the base cross-section down so the mixed field collides as often as the field we've always used. The hit box then only decides which photons hit harder and more often relative to the rest.
+
+- It runs fine at h 0.25 on our own machines, so no rental is needed.
+- It needs a new knob and your sign-off on what it means physically.
+- It's the fallback if the ladder doesn't settle.
 
 ## Not in this plan
 
-- The axis-restoring mechanism (separate design).
-- More than 4 photon levels (the level-3 cap). It matters once the field is resolved; noted for later.
-- Changing defaults: everything above stays behind the `CFM_P_*` knobs until you sign off.
+- Why the beam bunches at the ball's edge (it's 4–5 from the bodies; the locator keeps watch).
+- The axis-restoring mechanism.
+- More than 4 photon levels.
+- Changing defaults: everything stays behind the `CFM_P_*` knobs.
