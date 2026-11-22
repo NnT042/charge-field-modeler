@@ -3723,6 +3723,50 @@ fn crowded_cells(engine: &DsmcEngine, ctx: &GpuContext) -> String {
     over.sort_by(|a, b| b.0.cmp(&a.0));
     let field = cnt.iter().filter(|&&n| n > 0).map(|&n| n as f64).sum::<f64>() / cnt.iter().filter(|&&n| n > 0).count().max(1) as f64;
     let mut s = format!("{} cells over 2048 (mean occupied cell {:.0})", over.len(), field);
+    // Doc §15.59: who is in the crowded cells. For every cell over 4x the
+    // mean: count, shares held / beam / other emitted / ambient, mean speed
+    // (d.w), mean direction z (b.z), share at level 3.
+    let mut stat: std::collections::BTreeMap<u32, [f64; 8]> = std::collections::BTreeMap::new();
+    for p in &ph {
+        if p.c[0] & FLAG_ALIVE == 0 {
+            continue;
+        }
+        let x = (DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64) - g.min) / g.h;
+        let (i, j, k) = (x.x.floor() as i64, x.y.floor() as i64, x.z.floor() as i64);
+        if i < 0 || j < 0 || k < 0 || i >= g.dim[0] as i64 || j >= g.dim[1] as i64 || k >= g.dim[2] as i64 {
+            continue;
+        }
+        let c = ((k as u32 * g.dim[1] + j as u32) * g.dim[0] + i as u32) as usize;
+        if (cnt[c] as f64) < 4.0 * field {
+            continue;
+        }
+        let e = stat.entry(c as u32).or_insert([0.0; 8]);
+        let f = p.c[0];
+        e[0] += 1.0;
+        if f & (1 << 20) != 0 {
+            e[1] += 1.0;
+        } else if f & (1 << 22) != 0 {
+            e[2] += 1.0;
+        } else if f & super::gpu_types::FLAG_KIND_EMITTED != 0 {
+            e[3] += 1.0;
+        } else {
+            e[4] += 1.0;
+        }
+        e[5] += p.d[3] as f64;
+        e[6] += p.b[2] as f64;
+        if p.c[3] >= 3 {
+            e[7] += 1.0;
+        }
+    }
+    let mut rows: Vec<(u32, [f64; 8])> = stat.into_iter().collect();
+    rows.sort_by(|a, b| b.1[0].partial_cmp(&a.1[0]).unwrap());
+    for (c, e) in rows.iter().take(8) {
+        let (i, j, k) = (c % g.dim[0], (c / g.dim[0]) % g.dim[1], c / (g.dim[0] * g.dim[1]));
+        let x = g.min + DVec3::new(i as f64 + 0.5, j as f64 + 0.5, k as f64 + 0.5) * g.h;
+        let n = e[0];
+        s += &format!("
+    cell ({:+.2},{:+.2},{:+.2}) r {:.2}: {n:.0} | held {:.3} beam {:.3} emitted {:.3} ambient {:.3} | speed {:.3} dir z {:+.3} | level 3 {:.3}", x.x, x.y, x.z, x.length(), e[1] / n, e[2] / n, e[3] / n, e[4] / n, e[5] / n, e[6] / n, e[7] / n);
+    }
     for (n, x) in over.iter().take(6) {
         let (bi, d) = centers.iter().enumerate().map(|(b, c)| (b, (*x - *c).length())).fold((usize::MAX, f64::INFINITY), |a, v| if v.1 < a.1 { v } else { a });
         s += &format!(" | {n} at ({:+.2},{:+.2},{:+.2}) {:.2} from body {bi}", x.x, x.y, x.z, d);

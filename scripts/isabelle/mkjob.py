@@ -11,7 +11,9 @@ for kv in sys.argv[4:]:
     k, v = kv.split('=', 1)
     assert not any(c in v for c in '&%|<>^"'), v
     lines.append(f'set {k}={v}')
-lines.append(f'C:\\cfm\\cfm.exe {test} --ignored --nocapture > C:\\cfm\\out\\{name}.txt 2>&1')
+# CFM_EXE (env) picks the binary in C:\cfm, e.g. a per-campaign build (default cfm.exe).
+exe = os.environ.get('CFM_EXE', 'cfm.exe')
+lines.append(f'C:\\cfm\\{exe} {test} --ignored --nocapture > C:\\cfm\\out\\{name}.txt 2>&1')
 lines.append('exit /b %ERRORLEVEL%')
 with open(os.path.join(here, 'queue', name + '.cmd'), 'w', newline='') as f:
     f.write('\r\n'.join(lines) + '\r\n')
