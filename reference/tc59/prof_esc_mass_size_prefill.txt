@@ -1,0 +1,2 @@
+test gpu::dsmc::shell_gates::report_photon_mix_profile ... === photon mix profile: box escape, PhotonMix { weights: [1.0, 1.0, 1.0, 1.0], inner: Random, mass_doubling: true, size_xsec: true, size_ceiling: 3 }, n_a 8000, lambda 0.3, h 0.25, extent 6, dt 0.06, to t 30 every 5 ===
+thread 'gpu::dsmc::shell_gates::report_photon_mix_profile' (28152) panicked at C:\Users\nnt04\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\backend\wgpu_core.rs:1619:18:
