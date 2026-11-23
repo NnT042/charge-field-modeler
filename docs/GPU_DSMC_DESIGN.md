@@ -5395,6 +5395,58 @@ Findings:
   hit box = the outer spin radius) is the other open item. Resolution and photon-count work
   comes after these.
 
+### 15.59 tc59: photon mix, the pole-axis jet, field normalisation (2026-11-20 to 2026-11-23)
+
+Test knobs only, all off by default: `CFM_P_MIX` (ambient photons born at levels 0-3, even mix),
+`CFM_P_MASS` (mass doubles per level), `CFM_P_SIZE` (hit box = the outer spin radius, so a pair's
+cross-section scales by ((m_a+m_b)/2)^2), `CFM_P_PREFILL` (start from a filled ball),
+`CFM_P_CAPX` (photon slots per full ball, memory only), `CFM_P_CELLS` (crowded-cell locator plus
+pole-axis column profile) and `CFM_P_NORM` (below). Frozen p-n at 2.05, R_D 6, h 0.25, random
+inner spins, ISABELLE (RTX 5060). Results in reference/tc59.
+
+**The jet.** With hit box + mass, the cells on the pole axis fill to 1000-3000 photons (field ~115).
+The axis profile shows a co-moving outgoing jet: the neutron's through-beam leaves the pole at
+speed 1, 100% outward, and entrains field photons, growing ~4x from 1 to the edge of the ball. It
+is the same at R_D 5 and 6 (not an edge effect). It needs both knobs: mass alone spreads the beam,
+the hit box alone scatters it within ~1. With both, the field is collision-saturated (~1500 hits
+per photon). Mathis's open field is nearly collisionless away from matter (push2.pdf, encel2.pdf,
+brookh.pdf), so the jet is an artefact of the field's collision rate, not physics we want.
+
+**TDR.** At R_D 7 and 7.5 ISABELLE loses the device. The cause is the Windows GPU watchdog
+(System event 4101): crowded jet cells push the collide kernel's round loop past 2 s. Memory is
+fine (5.1 of 8 GB). Workaround: R_D <= 6 on Windows. Linux (rented) has no watchdog.
+
+**Field normalisation (`CFM_P_NORM`, MixNorm).** The even mix has mean birth mass <m> = 3.75 and
+pair hit-box factor <((m_a+m_b)/2)^2> = 17.66.
+- `mass`: every photon's mass / <m>, sigma / <m>. Same total field mass with fewer equivalent
+  photons (the user's dark-mass argument: bigger photons, fewer needed). The field still collides
+  17.66 / 3.75 = 4.7x as often as the one-size field.
+- `path` (option B): sigma / 17.66, so the mean free path matches the one-size field (0.3).
+- `masspath`: both.
+λ 0.3 itself came from the §15.5 density sweep; the 19x recycling figure (§14.3) is only a
+possible later anchor.
+
+**Full p-n runs** (frozen, pair minus alone, negative = apart):
+
+| run | proton push | neutron push | captures/tu p / n | field collisions /tu | pole-axis jet |
+|---|---|---|---|---|---|
+| one size, k0 | −1758 | −68 | 8919 / 7854 | 15.3M | none |
+| hit box only | −114 | −4 | 5023 / 4550 | — | none |
+| mass only | −9480 | −450 | 8923 / 7872 | — | none |
+| hit box + mass | −5373 | −155 | 6144 / 5784 | 338M | yes, edge cells 1000-3000 |
+| + norm mass | −2759 | −37 | 7764 / 7560 | 98.5M | yes, edge ~770-950, ~3500 hits/photon |
+| + norm masspath | **−3149** | −115 | 8908 / 8260 | 22.4M | **none** (flat ~125, ~450 hits/photon) |
+
+- Mass-matching alone halves the push but keeps the jet (MAX_CELL warnings during the warm-up).
+- masspath gives a flat field and k0-like take-in, with the push 1.8x k0. The extra push comes
+  mostly from the neutron's beam (from n1 −1278 on the proton's N face vs −761 in the mass run)
+  and from the ambient shadow on both faces.
+- Short runs (h_axis_*): path alone removes the jet too, but its push (−10197) is far from both.
+- Gates 24/24 pass with cfm59h.
+
+Open: whether masspath is the physical choice (user's call); re-check the H-atom electron under
+masspath; the rented resolution ladder (docs/VAST_HITBOX_PLAN.md) should now use masspath.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
