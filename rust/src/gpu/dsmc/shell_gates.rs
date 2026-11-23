@@ -3782,7 +3782,7 @@ fn crowded_cells(engine: &DsmcEngine, ctx: &GpuContext) -> String {
     // at the edge = an edge effect.
     let zr = engine.config.bodies.iter().map(|b| b.center.z.abs()).fold(0.0, f64::max);
     let nb = ((-g.min.z) / (2.0 * g.h)).ceil() as i64;
-    let mut prof = vec![[0.0f64; 4]; (2 * nb) as usize];
+    let mut prof = vec![[0.0f64; 7]; (2 * nb) as usize];
     for p in &ph {
         if p.c[0] & FLAG_ALIVE == 0 || (p.a[0] as f64).abs() >= g.h || (p.a[1] as f64).abs() >= g.h {
             continue;
@@ -3803,16 +3803,25 @@ fn crowded_cells(engine: &DsmcEngine, ctx: &GpuContext) -> String {
         if p.c[3] >= 3 {
             e[3] += 1.0;
         }
+        // Came out of a body at some point (emit tag, bits 17-19).
+        if (p.c[0] >> 17) & 7 != 0 {
+            e[4] += 1.0;
+        }
+        // Direction toward the axis (+ = converging on it).
+        let (px, py) = (p.a[0] as f64, p.a[1] as f64);
+        let rr = (px * px + py * py).sqrt().max(1e-9);
+        e[5] += -(px * p.b[0] as f64 + py * p.b[1] as f64) / rr;
+        e[6] += p.c[1] as f64;
     }
     s += &format!("
-    axis column (bodies at |z| <= {zr:.2}), z bin: per cell | outward | beam | level 3");
+    axis column (bodies at |z| <= {zr:.2}), z bin: per cell | outward | beam | level 3 | from a body | toward axis | hits so far");
     for (b, e) in prof.iter().enumerate() {
         if e[0] == 0.0 {
             continue;
         }
         let z0 = (b as i64 - nb) as f64 * 2.0 * g.h;
         s += &format!("
-      z {:+.2}..{:+.2}: {:.0} | {:.2} | {:.2} | {:.2}", z0, z0 + 2.0 * g.h, e[0] / 8.0, e[1] / e[0], e[2] / e[0], e[3] / e[0]);
+      z {:+.2}..{:+.2}: {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:+.3} | {:.0}", z0, z0 + 2.0 * g.h, e[0] / 8.0, e[1] / e[0], e[2] / e[0], e[3] / e[0], e[4] / e[0], e[5] / e[0], e[6] / e[0]);
     }
     s
 }
