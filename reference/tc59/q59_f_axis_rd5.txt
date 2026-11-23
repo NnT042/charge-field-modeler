@@ -1,0 +1,354 @@
+
+running 1 test
+=== deuteron: pn axial, sep0 2.05, mass 1e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 5 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+self-force neutron: (+210.4, +60.8, +113.5) per unit time
+self-torque neutron: (+103.6, -86.9, -169.5) per unit time
+alone neutron: photon spin torque: net along axis -42.51, across 62.87 | in along axis: S- +5.77 S+ +12.26 N- -0.45 N+ -1.10 | out along axis +59.00 | selective in (S+ and N-) +11.81
+alone neutron: collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 1412393 a-a 1220198 (372586) a-o 104628 (44596) a-x 0 (0) o-o 87567 (53168) o-x 0 (0) x-x 0 (0) | S total 1415100 a-a 1232431 (377558) a-o 105180 (43824) a-x 0 (0) o-o 77490 (46288) o-x 0 (0) x-x 0 (0)
+alone neutron: crowded cells: 0 cells over 2048 (mean occupied cell 112)
+    cell (+0.12,+0.12,-4.88) r 4.88: 1472 | held 0.000 beam 0.287 emitted 0.000 ambient 0.713 | speed 1.000 dir z -0.997 | level 3 0.453
+    cell (+0.12,+0.12,-4.62) r 4.63: 1285 | held 0.000 beam 0.264 emitted 0.000 ambient 0.736 | speed 1.000 dir z -0.997 | level 3 0.484
+    cell (-0.12,-0.12,+4.88) r 4.88: 1231 | held 0.000 beam 0.214 emitted 0.000 ambient 0.786 | speed 1.000 dir z +0.995 | level 3 0.418
+    cell (-0.12,+0.12,-3.88) r 3.88: 1128 | held 0.000 beam 0.309 emitted 0.000 ambient 0.691 | speed 1.000 dir z -0.997 | level 3 0.487
+    cell (-0.12,+0.12,+4.88) r 4.88: 1117 | held 0.000 beam 0.133 emitted 0.000 ambient 0.867 | speed 1.000 dir z +0.995 | level 3 0.446
+    cell (-0.12,-0.12,-3.12) r 3.13: 1112 | held 0.000 beam 0.439 emitted 0.000 ambient 0.561 | speed 1.000 dir z -0.996 | level 3 0.444
+    cell (-0.12,+0.12,-4.88) r 4.88: 1102 | held 0.000 beam 0.180 emitted 0.000 ambient 0.820 | speed 1.000 dir z -0.992 | level 3 0.448
+    cell (-0.12,+0.12,-4.12) r 4.13: 1090 | held 0.000 beam 0.296 emitted 0.000 ambient 0.704 | speed 1.000 dir z -0.995 | level 3 0.472
+    axis column (bodies at |z| <= 0.00), z bin: per cell | outward | beam | level 3
+      z -5.00..-4.50: 977 | 1.00 | 0.17 | 0.45
+      z -4.50..-4.00: 907 | 1.00 | 0.20 | 0.48
+      z -4.00..-3.50: 817 | 1.00 | 0.21 | 0.47
+      z -3.50..-3.00: 689 | 1.00 | 0.25 | 0.46
+      z -3.00..-2.50: 590 | 1.00 | 0.32 | 0.45
+      z -2.50..-2.00: 455 | 1.00 | 0.42 | 0.47
+      z -2.00..-1.50: 346 | 1.00 | 0.52 | 0.46
+      z -1.50..-1.00: 266 | 1.00 | 0.72 | 0.45
+      z -1.00..-0.50: 92 | 0.61 | 0.11 | 0.46
+      z -0.50..+0.00: 68 | 0.49 | 0.01 | 0.46
+      z +0.00..+0.50: 64 | 0.48 | 0.01 | 0.46
+      z +0.50..+1.00: 82 | 0.66 | 0.11 | 0.43
+      z +1.00..+1.50: 255 | 1.00 | 0.76 | 0.46
+      z +1.50..+2.00: 329 | 1.00 | 0.56 | 0.48
+      z +2.00..+2.50: 387 | 1.00 | 0.45 | 0.45
+      z +2.50..+3.00: 490 | 1.00 | 0.35 | 0.46
+      z +3.00..+3.50: 590 | 1.00 | 0.28 | 0.47
+      z +3.50..+4.00: 705 | 1.00 | 0.23 | 0.47
+      z +4.00..+4.50: 822 | 1.00 | 0.21 | 0.47
+      z +4.50..+5.00: 987 | 1.00 | 0.18 | 0.45
+push by source, body 0 neutron (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2701 /       0 |   -1125.1 /      +0.0 /  -1125.1 |    +28.0 /     +0.0 /    +28.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2814 /       0 |   +1119.7 /      +0.0 /  +1119.7 |   +115.9 /     +0.0 /   +115.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:      11 /       0 |     -16.3 /      +0.0 /    -16.3 |     +1.7 /     +0.0 /     +1.7 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:       8 /       0 |      +5.5 /      +0.0 /     +5.5 |     +2.3 /     +0.0 /     +2.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |    +129.7 /      +0.0 /   +129.7 |    +24.8 /     +0.0 /    +24.8
+  total                            :                   |    +113.5 /      +0.0 /   +113.5 |   +135.3 /     +0.0 /   +135.3
+self-force proton : (+31.4, +1023.0, +166.9) per unit time
+self-torque proton : (+66.0, -125.8, +46.7) per unit time
+alone proton : photon spin torque: net along axis +29.40, across 14.22 | in along axis: S- +17.93 S+ +36.18 N- +11.01 N+ +22.22 | out along axis +57.94 | selective in (S+ and N-) +47.19
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 1805249 a-a 1753363 (561301) a-o 50644 (35745) a-x 0 (0) o-o 1241 (1113) o-x 0 (0) x-x 0 (0) | S total 1818715 a-a 1764011 (546240) a-o 53178 (38152) a-x 0 (0) o-o 1526 (1359) o-x 0 (0) x-x 0 (0)
+alone proton : crowded cells: 0 cells over 2048 (mean occupied cell 116)
+    axis column (bodies at |z| <= 0.00), z bin: per cell | outward | beam | level 3
+      z -5.00..-4.50: 142 | 0.53 | 0.00 | 0.37
+      z -4.50..-4.00: 134 | 0.45 | 0.00 | 0.38
+      z -4.00..-3.50: 122 | 0.47 | 0.00 | 0.40
+      z -3.50..-3.00: 124 | 0.52 | 0.00 | 0.40
+      z -3.00..-2.50: 124 | 0.51 | 0.00 | 0.41
+      z -2.50..-2.00: 123 | 0.45 | 0.00 | 0.40
+      z -2.00..-1.50: 120 | 0.50 | 0.00 | 0.41
+      z -1.50..-1.00: 123 | 0.42 | 0.00 | 0.41
+      z -1.00..-0.50: 103 | 0.38 | 0.00 | 0.42
+      z -0.50..+0.00: 87 | 0.43 | 0.00 | 0.45
+      z +0.00..+0.50: 82 | 0.45 | 0.00 | 0.46
+      z +0.50..+1.00: 119 | 0.43 | 0.00 | 0.43
+      z +1.00..+1.50: 125 | 0.47 | 0.00 | 0.40
+      z +1.50..+2.00: 107 | 0.49 | 0.00 | 0.43
+      z +2.00..+2.50: 113 | 0.50 | 0.00 | 0.40
+      z +2.50..+3.00: 122 | 0.50 | 0.00 | 0.40
+      z +3.00..+3.50: 128 | 0.56 | 0.00 | 0.38
+      z +3.50..+4.00: 125 | 0.49 | 0.00 | 0.42
+      z +4.00..+4.50: 125 | 0.51 | 0.00 | 0.38
+      z +4.50..+5.00: 133 | 0.44 | 0.00 | 0.35
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    1742 /       0 |   -1851.6 /      +0.0 /  -1851.6 |    +59.6 /     +0.0 /    +59.6 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    1722 /       0 |   +1981.6 /      +0.0 /  +1981.6 |    +42.2 /     +0.0 /    +42.2 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1193 /       0 |    -640.0 /      +0.0 /   -640.0 |    +39.9 /     +0.0 /    +39.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1190 /       0 |    +697.1 /      +0.0 /   +697.1 |    +21.4 /     +0.0 /    +21.4 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |     -20.1 /      +0.0 /    -20.1 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    +166.9 /      +0.0 /   +166.9 |   +142.1 /     +0.0 /   +142.1
+rotation: inertia 0e0, L_spin 0e0, damp 0
+layout chain: orients [PoleOn, PoleOn], start [(-0.0, -0.0, -1.025), (0.0, 0.0, 1.025)]
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+t    3.00: gaps 2.0500 | gap rates +0.00000 | interaction along +e: p -5008 n +206 | contact steps 0 | captures/time 5756 5553
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+t    6.00: gaps 2.0500 | gap rates +0.00000 | interaction along +e: p -4763 n -47 | contact steps 0 | captures/time 5642 5533
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+t    9.00: gaps 2.0500 | gap rates +0.00000 | interaction along +e: p -5013 n -5 | contact steps 0 | captures/time 5861 5635
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+distance 0-1 (proton-neutron): range 2.050 .. 2.050; last quarter mean 2.050
+drift of the stack centre +0.000
+spin torque about each body's own axis (+ = spins it up along its axis): p0 -102, n1 +106
+cluster torque about z: orbital +0, bodies' own +4, total +4
+body 0 proton  photon spin torque: net along axis +37.46, across 46.80 | in along axis: S- +13.95 S+ +27.50 N- +16.27 N+ +31.58 | out along axis +51.85 | selective in (S+ and N-) +43.78
+body 1 neutron photon spin torque: net along axis -74.91, across 33.85 | in along axis: S- -2.02 S+ -4.10 N- -3.25 N+ -6.58 | out along axis +58.96 | selective in (S+ and N-) -7.35
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    1535 /    1742 |   -3458.5 /   -1851.6 /  -1606.9 |    +87.0 /    +59.6 /    +31.7 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    1057 /    1722 |    +372.0 /   +1981.6 /  -1609.7 |    +22.6 /    +42.2 /    +19.8 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1595 /    1193 |   -1818.0 /    -640.0 /  -1177.9 |    +63.0 /    +39.9 /    +39.8 | crossed part:    191 photons, force -635.3, torque +15.2
+  own emission             S entry:    1486 /    1190 |    +446.1 /    +697.1 /   -251.0 |    +16.9 /    +21.4 /     +4.8 | crossed part:     83 photons, force -172.2, torque +2.1
+  from n1                  N entry:      73 /       0 |    -194.7 /      +0.0 /   -194.7 |    +15.0 /     +0.0 /    +15.0 | crossed part:     55 photons, force -151.4, torque +11.7
+  from n1                  S entry:      27 /       0 |     -71.8 /      +0.0 /    -71.8 |     +2.8 /     +0.0 /     +2.8 | crossed part:     21 photons, force -60.0, torque +1.3
+  recoil of what it sends out      :                   |      +6.8 /     -20.1 /    +26.9 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |   -4718.1 /    +166.9 /  -4885.0 |   +180.6 /   +142.1 /    +79.5
+push by source, body 1 neutron (pole facing the centre: south); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2774 /    2701 |   +1070.6 /   +1125.1 /    -54.5 |    +35.8 /    +28.0 /    +63.6 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2786 /    2814 |    -909.9 /   -1119.7 /   +209.7 |    +30.5 /   +115.9 /    +93.2 | crossed part:      0 photons, force +0.0, torque +0.0
+  from p0                  N entry:       0 /       0 |      -1.0 /      +0.0 /     -1.0 |     +0.1 /     +0.0 /     +0.1 | crossed part:      0 photons, force -0.2, torque +0.1
+  from p0                  S entry:      12 /       0 |     -20.6 /      +0.0 /    -20.6 |     +1.2 /     +0.0 /     +1.2 | crossed part:      1 photons, force -1.1, torque +0.3
+  own emission             N entry:       5 /      11 |      +3.3 /     +16.3 /    -13.0 |     +0.5 /     +1.7 /     +1.2 | crossed part:      0 photons, force -0.2, torque +0.1
+  own emission             S entry:       1 /       8 |      -1.0 /      -5.5 /     +4.5 |     +0.2 /     +2.3 /     +2.2 | crossed part:      0 photons, force -0.8, torque +0.2
+  recoil of what it sends out      :                   |    -312.1 /    -129.7 /   -182.3 |    +20.4 /    +24.8 /    +18.7
+  total                            :                   |    -170.7 /    -113.5 /    -57.2 |     +3.3 /   +135.3 /   +137.8
+collisions per unit time by emitter: all 205385303, ambient-ambient 200194743, ambient-p0 2456116, p0-p0 958184, ambient-n1 1233841, n1-n1 438448, CROSS p0-n1 103971
+pair: collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 1121803 a-a 1038930 (308755) a-o 61105 (39370) a-x 11940 (11823) o-o 2342 (2021) o-x 264 (263) x-x 7222 (7222) | S total 1646421 a-a 1311197 (391393) a-o 101078 (59067) a-x 148383 (68400) o-o 7046 (4442) o-x 26788 (13918) x-x 51928 (26576)
+beam fate (neutron trapped releases 5579/tu): first pp collision, share of releases | inside own envelope: ambient 0.000 own 0.000 other 0.000 | inside another body: ambient 0.012 own 0.031 other 0.000 | outside envelopes: ambient 0.386 own 0.566 other 0.004
+beam fate: first collisions inside another body by distance from its axis (0.05 bins): 0.006 0.012 0.011 0.011 0.004 0.000 0.000 0.000 0.000 0.000
+beam fate: captured by another body, clean 0.000 after a collision 0.018 | recaptured by the emitter, clean 0.000 after a collision 0.001
+beam near exit (s<1 outside envelope, within 45 deg of axis): collisions per release: total 88.256 | ambient 33.115 fresh beam 0.579 own other 53.316 other body 1.246
+beam near exit by 0.1 bin (ambient/fresh/own/other): 3.289/0.239/6.726/0.049 2.696/0.231/7.554/0.050 3.039/0.109/7.021/0.056 3.134/0.000/5.562/0.091 3.132/0.000/5.369/0.091 3.521/0.000/4.743/0.142 3.451/0.000/4.497/0.161 3.590/0.000/4.184/0.166 3.606/0.000/3.833/0.221 3.656/0.000/3.826/0.218
+screen body 0 proton  at (-0.00,-0.00,-1.02) axis (+0.00,+0.00,+1.00): force (+0,+0,-4885) |4885| inward -4885 | toward neighbours n1:-4885 | tilt torque 79 (-58,-55,+0), axis pushed toward (-55,+58,+0)
+screen body 1 neutron at (+0.00,+0.00,+1.02) axis (+0.00,+0.00,+1.00): force (+0,+0,+57) |57| inward -57 | toward neighbours p0:-57 | tilt torque 138 (-104,+90,+0), axis pushed toward (+90,+104,-0)
+crowded cells, pair run end: 5 cells over 2048 (mean occupied cell 111)
+    cell (-0.12,+0.12,-4.88) r 4.88: 2963 | held 0.000 beam 0.203 emitted 0.000 ambient 0.797 | speed 1.000 dir z -0.991 | level 3 0.472
+    cell (-0.12,+0.12,-4.62) r 4.63: 2874 | held 0.000 beam 0.228 emitted 0.000 ambient 0.772 | speed 1.000 dir z -0.994 | level 3 0.471
+    cell (-0.12,+0.12,-4.38) r 4.38: 2720 | held 0.000 beam 0.247 emitted 0.000 ambient 0.753 | speed 1.000 dir z -0.996 | level 3 0.472
+    cell (-0.12,+0.12,-4.12) r 4.13: 2549 | held 0.000 beam 0.270 emitted 0.000 ambient 0.730 | speed 1.000 dir z -0.999 | level 3 0.479
+    cell (-0.12,+0.12,-3.88) r 3.88: 2112 | held 0.000 beam 0.343 emitted 0.000 ambient 0.657 | speed 1.000 dir z -0.999 | level 3 0.491
+    cell (-0.12,+0.12,-3.62) r 3.63: 1668 | held 0.000 beam 0.359 emitted 0.000 ambient 0.641 | speed 1.000 dir z -0.998 | level 3 0.484
+    cell (+0.12,-0.12,+4.88) r 4.88: 1385 | held 0.000 beam 0.404 emitted 0.000 ambient 0.596 | speed 1.000 dir z +0.996 | level 3 0.489
+    cell (-0.12,+0.12,-3.38) r 3.38: 1240 | held 0.000 beam 0.360 emitted 0.000 ambient 0.640 | speed 1.000 dir z -0.997 | level 3 0.486 | 2963 at (-0.12,+0.12,-4.88) 3.85 from body 0 | 2874 at (-0.12,+0.12,-4.62) 3.60 from body 0 | 2720 at (-0.12,+0.12,-4.38) 3.35 from body 0 | 2549 at (-0.12,+0.12,-4.12) 3.11 from body 0 | 2112 at (-0.12,+0.12,-3.88) 2.86 from body 0
+    axis column (bodies at |z| <= 1.02), z bin: per cell | outward | beam | level 3
+      z -5.00..-4.50: 918 | 0.99 | 0.17 | 0.46
+      z -4.50..-4.00: 913 | 1.00 | 0.19 | 0.46
+      z -4.00..-3.50: 865 | 1.00 | 0.22 | 0.47
+      z -3.50..-3.00: 760 | 1.00 | 0.22 | 0.48
+      z -3.00..-2.50: 656 | 1.00 | 0.26 | 0.49
+      z -2.50..-2.00: 525 | 1.00 | 0.30 | 0.47
+      z -2.00..-1.50: 437 | 1.00 | 0.40 | 0.48
+      z -1.50..-1.00: 335 | 1.00 | 0.49 | 0.48
+      z -1.00..-0.50: 349 | 1.00 | 0.53 | 0.46
+      z -0.50..+0.00: 294 | 1.00 | 0.69 | 0.46
+      z +0.00..+0.50: 86 | 0.24 | 0.21 | 0.40
+      z +0.50..+1.00: 66 | 0.52 | 0.00 | 0.47
+      z +1.00..+1.50: 67 | 0.44 | 0.00 | 0.45
+      z +1.50..+2.00: 82 | 0.56 | 0.00 | 0.45
+      z +2.00..+2.50: 258 | 1.00 | 0.72 | 0.45
+      z +2.50..+3.00: 328 | 1.00 | 0.52 | 0.45
+      z +3.00..+3.50: 429 | 1.00 | 0.41 | 0.46
+      z +3.50..+4.00: 531 | 1.00 | 0.33 | 0.47
+      z +4.00..+4.50: 652 | 1.00 | 0.28 | 0.47
+      z +4.50..+5.00: 760 | 1.00 | 0.24 | 0.46
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 303 filtered out; finished in 646.51s
+

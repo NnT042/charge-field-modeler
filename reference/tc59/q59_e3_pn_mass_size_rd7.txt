@@ -1,0 +1,77 @@
+
+running 1 test
+=== deuteron: pn axial, sep0 2.05, mass 1e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 7 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 1 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 2 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 3 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 9 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 9 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 8 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 7 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 6 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 5 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+DSMC WARNING: 4 cell(s) exceeded MAX_CELL this step -- collisions there are biased; refine h
+
+thread 'gpu::dsmc::shell_gates::report_deuteron' (52584) panicked at C:\Users\nnt04\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-30.0.1\src\backend\wgpu_core.rs:1924:30:
+Error in Device::poll: Validation Error
+
+Caused by:
+  Parent device is lost
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test gpu::dsmc::shell_gates::report_deuteron ... FAILED
+
+failures:
+
+failures:
+    gpu::dsmc::shell_gates::report_deuteron
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 303 filtered out; finished in 326.84s
+
