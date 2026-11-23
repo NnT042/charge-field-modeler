@@ -2431,8 +2431,12 @@ fn report_deuteron() {
     // inner ball) | ejectc (§15.14).
     let d_speed = match env("CFM_D_SPEED", "surface").as_str() { "ejectc" => MazeSpeed::EjectC, "rest" => MazeSpeed::EjectRest, _ => MazeSpeed::EjectSurface };
     println!("intake {d_intake:?}, neutron intake {d_intake_n:?}, through hole {d_hole}, maze speed {d_speed:?}, pipe '{}' within {} deg, mouth {}, lane {}, swirl {} deg, channel spin rule {} eta {} quantum {} edge {}, held helix level {} (radius {:.4})", env("CFM_D_PIPE", ""), env("CFM_D_PIPE_DEG", "20"), env("CFM_D_PIPE_MOUTH", "0.2222222222"), env("CFM_D_PIPE_LANE", "0"), env("CFM_D_PIPE_SWIRL", "0"), env("CFM_D_PIPE_SPIN", "0"), env("CFM_D_PIPE_ETA", "0"), env("CFM_D_PIPE_QUANTUM", "0"), env("CFM_D_PIPE_EDGE", "0"), env("CFM_D_PIPE_HELIX", "0"), helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap()));
+    // CFM_P_CAPX: photon slots as a multiple of the full ball (1.6). A test knob
+    // for memory only: lower it (e.g. 1.25 with the pre-filled start, which stays
+    // flat) to fit a bigger ball on an 8 GB card; overflow is a clean panic.
+    let cap_x: f64 = env("CFM_P_CAPX", "1.6").parse().unwrap();
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
-        let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * 1.6) as u32).min(19_000_000);
+        let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * cap_x) as u32).min(19_000_000);
         let mut config = two_body_config(centers, cls, n_a, lambda, cap, seed, dt);
         for ((bc, o), cl) in config.bodies.iter_mut().zip(ors).zip(cls) {
             bc.orient = *o;
