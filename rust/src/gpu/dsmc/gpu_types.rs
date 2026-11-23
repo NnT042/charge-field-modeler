@@ -285,6 +285,11 @@ pub struct GpuParams {
     pub mix_c1: f32,
     pub mix_c2: f32,
     pub mix_flags: u32,
+    /// Doc §15.59 MixNorm: multiplier on every mixed photon's mass.
+    pub mix_mass_scale: f32,
+    pub _pad_mix0: u32,
+    pub _pad_mix1: u32,
+    pub _pad_mix2: u32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side

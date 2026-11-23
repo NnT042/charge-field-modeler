@@ -317,15 +317,80 @@ pub struct PhotonMix {
     /// NTC ceiling level for `size_xsec` (candidates drawn at
     /// sigma * 4^ceiling). Pairs above it are clamped and tallied.
     pub size_ceiling: u32,
+    /// Test knob (doc §15.59, user 2026-11-23): how the mixed field is
+    /// normalised against the old one-size field.
+    pub norm: MixNorm,
+}
+
+/// Doc §15.59 field normalisation for the photon mix (test knob, off by
+/// default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixNorm {
+    Off,
+    /// Same field mass (user): heavier photons, so fewer of them. Every
+    /// photon mass divided by the mix mean <m>, and the base cross-section
+    /// divided by <m> (fewer real photons per simulated one).
+    Mass,
+    /// Option B: field collision rate held at the old one-size value. Base
+    /// cross-section divided by the pair-averaged hit-box factor
+    /// <((m_a+m_b)/2)^2> (1 without the hit box); masses unchanged.
+    Path,
+    /// Both: masses divided by <m> and collision rate held (as Path).
+    MassPath,
 }
 
 impl Default for PhotonMix {
     fn default() -> Self {
-        PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0 }
+        PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off }
     }
 }
 
 impl PhotonMix {
+    fn shares(&self) -> [f64; 4] {
+        let s: f64 = self.weights.iter().sum();
+        [self.weights[0] / s, self.weights[1] / s, self.weights[2] / s, self.weights[3] / s]
+    }
+
+    /// Mix mean birth mass <m> = sum w_k 2^k.
+    pub fn mean_mass(&self) -> f64 {
+        self.shares().iter().enumerate().map(|(k, w)| w * 2f64.powi(k as i32)).sum()
+    }
+
+    /// Pair-averaged hit-box factor <((2^a + 2^b)/2)^2> over birth levels
+    /// (1 when the hit box is off). Birth levels only: stacking in flight
+    /// raises it a little, so the held rate is approximate.
+    pub fn size_factor(&self) -> f64 {
+        if !self.size_xsec {
+            return 1.0;
+        }
+        let w = self.shares();
+        let mut f = 0.0;
+        for a in 0..4 {
+            for b in 0..4 {
+                let r = (2f64.powi(a) + 2f64.powi(b)) * 0.5;
+                f += w[a as usize] * w[b as usize] * r * r;
+            }
+        }
+        f
+    }
+
+    /// Multiplier on every photon mass (applied only with mass doubling).
+    pub fn mass_scale(&self) -> f64 {
+        match self.norm {
+            MixNorm::Mass | MixNorm::MassPath if self.mass_doubling => 1.0 / self.mean_mass(),
+            _ => 1.0,
+        }
+    }
+
+    /// Multiplier on the base cross-section sigma.
+    pub fn sigma_scale(&self) -> f64 {
+        match self.norm {
+            MixNorm::Off => 1.0,
+            MixNorm::Mass => if self.mass_doubling { 1.0 / self.mean_mass() } else { 1.0 },
+            MixNorm::Path | MixNorm::MassPath => 1.0 / self.size_factor(),
+        }
+    }
+
     /// GPU packing: cumulative shares c0..c2 and flags (bit 0 mass, bits
     /// 1-2 inner, bit 3 size, bits 4-5 ceiling).
     pub fn pack(&self) -> ([f32; 3], u32) {
@@ -346,7 +411,7 @@ impl PhotonMix {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0 } }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off } }
     }
 }
 

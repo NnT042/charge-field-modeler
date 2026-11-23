@@ -2434,6 +2434,10 @@ fn report_deuteron() {
     // CFM_P_CAPX: photon slots as a multiple of the full ball (1.6). A test knob
     // for memory only: lower it (e.g. 1.25 with the pre-filled start, which stays
     // flat) to fit a bigger ball on an 8 GB card; overflow is a clean panic.
+    {
+        let pm = photon_mix_from_env();
+        println!("photon mix norm {:?}: mean birth mass {:.3}, hit-box factor {:.3}, mass scale {:.4}, sigma scale {:.4}", pm.norm, pm.mean_mass(), pm.size_factor(), pm.mass_scale(), pm.sigma_scale());
+    }
     let cap_x: f64 = env("CFM_P_CAPX", "1.6").parse().unwrap();
     let make = |centers: &[DVec3], cls: &[&str], ors: &[GpuOrient]| -> DsmcEngine {
         let cap = ((n_a * 4.0 / 3.0 * std::f64::consts::PI * r_d.powi(3) * cap_x) as u32).min(19_000_000);
@@ -3432,7 +3436,7 @@ fn report_ball_loop() {
 /// CFM_P_MASS 1 = mass 2^(birth level); CFM_P_SIZE 1 = hit box = outer
 /// radius; CFM_P_CEIL NTC ceiling level (highest level with a share).
 pub(crate) fn photon_mix_from_env() -> super::config::PhotonMix {
-    use super::config::{InnerAxes, PhotonMix};
+    use super::config::{InnerAxes, MixNorm, PhotonMix};
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or(d.to_string());
     let w: Vec<f64> = env("CFM_P_MIX", "1,0,0,0").split(',').map(|s| s.trim().parse().unwrap()).collect();
     assert!(w.len() == 4, "CFM_P_MIX needs 4 shares");
@@ -3451,6 +3455,14 @@ pub(crate) fn photon_mix_from_env() -> super::config::PhotonMix {
         mass_doubling: env("CFM_P_MASS", "0") == "1",
         size_xsec: env("CFM_P_SIZE", "0") == "1",
         size_ceiling: env("CFM_P_CEIL", &top.to_string()).parse().unwrap(),
+        // CFM_P_NORM off|mass|path|masspath (doc §15.59 test knob).
+        norm: match env("CFM_P_NORM", "off").as_str() {
+            "off" => MixNorm::Off,
+            "mass" => MixNorm::Mass,
+            "path" => MixNorm::Path,
+            "masspath" => MixNorm::MassPath,
+            o => panic!("CFM_P_NORM {o}"),
+        },
     }
 }
 

@@ -217,7 +217,7 @@ fn photon_mass(c0: u32, k: u32) -> f32 {
         return exp2(f32(k));
     }
     if ((params.mix_flags & 1u) != 0u) {
-        return exp2(f32((c0 >> FLAG_BIRTH_SHIFT) & 3u));
+        return exp2(f32((c0 >> FLAG_BIRTH_SHIFT) & 3u)) * params.mix_mass_scale;
     }
     return 1.0;
 }

@@ -870,7 +870,7 @@ impl DsmcEngine {
             capacity: c.capacity,
             step: self.step,
             dt: c.dt as f32,
-            sigma: c.sigma as f32,
+            sigma: (c.sigma * c.rough.photon_mix.sigma_scale()) as f32,
             n_ambient: c.n_ambient as f32,
             photon_fraction: c.photon_fraction as f32,
             pole_intake_bias: c.pole_intake_bias as f32,
@@ -959,6 +959,10 @@ impl DsmcEngine {
             mix_c1: c.rough.photon_mix.pack().0[1],
             mix_c2: c.rough.photon_mix.pack().0[2],
             mix_flags: c.rough.photon_mix.pack().1 | if self.prefill_pending { 64 } else { 0 },
+            mix_mass_scale: c.rough.photon_mix.mass_scale() as f32,
+            _pad_mix0: 0,
+            _pad_mix1: 0,
+            _pad_mix2: 0,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);

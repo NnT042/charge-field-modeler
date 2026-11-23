@@ -46,6 +46,7 @@ struct Params {
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
     mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
+    mix_mass_scale: f32, _pad_mix0: u32, _pad_mix1: u32, _pad_mix2: u32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
