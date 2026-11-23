@@ -3775,5 +3775,44 @@ fn crowded_cells(engine: &DsmcEngine, ctx: &GpuContext) -> String {
         let (bi, d) = centers.iter().enumerate().map(|(b, c)| (b, (*x - *c).length())).fold((usize::MAX, f64::INFINITY), |a, v| if v.1 < a.1 { v } else { a });
         s += &format!(" | {n} at ({:+.2},{:+.2},{:+.2}) {:.2} from body {bi}", x.x, x.y, x.z, d);
     }
+    // Doc §15.59: profile along the pole axis (z) of the 2x2 central cell
+    // columns (|x|,|y| < h), in z bins of 2h: photons per cell, share moving
+    // away from the centre (b.z same sign as z), beam share, level-3 share.
+    // Steady growth outward = the jet sweeps up field photons; a spike only
+    // at the edge = an edge effect.
+    let zr = engine.config.bodies.iter().map(|b| b.center.z.abs()).fold(0.0, f64::max);
+    let nb = ((-g.min.z) / (2.0 * g.h)).ceil() as i64;
+    let mut prof = vec![[0.0f64; 4]; (2 * nb) as usize];
+    for p in &ph {
+        if p.c[0] & FLAG_ALIVE == 0 || (p.a[0] as f64).abs() >= g.h || (p.a[1] as f64).abs() >= g.h {
+            continue;
+        }
+        let z = p.a[2] as f64;
+        let b = (z / (2.0 * g.h)).floor() as i64 + nb;
+        if b < 0 || b >= 2 * nb {
+            continue;
+        }
+        let e = &mut prof[b as usize];
+        e[0] += 1.0;
+        if (p.b[2] as f64) * z > 0.0 {
+            e[1] += 1.0;
+        }
+        if p.c[0] & (1 << 22) != 0 {
+            e[2] += 1.0;
+        }
+        if p.c[3] >= 3 {
+            e[3] += 1.0;
+        }
+    }
+    s += &format!("
+    axis column (bodies at |z| <= {zr:.2}), z bin: per cell | outward | beam | level 3");
+    for (b, e) in prof.iter().enumerate() {
+        if e[0] == 0.0 {
+            continue;
+        }
+        let z0 = (b as i64 - nb) as f64 * 2.0 * g.h;
+        s += &format!("
+      z {:+.2}..{:+.2}: {:.0} | {:.2} | {:.2} | {:.2}", z0, z0 + 2.0 * g.h, e[0] / 8.0, e[1] / e[0], e[2] / e[0], e[3] / e[0]);
+    }
     s
 }
