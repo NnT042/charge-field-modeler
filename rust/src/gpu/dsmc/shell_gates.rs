@@ -1235,7 +1235,9 @@ fn two_body_config(centers: &[DVec3], classes: &[&str], n_a: f64, lambda: f64, c
             through_lane_rho: 0.0,
         })
         .collect();
-    c.shell_signs = classes.iter().map(|cl| if *cl == "neutron" { crate::baryon_shells::NEUTRON_STATES[0] } else { PROTON_STATES[0] }).collect();
+    // Doc §15.60: "antiproton" = the proton with every spin sign reversed
+    // (PROTON_STATES[1]; inner levels reversed in report_deuteron).
+    c.shell_signs = classes.iter().map(|cl| if *cl == "neutron" { crate::baryon_shells::NEUTRON_STATES[0] } else if *cl == "antiproton" { PROTON_STATES[1] } else { PROTON_STATES[0] }).collect();
     c
 }
 
@@ -2410,7 +2412,7 @@ fn report_deuteron() {
     // Control (doc §15.43): 'x' is an inert sphere, a lepton-type ball of the
     // full envelope radius that takes nothing in; photons bounce off it
     // (rough contact). CFM_D_XSPIN = its spin sign (0 = not turning).
-    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else if c == 'e' { "electron" } else if c == 'x' { "inert" } else { "proton" }).collect();
+    let classes: Vec<&str> = pair.chars().map(|c| if c == 'n' { "neutron" } else if c == 'e' { "electron" } else if c == 'x' { "inert" } else if c == 'a' { "antiproton" } else { "proton" }).collect();
     let x_spin: f64 = env("CFM_D_XSPIN", "0").parse().unwrap();
     // Control (doc §15.43): CFM_D_MAZE=iso re-emits in a uniformly random
     // direction (no maze, no disc) for every body.
@@ -2485,6 +2487,10 @@ fn report_deuteron() {
                 b.inner_signs = NEUTRON_INNER_SIGNS;
                 b.tier1_signs = NEUTRON_INNER_SIGNS;
             }
+            if *cl == "antiproton" {
+                b.inner_signs = [-1.0; 4];
+                b.tier1_signs = [-1.0; 4];
+            }
         }
         for (b, cl) in cls.iter().enumerate() {
             if *cl == "electron" {
@@ -2553,6 +2559,15 @@ fn report_deuteron() {
             continue;
         }
         let mut engine = make(&[DVec3::ZERO], &[cl], &[GpuOrient::PoleOn]);
+        // Doc §15.60: CFM_D_LONEAXIS "x,y,z" turns the lone body's spin axis
+        // (default +z); forces stay in the lab frame, the spin line and the
+        // push-by-source table are read along the turned axis.
+        let lone_axis = { let v: Vec<f64> = env("CFM_D_LONEAXIS", "0,0,1").split(',').map(|q| q.trim().parse().unwrap()).collect(); DVec3::new(v[0], v[1], v[2]).normalize() };
+        if (lone_axis - DVec3::Z).length() > 1e-9 {
+            let q = glam::DQuat::from_rotation_arc(DVec3::Z, lone_axis);
+            engine.set_body_poses(&ctx, &[DVec3::ZERO], Some(&[q]));
+            println!("lone {cl} axis ({:+.3}, {:+.3}, {:+.3})", lone_axis.x, lone_axis.y, lone_axis.z);
+        }
         for _ in 0..cal_warm {
             engine.step_flux(&ctx);
         }
@@ -2564,7 +2579,8 @@ fn report_deuteron() {
         let tq = DVec3::new(t.sh_torque[0][0], t.sh_torque[0][1], t.sh_torque[0][2]) / (cal as f64 * dt);
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
-        println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], DVec3::Z, cal as f64 * dt));
+        println!("self-force {cl:<7} along its axis {:+.1}, across {:.1}", f.dot(lone_axis), (f - lone_axis * f.dot(lone_axis)).length());
+        println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], lone_axis, cal as f64 * dt));
         println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
         if env("CFM_P_CELLS", "0") == "1" {
             println!("alone {cl:<7}: crowded cells: {}", crowded_cells(&engine, &ctx));
@@ -2579,10 +2595,14 @@ fn report_deuteron() {
         if !src_dir.is_empty() {
             src_tab_save(&src_path(cl), &st);
         }
-        src_print(0, &[cl], &st, None, glam::DQuat::IDENTITY, DVec3::Z, DVec3::Z);
+        src_print(0, &[cl], &st, None, glam::DQuat::from_rotation_arc(DVec3::Z, lone_axis), lone_axis, lone_axis);
         src_alone.insert(cl, st);
         f_self.entry(cl).or_insert(f);
         t_self.entry(cl).or_insert(tq);
+    }
+    // Doc §15.60: CFM_D_LONEONLY=1 stops after the lone-body calibration.
+    if env("CFM_D_LONEONLY", "0") == "1" {
+        return;
     }
     // 2. The stack, held while the field settles, then free. Bodies sit on
     // the axis e in CFM_F_PAIR order with gaps CFM_D_SEPS (default all

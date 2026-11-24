@@ -5454,6 +5454,43 @@ fixed, so it does not move the atom, but a free proton would feel it.
 
 Open: whether masspath is the physical choice (user's call); the rented resolution ladder (docs/VAST_HITBOX_PLAN.md) should now use masspath.
 
+### 15.60 tc60: the lone proton's self-push follows the field's majority species (2026-11-24)
+
+Under the §15.59 masspath mix (hit box + mass, even mix, R_D 6, pre-filled, seed 49344) a lone
+fixed proton feels ~+280 per unit time toward its own north pole (k0 one-size field: +23). New test
+knobs: `CFM_F_PAIR` letter `a` = antiproton (the proton with every spin sign reversed: shell signs
+PROTON_STATES[1], inner and tier-1 signs all −1; user 2026-11-24), `CFM_D_LONEAXIS` (the lone body's
+spin axis) and `CFM_D_LONEONLY=1` (stop after the lone calibration). 24/24 gates pass (cfm60).
+ISABELLE ran q60_a..f, ESTELLE reference/tc60/q60e.sh; results in reference/tc60.
+
+| body | axis | photon share φ | push along its own axis | sideways | pole taking the majority species (spin in) |
+|---|---|---|---|---|---|
+| proton | +z | 2/3 | +280 (repeat of §15.59, identical) | 117 | S, photons 14.8 vs N 4.6 |
+| proton | −z | 2/3 | +307 | 106 | S, photons 15.3 |
+| proton | 45° | 2/3 | +266 | 77 | S, photons 14.7 |
+| proton | +x | 2/3 | +235 | 94 | S, photons 14.1 |
+| proton | +z | 1/2 | +10 | 28 | even (~9.4 each) |
+| proton | +z | 1/3 | −287 | 95 | N, antiphotons 15.2 |
+| antiproton | +z | 2/3 | −299 | 83 | N, photons 15.3 |
+| antiproton | −z | 2/3 | −244 | 130 | N, photons 14.3 |
+| antiproton | 45° | 2/3 | −274 | 115 | N, photons 14.4 |
+| antiproton | +z | 1/3 | +278 | 81 | S, antiphotons 14.5 |
+
+- The push sign = (majority species of the field) x (body handedness): flipping φ flips it, φ 1/2
+  removes it, the antiproton reverses it, and flipping both restores it. It follows the body's
+  axis in every orientation; the tilting torque is single digits.
+- Mechanism in the push-by-source table: the pole that takes the majority species is hit about as
+  often (+4%) but ~37% harder (proton φ 2/3: S ambient +837 vs N −610), plus a little from own
+  recaptured emission. Emission recoil is ~0. The intake is the whole ball (no selective-pole rule
+  in the engine), so the species-by-pole split is emergent, and it matches Mathis's selective poles
+  (photons in at the south, antiphotons at the north, for the proton).
+- The propeller reading (handedness alone, little φ dependence) is refuted.
+- The sideways part (77-130, 28 at φ 1/2) has no fixed lab direction; unexplained, likely one-body
+  sampling noise at this length (it vanishes in symmetric pair screens).
+- Implication: in an isotropic field a free proton would self-propel along its axis (~280 / 7e6
+  mass), with nothing to turn it. Mathis's real fields are directional; the next test is whether a
+  directional field (more photons from one side) turns the axis, i.e. the "righting" question.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

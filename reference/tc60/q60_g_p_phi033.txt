@@ -1,0 +1,48 @@
+
+running 1 test
+=== deuteron: p axial, sep0 3, mass 1e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.333, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+photon mix norm MassPath: mean birth mass 3.750, hit-box factor 17.656, mass scale 0.2667, sigma scale 0.0566
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force proton : (-14.5, +93.6, -287.1) per unit time
+self-torque proton : (+2.1, -3.1, -15.5) per unit time
+self-force proton  along its axis -287.1, across 94.7
+alone proton : photon spin torque: net along axis +2.79, across 3.50 | in along axis: S- +5.24 S+ +2.49 N- +15.18 N+ +7.35 | out along axis +27.47 | selective in (S+ and N-) +17.67
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 111034 a-a 72465 (22138) a-o 34403 (12765) a-x 0 (0) o-o 4165 (1838) o-x 0 (0) x-x 0 (0) | S total 141825 a-a 94370 (29172) a-o 42489 (16024) a-x 0 (0) o-o 4966 (2234) o-x 0 (0) x-x 0 (0)
+alone proton : crowded cells: 0 cells over 2048 (mean occupied cell 116)
+    axis column (bodies at |z| <= 0.00), z bin: per cell | outward | beam | level 3 | from a body | toward axis | hits so far
+      z -6.00..-5.50: 118 | 0.54 | 0.00 | 0.40 | 0.00 | +0.016 | 59
+      z -5.50..-5.00: 123 | 0.46 | 0.00 | 0.38 | 0.01 | +0.006 | 133
+      z -5.00..-4.50: 124 | 0.48 | 0.00 | 0.42 | 0.03 | -0.017 | 196
+      z -4.50..-4.00: 124 | 0.49 | 0.00 | 0.44 | 0.03 | +0.014 | 248
+      z -4.00..-3.50: 122 | 0.48 | 0.00 | 0.46 | 0.04 | +0.011 | 322
+      z -3.50..-3.00: 132 | 0.50 | 0.00 | 0.50 | 0.06 | -0.022 | 385
+      z -3.00..-2.50: 128 | 0.51 | 0.00 | 0.52 | 0.08 | -0.005 | 438
+      z -2.50..-2.00: 122 | 0.49 | 0.00 | 0.58 | 0.10 | +0.010 | 463
+      z -2.00..-1.50: 128 | 0.47 | 0.00 | 0.60 | 0.12 | +0.018 | 469
+      z -1.50..-1.00: 116 | 0.47 | 0.00 | 0.65 | 0.19 | -0.009 | 541
+      z -1.00..-0.50: 109 | 0.41 | 0.00 | 0.61 | 0.23 | +0.000 | 537
+      z -0.50..+0.00: 91 | 0.42 | 0.00 | 0.61 | 0.27 | +0.007 | 535
+      z +0.00..+0.50: 90 | 0.33 | 0.00 | 0.53 | 0.28 | -0.026 | 516
+      z +0.50..+1.00: 118 | 0.36 | 0.00 | 0.50 | 0.21 | +0.069 | 505
+      z +1.00..+1.50: 126 | 0.43 | 0.00 | 0.47 | 0.15 | -0.008 | 482
+      z +1.50..+2.00: 129 | 0.46 | 0.00 | 0.44 | 0.13 | -0.009 | 438
+      z +2.00..+2.50: 121 | 0.48 | 0.00 | 0.44 | 0.10 | +0.034 | 412
+      z +2.50..+3.00: 118 | 0.46 | 0.00 | 0.40 | 0.08 | -0.003 | 359
+      z +3.00..+3.50: 121 | 0.50 | 0.00 | 0.41 | 0.05 | +0.020 | 338
+      z +3.50..+4.00: 128 | 0.49 | 0.00 | 0.42 | 0.04 | +0.001 | 308
+      z +4.00..+4.50: 118 | 0.49 | 0.00 | 0.43 | 0.04 | +0.000 | 264
+      z +4.50..+5.00: 121 | 0.48 | 0.00 | 0.38 | 0.01 | -0.016 | 162
+      z +5.00..+5.50: 123 | 0.50 | 0.00 | 0.41 | 0.01 | -0.015 | 105
+      z +5.50..+6.00: 116 | 0.49 | 0.00 | 0.37 | 0.00 | +0.025 | 52
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2700 /       0 |    -840.7 /      +0.0 /   -840.7 |     +2.9 /     +0.0 /     +2.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2588 /       0 |    +602.9 /      +0.0 /   +602.9 |     +2.5 /     +0.0 /     +2.5 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1274 /       0 |    -309.8 /      +0.0 /   -309.8 |     +3.4 /     +0.0 /     +3.4 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1282 /       0 |    +258.5 /      +0.0 /   +258.5 |     +1.4 /     +0.0 /     +1.4 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      +2.1 /      +0.0 /     +2.1 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    -287.1 /      +0.0 /   -287.1 |     +3.7 /     +0.0 /     +3.7
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 303 filtered out; finished in 1347.47s
+
