@@ -5444,8 +5444,15 @@ possible later anchor.
 - Short runs (h_axis_*): path alone removes the jet too, but its push (−10197) is far from both.
 - Gates 24/24 pass with cfm59h.
 
-Open: whether masspath is the physical choice (user's call); re-check the H-atom electron under
-masspath; the rented resolution ladder (docs/VAST_HITBOX_PLAN.md) should now use masspath.
+**H atom under masspath** (free electron from 2.5, proton fixed, 10000 steps, 3 seeds, ISABELLE,
+~104 min each, no over-full cells): the electron settles at ~1.2 in every seed and stays to the
+end of the run (t 591). Share of logs within 1.35: 78% / 75% / 68% (seeds 1 / 2 / 49344; one-size
+k0 97%). Seeds 2 and 49344 make one excursion each (to 2.9 and 2.8) and come back. The heavy mix
+without normalisation (one seed) never settled and was at 4.65 when the run stopped at t 272.
+The fixed proton carries a self-force ~280 along z under the mix (k0 ~110, mostly x); it is
+fixed, so it does not move the atom, but a free proton would feel it.
+
+Open: whether masspath is the physical choice (user's call); the rented resolution ladder (docs/VAST_HITBOX_PLAN.md) should now use masspath.
 
 ## 12. Out of scope for this step
 

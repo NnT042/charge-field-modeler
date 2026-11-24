@@ -1,0 +1,167 @@
+
+running 1 test
+=== deuteron: pe axial, sep0 3, mass 7e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+photon mix norm MassPath: mean birth mass 3.750, hit-box factor 17.656, mass scale 0.2667, sigma scale 0.0566
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force electron: (-1.4, -1.2, -3.5) per unit time
+self-torque electron: (+0.0, +0.0, +0.0) per unit time
+alone electron: photon spin torque: net along axis +0.00, across 0.00 | in along axis: S- +0.00 S+ +0.00 N- +0.00 N+ +0.00 | out along axis +0.00 | selective in (S+ and N-) +0.00
+alone electron: collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 39430 a-a 39430 (8405) a-o 0 (0) a-x 0 (0) o-o 0 (0) o-x 0 (0) x-x 0 (0) | S total 38230 a-a 38230 (8243) a-o 0 (0) a-x 0 (0) o-o 0 (0) o-x 0 (0) x-x 0 (0)
+alone electron: crowded cells: 0 cells over 2048 (mean occupied cell 116)
+    axis column (bodies at |z| <= 0.00), z bin: per cell | outward | beam | level 3 | from a body | toward axis | hits so far
+      z -6.00..-5.50: 127 | 0.49 | 0.00 | 0.38 | 0.00 | -0.007 | 56
+      z -5.50..-5.00: 120 | 0.53 | 0.00 | 0.43 | 0.00 | +0.031 | 135
+      z -5.00..-4.50: 122 | 0.51 | 0.00 | 0.40 | 0.00 | +0.014 | 220
+      z -4.50..-4.00: 124 | 0.50 | 0.00 | 0.41 | 0.00 | -0.015 | 269
+      z -4.00..-3.50: 134 | 0.51 | 0.00 | 0.44 | 0.00 | +0.033 | 342
+      z -3.50..-3.00: 130 | 0.50 | 0.00 | 0.45 | 0.00 | +0.046 | 409
+      z -3.00..-2.50: 137 | 0.48 | 0.00 | 0.47 | 0.00 | -0.006 | 436
+      z -2.50..-2.00: 128 | 0.49 | 0.00 | 0.50 | 0.00 | -0.011 | 520
+      z -2.00..-1.50: 128 | 0.49 | 0.00 | 0.50 | 0.00 | +0.015 | 499
+      z -1.50..-1.00: 122 | 0.48 | 0.00 | 0.52 | 0.00 | -0.019 | 520
+      z -1.00..-0.50: 131 | 0.51 | 0.00 | 0.59 | 0.00 | -0.004 | 553
+      z -0.50..+0.00: 118 | 0.54 | 0.00 | 0.68 | 0.00 | -0.001 | 559
+      z +0.00..+0.50: 115 | 0.46 | 0.00 | 0.68 | 0.00 | +0.015 | 553
+      z +0.50..+1.00: 130 | 0.49 | 0.00 | 0.59 | 0.00 | +0.018 | 518
+      z +1.00..+1.50: 122 | 0.49 | 0.00 | 0.58 | 0.00 | -0.000 | 565
+      z +1.50..+2.00: 133 | 0.48 | 0.00 | 0.51 | 0.00 | -0.006 | 526
+      z +2.00..+2.50: 120 | 0.49 | 0.00 | 0.51 | 0.00 | -0.026 | 525
+      z +2.50..+3.00: 125 | 0.51 | 0.00 | 0.46 | 0.00 | -0.015 | 441
+      z +3.00..+3.50: 124 | 0.49 | 0.00 | 0.47 | 0.00 | +0.006 | 433
+      z +3.50..+4.00: 126 | 0.50 | 0.00 | 0.47 | 0.00 | -0.024 | 386
+      z +4.00..+4.50: 122 | 0.51 | 0.00 | 0.51 | 0.00 | +0.066 | 302
+      z +4.50..+5.00: 128 | 0.49 | 0.00 | 0.45 | 0.00 | +0.001 | 208
+      z +5.00..+5.50: 121 | 0.49 | 0.00 | 0.45 | 0.00 | +0.041 | 169
+      z +5.50..+6.00: 128 | 0.55 | 0.00 | 0.41 | 0.00 | -0.005 | 79
+push by source, body 0 electron (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  recoil of what it sends out      :                   |      +0.0 /      +0.0 /     +0.0 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |      +0.0 /      +0.0 /     +0.0 |     +0.0 /     +0.0 /     +0.0
+self-force proton : (-97.4, +64.5, +296.4) per unit time
+self-torque proton : (+0.8, -2.8, -0.2) per unit time
+alone proton : photon spin torque: net along axis +1.45, across 4.93 | in along axis: S- +7.20 S+ +14.89 N- +2.34 N+ +4.79 | out along axis +27.78 | selective in (S+ and N-) +17.23
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 140544 a-a 92921 (28832) a-o 42557 (16030) a-x 0 (0) o-o 5067 (2264) o-x 0 (0) x-x 0 (0) | S total 110805 a-a 72855 (22271) a-o 33894 (12616) a-x 0 (0) o-o 4056 (1798) o-x 0 (0) x-x 0 (0)
+alone proton : crowded cells: 0 cells over 2048 (mean occupied cell 116)
+    axis column (bodies at |z| <= 0.00), z bin: per cell | outward | beam | level 3 | from a body | toward axis | hits so far
+      z -6.00..-5.50: 137 | 0.48 | 0.00 | 0.37 | 0.00 | +0.011 | 49
+      z -5.50..-5.00: 122 | 0.51 | 0.00 | 0.39 | 0.02 | -0.005 | 135
+      z -5.00..-4.50: 122 | 0.50 | 0.00 | 0.41 | 0.02 | -0.008 | 177
+      z -4.50..-4.00: 126 | 0.51 | 0.00 | 0.44 | 0.03 | +0.018 | 253
+      z -4.00..-3.50: 130 | 0.52 | 0.00 | 0.39 | 0.03 | -0.016 | 291
+      z -3.50..-3.00: 119 | 0.50 | 0.00 | 0.44 | 0.06 | +0.005 | 357
+      z -3.00..-2.50: 122 | 0.49 | 0.00 | 0.44 | 0.07 | -0.001 | 384
+      z -2.50..-2.00: 121 | 0.47 | 0.00 | 0.44 | 0.09 | -0.003 | 428
+      z -2.00..-1.50: 120 | 0.47 | 0.00 | 0.43 | 0.12 | -0.011 | 451
+      z -1.50..-1.00: 123 | 0.40 | 0.00 | 0.46 | 0.16 | +0.001 | 468
+      z -1.00..-0.50: 104 | 0.36 | 0.00 | 0.48 | 0.22 | -0.009 | 508
+      z -0.50..+0.00: 83 | 0.36 | 0.00 | 0.56 | 0.28 | +0.016 | 541
+      z +0.00..+0.50: 90 | 0.37 | 0.00 | 0.60 | 0.29 | -0.014 | 550
+      z +0.50..+1.00: 119 | 0.41 | 0.00 | 0.62 | 0.24 | +0.039 | 555
+      z +1.00..+1.50: 123 | 0.44 | 0.00 | 0.62 | 0.21 | +0.008 | 530
+      z +1.50..+2.00: 128 | 0.47 | 0.00 | 0.58 | 0.14 | +0.005 | 469
+      z +2.00..+2.50: 122 | 0.48 | 0.00 | 0.59 | 0.11 | +0.033 | 514
+      z +2.50..+3.00: 125 | 0.46 | 0.00 | 0.54 | 0.08 | -0.007 | 437
+      z +3.00..+3.50: 124 | 0.48 | 0.00 | 0.48 | 0.06 | +0.024 | 380
+      z +3.50..+4.00: 121 | 0.49 | 0.00 | 0.48 | 0.05 | -0.034 | 344
+      z +4.00..+4.50: 124 | 0.49 | 0.00 | 0.46 | 0.02 | -0.040 | 288
+      z +4.50..+5.00: 122 | 0.47 | 0.00 | 0.42 | 0.02 | +0.015 | 200
+      z +5.00..+5.50: 120 | 0.50 | 0.00 | 0.44 | 0.01 | +0.019 | 138
+      z +5.50..+6.00: 128 | 0.52 | 0.00 | 0.40 | 0.00 | -0.020 | 62
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2596 /       0 |    -605.8 /      +0.0 /   -605.8 |     +3.2 /     +0.0 /     +3.2 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2722 /       0 |    +853.9 /      +0.0 /   +853.9 |     +1.5 /     +0.0 /     +1.5 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1278 /       0 |    -259.7 /      +0.0 /   -259.7 |     +0.3 /     +0.0 /     +0.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1266 /       0 |    +307.6 /      +0.0 /   +307.6 |     +0.2 /     +0.0 /     +0.2 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      +0.3 /      +0.0 /     +0.3 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    +296.4 /      +0.0 /   +296.4 |     +2.9 /     +0.0 /     +2.9
+rotation: inertia 0e0, L_spin 0e0, damp 0
+layout custom: orients [PoleOn, PoleOn], start [(0.0, 0.0, 0.0), (0.0, 0.0, 2.5)]
+t   10.02: gaps 2.2493 | interaction (x,z): p (+99,-277) e (-4,-19) | max lateral y 0.165 | pos (-0.00,+0.00,-0.00) (+0.04,-0.16,+2.24) | e1 on p0: r 2.25 lat +86 | contact steps 0 | captures/time 7952 0
+t   20.04: gaps 1.6221 | interaction (x,z): p (+8,-369) e (+4,-15) | max lateral y 0.195 | pos (-0.00,+0.00,-0.00) (+0.08,-0.19,+1.61) | e1 on p0: r 1.62 lat +82 | contact steps 0 | captures/time 7976 0
+t   30.06: gaps 1.2833 | interaction (x,z): p (+1,-225) e (-3,-62) | max lateral y 0.192 | pos (-0.00,+0.00,-0.00) (+0.07,-0.19,+1.27) | e1 on p0: r 1.28 lat +81 | contact steps 1 | captures/time 7996 0
+t   40.08: gaps 1.2236 | interaction (x,z): p (+47,-248) e (+2,-91) | max lateral y 0.112 | pos (-0.00,+0.00,-0.00) (+0.14,-0.11,+1.21) | e1 on p0: r 1.22 lat +82 | contact steps 3 | captures/time 7988 0
+t   50.10: gaps 1.2446 | interaction (x,z): p (+114,-202) e (-34,-94) | max lateral y 0.152 | pos (-0.00,+0.00,-0.00) (+0.33,-0.15,+1.19) | e1 on p0: r 1.24 lat +73 | contact steps 6 | captures/time 7926 0
+t   60.12: gaps 1.2374 | interaction (x,z): p (+51,-259) e (-12,-94) | max lateral y 0.293 | pos (-0.00,+0.00,-0.00) (+0.44,-0.29,+1.12) | e1 on p0: r 1.24 lat +65 | contact steps 9 | captures/time 7973 0
+t   70.14: gaps 1.2121 | interaction (x,z): p (+104,-213) e (-44,-80) | max lateral y 0.268 | pos (-0.00,+0.00,-0.00) (+0.58,-0.27,+1.03) | e1 on p0: r 1.21 lat +58 | contact steps 12 | captures/time 8026 0
+t   80.16: gaps 1.2003 | interaction (x,z): p (+34,-215) e (-40,-77) | max lateral y 0.408 | pos (-0.00,+0.00,-0.00) (+0.81,-0.41,+0.79) | e1 on p0: r 1.20 lat +41 | contact steps 17 | captures/time 8015 0
+t   90.18: gaps 1.2942 | interaction (x,z): p (+98,-262) e (-23,-15) | max lateral y 0.476 | pos (-0.00,+0.00,-0.00) (+1.14,-0.48,+0.39) | e1 on p0: r 1.29 lat +17 | contact steps 24 | captures/time 8057 0
+t  100.20: gaps 1.9156 | interaction (x,z): p (+53,-370) e (-1,+26) | max lateral y 0.797 | pos (-0.00,+0.00,-0.00) (+1.62,-0.80,+0.64) | e1 on p0: r 1.92 lat +19 | contact steps 24 | captures/time 8002 0
+t  110.22: gaps 2.3609 | interaction (x,z): p (+61,-361) e (-9,+3) | max lateral y 0.802 | pos (-0.00,+0.00,-0.00) (+1.96,-0.80,+1.04) | e1 on p0: r 2.36 lat +26 | contact steps 24 | captures/time 8017 0
+t  120.24: gaps 2.6432 | interaction (x,z): p (+85,-345) e (-2,-3) | max lateral y 0.638 | pos (-0.00,+0.00,-0.00) (+2.15,-0.64,+1.40) | e1 on p0: r 2.64 lat +32 | contact steps 24 | captures/time 8006 0
+t  130.26: gaps 2.9176 | interaction (x,z): p (+89,-330) e (+9,-12) | max lateral y 0.448 | pos (-0.00,+0.00,-0.00) (+2.26,-0.45,+1.78) | e1 on p0: r 2.92 lat +38 | contact steps 24 | captures/time 7978 0
+t  140.28: gaps 3.1377 | interaction (x,z): p (+98,-329) e (-15,+1) | max lateral y 0.266 | pos (-0.00,+0.00,-0.00) (+2.46,-0.27,+1.93) | e1 on p0: r 3.14 lat +38 | contact steps 24 | captures/time 7924 0
+t  150.30: gaps 3.0347 | interaction (x,z): p (+81,-302) e (-8,-15) | max lateral y 0.363 | pos (-0.00,+0.00,-0.00) (+2.30,-0.36,+1.94) | e1 on p0: r 3.03 lat +40 | contact steps 24 | captures/time 7968 0
+t  160.32: gaps 2.9084 | interaction (x,z): p (+87,-308) e (-5,+22) | max lateral y 0.427 | pos (-0.00,+0.00,-0.00) (+2.03,-0.43,+2.04) | e1 on p0: r 2.91 lat +45 | contact steps 24 | captures/time 7969 0
+t  170.34: gaps 3.0391 | interaction (x,z): p (+94,-310) e (+17,-14) | max lateral y 0.522 | pos (-0.00,+0.00,-0.00) (+1.84,-0.52,+2.36) | e1 on p0: r 3.04 lat +51 | contact steps 24 | captures/time 8009 0
+t  180.36: gaps 3.0420 | interaction (x,z): p (+65,-344) e (+9,-2) | max lateral y 0.562 | pos (-0.00,+0.00,-0.00) (+1.98,-0.56,+2.24) | e1 on p0: r 3.04 lat +47 | contact steps 24 | captures/time 7938 0
+t  190.38: gaps 2.9016 | interaction (x,z): p (+10,-285) e (-28,+5) | max lateral y 0.324 | pos (-0.00,+0.00,-0.00) (+1.89,-0.32,+2.17) | e1 on p0: r 2.90 lat +49 | contact steps 24 | captures/time 7972 0
+t  200.40: gaps 2.5257 | interaction (x,z): p (+129,-296) e (+7,-18) | max lateral y 0.158 | pos (-0.00,+0.00,-0.00) (+1.42,-0.16,+2.08) | e1 on p0: r 2.53 lat +56 | contact steps 24 | captures/time 8006 0
+t  210.42: gaps 2.1394 | interaction (x,z): p (+81,-228) e (+9,+3) | max lateral y 0.146 | pos (-0.00,+0.00,-0.00) (+1.19,-0.15,+1.77) | e1 on p0: r 2.14 lat +56 | contact steps 24 | captures/time 7981 0
+t  220.44: gaps 1.7880 | interaction (x,z): p (+78,-297) e (-11,-6) | max lateral y 0.177 | pos (-0.00,+0.00,-0.00) (+1.01,-0.18,+1.46) | e1 on p0: r 1.79 lat +55 | contact steps 24 | captures/time 8026 0
+t  230.46: gaps 1.3144 | interaction (x,z): p (+125,-319) e (-20,-38) | max lateral y 0.099 | pos (-0.00,+0.00,-0.00) (+0.80,-0.10,+1.04) | e1 on p0: r 1.31 lat +52 | contact steps 25 | captures/time 7956 0
+t  240.48: gaps 1.2195 | interaction (x,z): p (+137,-223) e (-57,-60) | max lateral y 0.104 | pos (-0.00,+0.00,-0.00) (+0.90,-0.10,+0.81) | e1 on p0: r 1.22 lat +42 | contact steps 26 | captures/time 8029 0
+t  250.50: gaps 1.2060 | interaction (x,z): p (+126,-243) e (-58,-46) | max lateral y 0.040 | pos (-0.00,+0.00,-0.00) (+1.04,-0.04,+0.61) | e1 on p0: r 1.21 lat +31 | contact steps 31 | captures/time 8001 0
+t  260.52: gaps 1.2112 | interaction (x,z): p (+82,-282) e (-46,-32) | max lateral y 0.119 | pos (-0.00,-0.00,-0.00) (+1.09,+0.12,+0.52) | e1 on p0: r 1.21 lat +25 | contact steps 33 | captures/time 8011 0
+t  270.54: gaps 1.2739 | interaction (x,z): p (+93,-350) e (-23,+4) | max lateral y 0.170 | pos (-0.00,-0.00,-0.00) (+1.16,+0.17,+0.51) | e1 on p0: r 1.27 lat +23 | contact steps 35 | captures/time 8083 0
+t  280.56: gaps 1.2143 | interaction (x,z): p (+94,-261) e (-35,-15) | max lateral y 0.245 | pos (-0.00,-0.00,-0.00) (+1.06,+0.24,+0.53) | e1 on p0: r 1.21 lat +26 | contact steps 37 | captures/time 7983 0
+t  290.58: gaps 1.2000 | interaction (x,z): p (+54,-311) e (-24,-26) | max lateral y 0.292 | pos (-0.00,-0.00,-0.00) (+1.06,+0.29,+0.48) | e1 on p0: r 1.20 lat +24 | contact steps 40 | captures/time 8022 0
+t  300.60: gaps 1.2519 | interaction (x,z): p (+82,-286) e (-22,+14) | max lateral y 0.170 | pos (-0.00,-0.00,-0.00) (+1.12,+0.17,+0.53) | e1 on p0: r 1.25 lat +25 | contact steps 42 | captures/time 8007 0
+t  310.62: gaps 1.2202 | interaction (x,z): p (+116,-280) e (-47,-31) | max lateral y 0.004 | pos (-0.00,-0.00,-0.00) (+0.95,+0.00,+0.76) | e1 on p0: r 1.22 lat +38 | contact steps 44 | captures/time 8049 0
+t  320.64: gaps 1.2312 | interaction (x,z): p (+65,-213) e (-44,-63) | max lateral y 0.082 | pos (-0.00,-0.00,-0.00) (+0.98,+0.08,+0.74) | e1 on p0: r 1.23 lat +37 | contact steps 48 | captures/time 8044 0
+t  330.66: gaps 1.2179 | interaction (x,z): p (+86,-277) e (-63,-31) | max lateral y 0.305 | pos (-0.00,-0.00,-0.00) (+1.10,+0.30,+0.43) | e1 on p0: r 1.22 lat +21 | contact steps 51 | captures/time 7929 0
+t  340.68: gaps 1.2612 | interaction (x,z): p (+101,-333) e (-17,+3) | max lateral y 0.407 | pos (-0.00,-0.00,-0.00) (+1.07,+0.41,+0.54) | e1 on p0: r 1.26 lat +25 | contact steps 51 | captures/time 7984 0
+t  350.70: gaps 1.2282 | interaction (x,z): p (+67,-312) e (-33,-26) | max lateral y 0.341 | pos (-0.00,-0.00,-0.00) (+1.02,+0.34,+0.59) | e1 on p0: r 1.23 lat +29 | contact steps 53 | captures/time 7984 0
+t  360.72: gaps 1.2105 | interaction (x,z): p (+63,-261) e (-35,-17) | max lateral y 0.263 | pos (-0.00,-0.00,-0.00) (+1.07,+0.26,+0.50) | e1 on p0: r 1.21 lat +24 | contact steps 57 | captures/time 8001 0
+t  370.74: gaps 1.2404 | interaction (x,z): p (+87,-314) e (-45,-10) | max lateral y 0.222 | pos (-0.00,-0.00,-0.00) (+1.09,+0.22,+0.55) | e1 on p0: r 1.24 lat +26 | contact steps 59 | captures/time 8020 0
+t  380.76: gaps 1.2235 | interaction (x,z): p (+76,-289) e (-41,-26) | max lateral y 0.280 | pos (-0.00,-0.00,-0.00) (+1.07,+0.28,+0.53) | e1 on p0: r 1.22 lat +25 | contact steps 61 | captures/time 7979 0
+t  390.78: gaps 1.2000 | interaction (x,z): p (+43,-264) e (-58,-44) | max lateral y 0.276 | pos (-0.00,-0.00,-0.00) (+0.96,+0.28,+0.66) | e1 on p0: r 1.20 lat +33 | contact steps 66 | captures/time 8028 0
+t  400.80: gaps 1.2023 | interaction (x,z): p (+115,-251) e (-64,-44) | max lateral y 0.289 | pos (-0.00,-0.00,-0.00) (+1.05,+0.29,+0.52) | e1 on p0: r 1.20 lat +25 | contact steps 79 | captures/time 7980 0
+t  410.82: gaps 1.2006 | interaction (x,z): p (+109,-228) e (-52,-26) | max lateral y 0.172 | pos (-0.00,-0.00,-0.00) (+1.07,+0.17,+0.51) | e1 on p0: r 1.20 lat +25 | contact steps 87 | captures/time 7964 0
+t  420.84: gaps 1.2105 | interaction (x,z): p (+135,-236) e (-50,-16) | max lateral y 0.080 | pos (-0.00,-0.00,-0.00) (+1.06,+0.08,+0.58) | e1 on p0: r 1.21 lat +29 | contact steps 92 | captures/time 8024 0
+t  430.86: gaps 1.2587 | interaction (x,z): p (+59,-325) e (-29,-12) | max lateral y 0.149 | pos (-0.00,-0.00,-0.00) (+1.16,+0.15,+0.47) | e1 on p0: r 1.26 lat +22 | contact steps 95 | captures/time 8011 0
+t  440.88: gaps 1.2404 | interaction (x,z): p (+94,-294) e (-35,-23) | max lateral y 0.145 | pos (-0.00,-0.00,-0.00) (+1.03,+0.15,+0.67) | e1 on p0: r 1.24 lat +33 | contact steps 96 | captures/time 8011 0
+t  450.90: gaps 1.2054 | interaction (x,z): p (+135,-258) e (-42,-39) | max lateral y 0.049 | pos (-0.00,-0.00,-0.00) (+1.10,+0.05,+0.49) | e1 on p0: r 1.21 lat +24 | contact steps 99 | captures/time 8039 0
+t  460.92: gaps 1.2100 | interaction (x,z): p (+80,-293) e (-32,-3) | max lateral y 0.030 | pos (-0.00,-0.00,-0.00) (+1.10,+0.03,+0.51) | e1 on p0: r 1.21 lat +25 | contact steps 101 | captures/time 8040 0
+t  470.94: gaps 1.2031 | interaction (x,z): p (+93,-325) e (-40,-25) | max lateral y 0.018 | pos (-0.00,-0.00,-0.00) (+1.10,+0.02,+0.49) | e1 on p0: r 1.20 lat +24 | contact steps 103 | captures/time 7977 0
+t  480.96: gaps 1.2173 | interaction (x,z): p (+83,-308) e (-45,-13) | max lateral y 0.082 | pos (-0.00,-0.00,-0.00) (+1.08,+0.08,+0.56) | e1 on p0: r 1.22 lat +27 | contact steps 106 | captures/time 7963 0
+t  490.98: gaps 1.2359 | interaction (x,z): p (-1,-328) e (-61,-29) | max lateral y 0.016 | pos (-0.00,+0.00,-0.00) (+1.01,-0.02,+0.71) | e1 on p0: r 1.24 lat +35 | contact steps 109 | captures/time 7975 0
+t  501.00: gaps 1.2238 | interaction (x,z): p (+143,-309) e (-39,-50) | max lateral y 0.160 | pos (-0.00,-0.00,-0.00) (+1.04,+0.16,+0.63) | e1 on p0: r 1.22 lat +31 | contact steps 112 | captures/time 7979 0
+t  511.02: gaps 1.2284 | interaction (x,z): p (+65,-274) e (-48,-8) | max lateral y 0.267 | pos (-0.00,-0.00,-0.00) (+1.10,+0.27,+0.48) | e1 on p0: r 1.23 lat +23 | contact steps 114 | captures/time 7947 0
+t  521.04: gaps 1.2061 | interaction (x,z): p (+63,-247) e (-54,-32) | max lateral y 0.277 | pos (-0.00,-0.00,-0.00) (+0.93,+0.28,+0.71) | e1 on p0: r 1.21 lat +36 | contact steps 117 | captures/time 8019 0
+t  531.06: gaps 1.2063 | interaction (x,z): p (+152,-285) e (-54,-56) | max lateral y 0.319 | pos (-0.00,-0.00,-0.00) (+0.99,+0.32,+0.62) | e1 on p0: r 1.21 lat +31 | contact steps 122 | captures/time 8011 0
+t  541.08: gaps 1.2176 | interaction (x,z): p (+146,-283) e (-46,-22) | max lateral y 0.457 | pos (-0.00,-0.00,-0.00) (+1.02,+0.46,+0.47) | e1 on p0: r 1.22 lat +23 | contact steps 127 | captures/time 8013 0
+t  551.10: gaps 1.2245 | interaction (x,z): p (+59,-316) e (-30,-11) | max lateral y 0.208 | pos (-0.00,-0.00,-0.00) (+1.05,+0.21,+0.59) | e1 on p0: r 1.22 lat +29 | contact steps 128 | captures/time 8021 0
+t  561.12: gaps 1.2000 | interaction (x,z): p (+85,-331) e (-41,-20) | max lateral y 0.006 | pos (-0.00,-0.00,-0.00) (+1.06,+0.01,+0.56) | e1 on p0: r 1.20 lat +28 | contact steps 132 | captures/time 8035 0
+t  571.14: gaps 1.2020 | interaction (x,z): p (+80,-273) e (-36,-19) | max lateral y 0.015 | pos (-0.00,+0.00,-0.00) (+1.07,-0.02,+0.54) | e1 on p0: r 1.20 lat +27 | contact steps 140 | captures/time 8006 0
+t  581.16: gaps 1.2090 | interaction (x,z): p (+58,-293) e (-61,-44) | max lateral y 0.062 | pos (-0.00,-0.00,-0.00) (+1.05,+0.06,+0.59) | e1 on p0: r 1.21 lat +29 | contact steps 145 | captures/time 8024 0
+t  591.18: gaps 1.2239 | interaction (x,z): p (+89,-364) e (-40,-11) | max lateral y 0.263 | pos (-0.00,-0.00,-0.00) (+1.09,+0.26,+0.48) | e1 on p0: r 1.22 lat +23 | contact steps 148 | captures/time 8007 0
+distance 0-1 (proton-electron): range 1.200 .. 3.154; last quarter mean 1.215
+drift of the stack centre +0.235
+screen body 0 proton  at (-0.00,-0.00,-0.00) axis (+0.00,+0.00,+1.00): force (+83,-14,-287) |299| inward -43 | toward neighbours e1:-43 | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,+0)
+screen body 1 electron at (+1.06,+0.33,+0.47) axis (+0.00,+0.00,+1.00): force (-29,-2,-25) |39| inward +36 | toward neighbours p0:+36 | tilt torque 0 (+0,+0,+0), axis pushed toward (+0,+0,+0)
+crowded cells, pair run end: 0 cells over 2048 (mean occupied cell 116)
+    axis column (bodies at |z| <= 0.47), z bin: per cell | outward | beam | level 3 | from a body | toward axis | hits so far
+      z -5.00..-4.50: 62 | 0.56 | 0.00 | 0.36 | 0.01 | -0.016 | 41
+      z -4.50..-4.00: 131 | 0.48 | 0.00 | 0.41 | 0.02 | -0.004 | 92
+      z -4.00..-3.50: 133 | 0.51 | 0.00 | 0.39 | 0.03 | -0.022 | 147
+      z -3.50..-3.00: 123 | 0.48 | 0.00 | 0.40 | 0.05 | -0.024 | 227
+      z -3.00..-2.50: 124 | 0.47 | 0.00 | 0.44 | 0.07 | +0.013 | 284
+      z -2.50..-2.00: 122 | 0.46 | 0.00 | 0.44 | 0.07 | +0.000 | 305
+      z -2.00..-1.50: 125 | 0.44 | 0.00 | 0.42 | 0.12 | +0.002 | 333
+      z -1.50..-1.00: 121 | 0.41 | 0.00 | 0.43 | 0.17 | +0.019 | 386
+      z -1.00..-0.50: 114 | 0.36 | 0.00 | 0.48 | 0.20 | +0.040 | 417
+      z -0.50..+0.00: 88 | 0.35 | 0.00 | 0.55 | 0.25 | -0.054 | 519
+      z +0.00..+0.50: 100 | 0.34 | 0.00 | 0.52 | 0.25 | -0.050 | 548
+      z +0.50..+1.00: 120 | 0.37 | 0.00 | 0.53 | 0.23 | +0.002 | 592
+      z +1.00..+1.50: 124 | 0.41 | 0.00 | 0.52 | 0.16 | +0.032 | 554
+      z +1.50..+2.00: 119 | 0.45 | 0.00 | 0.48 | 0.13 | +0.012 | 534
+      z +2.00..+2.50: 112 | 0.44 | 0.00 | 0.45 | 0.09 | +0.007 | 519
+      z +2.50..+3.00: 123 | 0.51 | 0.00 | 0.42 | 0.08 | -0.049 | 466
+      z +3.00..+3.50: 121 | 0.46 | 0.00 | 0.44 | 0.06 | +0.013 | 477
+      z +3.50..+4.00: 123 | 0.52 | 0.00 | 0.42 | 0.04 | -0.015 | 415
+      z +4.00..+4.50: 120 | 0.48 | 0.00 | 0.45 | 0.04 | +0.021 | 430
+      z +4.50..+5.00: 120 | 0.48 | 0.00 | 0.45 | 0.02 | -0.004 | 355
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 303 filtered out; finished in 6247.11s
+
