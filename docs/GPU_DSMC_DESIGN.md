@@ -5601,7 +5601,7 @@ Run e, from rest: the push along the axis is +347 at first and falls as the body
 
 Files: reference/tc62 (q62_a gates 24/24 on ISABELLE, q62_b..e outputs, q62e.sh), scripts/isabelle/queue62.
 
-### 15.63 tc63: the lone proton's sideways force is a per-run state, not the body (2026-11-25)
+### 15.63 tc63: the lone proton's sideways force (2026-11-25; conclusion corrected in §15.64: it is the maze, fixed to the body)
 
 User pick after §15.62 ("Test sideways force"): is the ~100 force across the axis that steered the free
 proton real, or a seed / grid effect? New test knobs in `report_deuteron`'s lone calibration, all off by
@@ -5640,6 +5640,43 @@ masspath mix, R_D 6, warm 150, calibration 300 tu in 3 blocks of 100.
   axial push.
 
 Files: reference/tc63 (q63_a gates 24/24 on ISABELLE, q63_b..i, q63e.sh), scripts/isabelle/queue63.
+
+### 15.64 tc64: the sideways force is the maze, fixed to the body (corrects §15.63) (2026-11-25)
+
+Follow-up to §15.63 (user: get the lopsidedness test running). Lone proton at rest, masspath mix, R_D 6,
+binary as tc63. Emergence runs: no warm-up, 300 tu printed in 30 blocks of 10 (`CFM_D_CALWARMT=0`,
+`CFM_D_CALBLOCKS=30`); the others warm 150, 300 tu in 3 blocks.
+
+| run | sideways force (lab x, y) | along axis |
+|---|---|---|
+| j emergence, seed 49344 | (−79, +70) | +238 |
+| k emergence, seed 49344, roll 180° | (+89, −67) | +242 |
+| m emergence, seed 1 | x −60 to −110 in most blocks, y ±40; 300-tu size 59 | +232 |
+| l `CFM_D_POLAR=axial` | (−67, +62) | +236 |
+| n `CFM_D_POLAR=axial`, roll 180° | (+65, −69), bit-identical to q63_h | +261 |
+| o `CFM_D_MAZE=iso` | (−28, −40) | +24 |
+| p `CFM_D_MAZE=iso`, roll 180° | (−25, −39) | +30 |
+
+- **Fixed to the body.** Same seed, rolled 180°: the force reverses (j vs k), from the third 10-tu block on,
+  and stays reversed for the whole run. It is set at once, not grown from noise. §15.63's "not a property
+  of the body" was wrong.
+- **Where §15.63's symmetry argument failed.** `report_trace_c2` checked the trace (ball centre, velocity,
+  spin, ball frame): it is half-turn symmetric with a half-period time shift. But the swept maze
+  (`dsmc_move.wgsl` `maze_contact` / `maze_local`) is framed by the body pose times a turn by the level-9
+  angle about the axis, and the level-9 angle comes back to the same value after that time shift (8 × π/2 =
+  4π). So rolling the body 180° puts the maze half a turn round from where the trace's own symmetry
+  would carry it: body + maze has no half-turn symmetry. The maze's start patch (chosen by helicity; fallback
+  direction (1, 0, 1)/√2) is not axisymmetric, so a fixed phase between maze and trace gives a fixed sideways push.
+- **The maze makes it.** With the maze replaced by isotropic re-emission (o, p) the sideways force drops to
+  ~48 and no longer turns with the roll (same lab direction both runs: a seed / lab residual). The push
+  along the axis drops too, from ~+260 to +24 / +30.
+- **Consequence for §15.60–15.62.** The lone proton's self-push (~280 along the axis) and its sideways
+  partner both come from the swept maze. The majority-species × handedness pattern (§15.60), the top speed
+  (§15.61) and the free-body drift (§15.62) are properties of the maze rule, which is a modelling rule
+  (§15.9), not something derived.
+- `CFM_D_POLAR=axial` changes nothing here (bit-identical): polar release is not used in this setup.
+
+Files: reference/tc64 (q64_j..p, q64e.sh, q64e2.sh), scripts/isabelle/queue64.
 
 ## 12. Out of scope for this step
 

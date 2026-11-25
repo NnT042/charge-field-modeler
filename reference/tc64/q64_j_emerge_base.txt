@@ -1,0 +1,52 @@
+
+running 1 test
+=== deuteron: p axial, sep0 3, mass 1e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+photon mix norm MassPath: mean birth mass 3.750, hit-box factor 17.656, mass scale 0.2667, sigma scale 0.0566
+self-force block 1 proton: (-46.6, -19.7, +40.3), along axis +40.3, across 50.6
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force block 2 proton: (-20.0, +57.6, +49.6), along axis +49.6, across 61.0
+self-force block 3 proton: (-39.7, +99.7, +181.8), along axis +181.8, across 107.3
+self-force block 4 proton: (-36.0, +127.4, +215.0), along axis +215.0, across 132.3
+self-force block 5 proton: (-101.1, +67.9, +250.7), along axis +250.7, across 121.8
+self-force block 6 proton: (-86.3, -2.1, +251.3), along axis +251.3, across 86.3
+self-force block 7 proton: (-130.2, +100.4, +287.8), along axis +287.8, across 164.4
+self-force block 8 proton: (-103.5, +59.0, +290.2), along axis +290.2, across 119.2
+self-force block 9 proton: (-96.2, +66.4, +250.0), along axis +250.0, across 116.9
+self-force block 10 proton: (-87.1, +62.2, +303.0), along axis +303.0, across 107.0
+self-force block 11 proton: (-82.1, +77.5, +286.0), along axis +286.0, across 112.9
+self-force block 12 proton: (-100.9, +100.0, +298.1), along axis +298.1, across 142.1
+self-force block 13 proton: (-108.1, +136.5, +268.9), along axis +268.9, across 174.1
+self-force block 14 proton: (-91.7, +66.9, +216.8), along axis +216.8, across 113.5
+self-force block 15 proton: (-108.3, +73.1, +289.3), along axis +289.3, across 130.7
+self-force block 16 proton: (-120.9, +52.1, +221.6), along axis +221.6, across 131.6
+self-force block 17 proton: (-69.5, +93.4, +237.0), along axis +237.0, across 116.4
+self-force block 18 proton: (-135.6, +119.1, +246.5), along axis +246.5, across 180.4
+self-force block 19 proton: (-110.5, +81.1, +268.9), along axis +268.9, across 137.1
+self-force block 20 proton: (-73.9, +128.4, +241.7), along axis +241.7, across 148.1
+self-force block 21 proton: (-52.1, +67.0, +235.7), along axis +235.7, across 84.9
+self-force block 22 proton: (-78.8, +94.9, +191.8), along axis +191.8, across 123.4
+self-force block 23 proton: (-83.3, +7.6, +303.8), along axis +303.8, across 83.7
+self-force block 24 proton: (-0.8, +78.4, +257.4), along axis +257.4, across 78.4
+self-force block 25 proton: (-37.6, +14.3, +224.8), along axis +224.8, across 40.2
+self-force block 26 proton: (-51.7, +46.4, +254.3), along axis +254.3, across 69.4
+self-force block 27 proton: (-93.3, +101.7, +282.1), along axis +282.1, across 138.0
+self-force block 28 proton: (-44.9, +31.1, +283.5), along axis +283.5, across 54.6
+self-force block 29 proton: (-57.3, +32.6, +257.8), along axis +257.8, across 66.0
+self-force block 30 proton: (-100.8, +67.0, +156.6), along axis +156.6, across 121.0
+self-force proton : (-78.7, +69.6, +237.8) per unit time
+self-torque proton : (+0.4, +1.1, -0.6) per unit time
+self-force proton  along its axis +237.8, across 105.1
+alone proton : photon spin torque: net along axis +2.67, across 2.90 | in along axis: S- +6.86 S+ +14.08 N- +2.56 N+ +5.21 | out along axis +26.05 | selective in (S+ and N-) +16.65
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 132045 a-a 92179 (28697) a-o 35959 (13716) a-x 0 (0) o-o 3908 (1766) o-x 0 (0) x-x 0 (0) | S total 108190 a-a 75234 (23060) a-o 29679 (11175) a-x 0 (0) o-o 3277 (1469) o-x 0 (0) x-x 0 (0)
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2692 /       0 |    -650.6 /      +0.0 /   -650.6 |     +1.0 /     +0.0 /     +1.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2791 /       0 |    +851.8 /      +0.0 /   +851.8 |     +1.0 /     +0.0 /     +1.0 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1173 /       0 |    -240.8 /      +0.0 /   -240.8 |     +0.9 /     +0.0 /     +0.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1166 /       0 |    +277.6 /      +0.0 /   +277.6 |     +0.1 /     +0.0 /     +0.1 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      -0.3 /      +0.0 /     -0.3 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |    +237.8 /      +0.0 /   +237.8 |     +1.2 /     +0.0 /     +1.2
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 303 filtered out; finished in 1425.58s
+
