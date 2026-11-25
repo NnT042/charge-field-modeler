@@ -2571,17 +2571,34 @@ fn report_deuteron() {
         // (default +z); forces stay in the lab frame, the spin line and the
         // push-by-source table are read along the turned axis.
         let lone_axis = { let v: Vec<f64> = env("CFM_D_LONEAXIS", "0,0,1").split(',').map(|q| q.trim().parse().unwrap()).collect(); DVec3::new(v[0], v[1], v[2]).normalize() };
-        if (lone_axis - DVec3::Z).length() > 1e-9 {
-            let q = glam::DQuat::from_rotation_arc(DVec3::Z, lone_axis);
-            engine.set_body_poses(&ctx, &[DVec3::ZERO], Some(&[q]));
-            println!("lone {cl} axis ({:+.3}, {:+.3}, {:+.3})", lone_axis.x, lone_axis.y, lone_axis.z);
+        // Doc §15.63: CFM_D_LONEROLL (deg) turns the lone body about its own
+        // axis; CFM_D_LONEPOS "x,y,z" moves it off the grid centre;
+        // CFM_D_CALBLOCKS splits the calibration into blocks, each printed.
+        let lone_roll: f64 = env("CFM_D_LONEROLL", "0").parse().unwrap();
+        let lone_pos = { let v: Vec<f64> = env("CFM_D_LONEPOS", "0,0,0").split(',').map(|q| q.trim().parse().unwrap()).collect(); DVec3::new(v[0], v[1], v[2]) };
+        if (lone_axis - DVec3::Z).length() > 1e-9 || lone_roll != 0.0 || lone_pos != DVec3::ZERO {
+            let q = glam::DQuat::from_rotation_arc(DVec3::Z, lone_axis) * glam::DQuat::from_rotation_z(lone_roll.to_radians());
+            engine.set_body_poses(&ctx, &[lone_pos], Some(&[q]));
+            println!("lone {cl} axis ({:+.3}, {:+.3}, {:+.3}), roll {lone_roll} deg, at ({:+.3}, {:+.3}, {:+.3})", lone_axis.x, lone_axis.y, lone_axis.z, lone_pos.x, lone_pos.y, lone_pos.z);
         }
         for _ in 0..cal_warm {
             engine.step_flux(&ctx);
         }
+        let blocks: u32 = env("CFM_D_CALBLOCKS", "1").parse().unwrap();
         let mut t = Totals::default();
-        for _ in 0..cal {
-            t.add(&engine.step_flux(&ctx));
+        let mut tb = Totals::default();
+        let per = (cal / blocks.max(1)).max(1);
+        for i in 0..cal {
+            let st = engine.step_flux(&ctx);
+            t.add(&st);
+            if blocks > 1 {
+                tb.add(&st);
+                if (i + 1) % per == 0 {
+                    let fb = DVec3::new(tb.sh_dp[0][0], tb.sh_dp[0][1], tb.sh_dp[0][2]) / (per as f64 * dt);
+                    println!("self-force block {} {cl}: ({:+.1}, {:+.1}, {:+.1}), along axis {:+.1}, across {:.1}", (i + 1) / per, fb.x, fb.y, fb.z, fb.dot(lone_axis), (fb - lone_axis * fb.dot(lone_axis)).length());
+                    tb = Totals::default();
+                }
+            }
         }
         let f = DVec3::new(t.sh_dp[0][0], t.sh_dp[0][1], t.sh_dp[0][2]) / (cal as f64 * dt);
         let tq = DVec3::new(t.sh_torque[0][0], t.sh_torque[0][1], t.sh_torque[0][2]) / (cal as f64 * dt);

@@ -339,6 +339,67 @@ pub fn matter_velocity(frames: &[LevelFrame; 4], k: usize, x: DVec3) -> DVec3 {
 
 #[cfg(test)]
 mod tests {
+    /// Doc §15.63 diagnostic: is the proton trace symmetric under a half turn
+    /// about its axis (some time shift tau with c(t + tau) = R_z(pi) c(t))?
+    #[test]
+    #[ignore]
+    fn report_trace_c2() {
+        for (name, signs) in [("proton", PROTON_STATES[0]), ("neutron", NEUTRON_STATES[0])] {
+            let b0 = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, signs);
+            let period = std::f64::consts::PI;
+            let samples: Vec<(DVec3, DVec3, DVec3, DQuat)> = (0..400).map(|k| { let mut b = b0.clone(); b.advance(period * k as f64 / 400.0); let st = b.ball(); (st.center, st.velocity, st.omega, st.frame) }).collect();
+            let (mut werr, mut ferr): (f64, f64) = (0.0, 0.0);
+            for (rname, rot) in [("C2z", DQuat::from_rotation_z(std::f64::consts::PI)), ("C4z", DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2)), ("C2x", DQuat::from_rotation_x(std::f64::consts::PI)), ("C2y", DQuat::from_rotation_y(std::f64::consts::PI))] {
+                let mut best = (f64::INFINITY, 0usize);
+                for sh in 0..400 {
+                    let mut err: f64 = 0.0;
+                    for k in 0..400 {
+                        let (c, v, w, f) = samples[k];
+                        let (c2, v2, w2, f2) = samples[(k + sh) % 400];
+                        err = err.max((rot * c - c2).length()).max((rot * v - v2).length() * 0.1);
+                        if sh == 200 && k < 400 && rname == "C2z" { werr = werr.max((rot * w - w2).length() * 0.1); ferr = ferr.max((rot * f * DVec3::X - f2 * DVec3::X).length()).max((rot * f * DVec3::Z - f2 * DVec3::Z).length()); }
+                    }
+                    if err < best.0 { best = (err, sh); }
+                }
+                println!("{name} {rname}: best time shift {} / 400 of the period, max mismatch {:.4}", best.1, best.0);
+            }
+            println!("{name} C2z at half period: spin mismatch {:.4}, maze frame mismatch {:.4}", werr, ferr);
+        }
+    }
+
+    /// Doc §15.63 diagnostic: time-averaged ball centre and velocity of the
+    /// proton trace in the body frame (is the trace lopsided about its axis?).
+    #[test]
+    #[ignore]
+    fn report_trace_mean() {
+        for (name, signs) in [("proton", PROTON_STATES[0]), ("neutron", NEUTRON_STATES[0])] {
+            let mut b = ShellBody::new(DVec3::ZERO, DQuat::IDENTITY, 1.0, signs);
+            let rates: Vec<f64> = (0..4).map(|i| b.rate(i)).collect();
+            let dt = 1e-3;
+            let n = 2_000_000;
+            let (mut c, mut v, mut c2) = (DVec3::ZERO, DVec3::ZERO, 0.0);
+            let (mut d1, mut d2, mut d3, mut d4) = (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO, DVec3::ZERO);
+            let mut oct = [0.0f64; 8];
+            for _ in 0..n {
+                let st = b.ball();
+                c += st.center;
+                v += st.velocity;
+                c2 += st.center.length();
+                d1 += st.center * st.velocity.length();
+                d2 += st.center * st.center.length_squared();
+                d3 += st.center * st.omega.length();
+                d4 += st.velocity.normalize_or_zero() * st.center.length();
+                let az = st.center.y.atan2(st.center.x);
+                oct[(((az + std::f64::consts::PI) / std::f64::consts::TAU * 8.0) as usize).min(7)] += 1.0;
+                b.advance(dt);
+            }
+            let nf = n as f64;
+            println!("{name}: rates {:?}, mean centre ({:+.4}, {:+.4}, {:+.4}), mean |centre| {:.4}, mean velocity ({:+.4}, {:+.4}, {:+.4})", rates, c.x / nf, c.y / nf, c.z / nf, c2 / nf, v.x / nf, v.y / nf, v.z / nf);
+            println!("  <c|v|> {:.4?}  <c|c|^2> {:.4?}  <c|w|> {:.4?}  <v_hat|c|> {:.4?}", d1 / nf, d2 / nf, d3 / nf, d4 / nf);
+            println!("  time per xy octant (from -180 deg): {:?}", oct.iter().map(|o| (o / nf * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        }
+    }
+
     use super::*;
 
     /// V_k(x) must equal the time derivative of the composed Spin-mode motion

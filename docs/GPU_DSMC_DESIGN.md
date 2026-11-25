@@ -5601,6 +5601,46 @@ Run e, from rest: the push along the axis is +347 at first and falls as the body
 
 Files: reference/tc62 (q62_a gates 24/24 on ISABELLE, q62_b..e outputs, q62e.sh), scripts/isabelle/queue62.
 
+### 15.63 tc63: the lone proton's sideways force is a per-run state, not the body (2026-11-25)
+
+User pick after §15.62 ("Test sideways force"): is the ~100 force across the axis that steered the free
+proton real, or a seed / grid effect? New test knobs in `report_deuteron`'s lone calibration, all off by
+default: `CFM_D_LONEROLL` (deg, turns the body about its own axis), `CFM_D_LONEPOS "x,y,z"` (moves it
+off the grid centre), `CFM_D_CALBLOCKS` (prints the calibration in that many blocks). Proton at rest,
+masspath mix, R_D 6, warm 150, calibration 300 tu in 3 blocks of 100.
+
+| run | sideways force (lab x, y) | size | lab direction | along axis |
+|---|---|---|---|---|
+| seed 49344 (base) | (−95, +57) | 110 | 149° | +306 |
+| seed 1 | (−53, −39) | 66 | 216° | +260 |
+| seed 2 | (−58, −15) | 60 | 194° | +296 |
+| seed 3 | (−35, −33) | 48 | 223° | +257 |
+| base, roll 90° | (−70, −69) | 98 | 225° | +267 |
+| base, roll 180° | (+65, −69) | 95 | 313° | +261 |
+| base, half a cell off centre | (−56, +69) | 88 | 129° | +256 |
+| seed 1, axis down | (+88, +89) | 125 | 45° | +204 |
+
+- **Steady within a run.** The three 100-tu blocks agree to ~10–30 in each component, so a force of
+  50–125 is several times the block noise. In §15.62's free run it held its direction for ~1000 tu.
+- **Not the same from run to run.** Its lab direction spreads over 129°–313° (axis up), its size over 48–110.
+  The mean of the 7 axis-up runs is (−43, −14), each component about 2 standard errors from zero: at most
+  a weak lab-frame bias, not the main effect.
+- **Not a property of the body.** New diagnostics `baryon_shells::tests::report_trace_mean` and
+  `report_trace_c2` (ignored tests): the proton trace has a zero mean centre, and it is bunched along one
+  diagonal of the equator (0.18 of the time in each of four octants, 0.07 in the other four; the neutron
+  is even). But the whole body (ball centre, velocity, spin and level-9 maze frame) is exactly symmetric
+  under a half turn about the axis with a half-period time shift. Rolled 180° it is the same body, so a
+  sideways force fixed in the body frame is forbidden. Yet the 180° roll, same seed, reversed the force.
+- **Not the grid.** Half a cell off centre changed it no more than a change of seed.
+- **Reading:** the field around the lone proton settles into a lopsided state, steady over at least
+  ~1000 tu, whose direction is set by the run's own history (the start, the seed, the body's phase). This
+  is a hypothesis: which photons hold the state (the hit-box population near the body, the polar
+  through-stream, the maze) is not measured. For the free runs (§15.62) it means the turn of the motion off
+  the axis has a random direction run to run, but in any one run it is steady and about a third of the
+  axial push.
+
+Files: reference/tc63 (q63_a gates 24/24 on ISABELLE, q63_b..i, q63e.sh), scripts/isabelle/queue63.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
