@@ -287,9 +287,11 @@ pub struct GpuParams {
     pub mix_flags: u32,
     /// Doc §15.59 MixNorm: multiplier on every mixed photon's mass.
     pub mix_mass_scale: f32,
-    pub _pad_mix0: u32,
-    pub _pad_mix1: u32,
-    pub _pad_mix2: u32,
+    /// Doc §15.61 headwind: the field's bulk velocity in the sim (body)
+    /// frame, in c (0 = still field). A body moving at V sees wind = -V.
+    pub wind_x: f32,
+    pub wind_y: f32,
+    pub wind_z: f32,
 }
 
 /// Injection/emission counts + RNG draw base for one step, computed host-side

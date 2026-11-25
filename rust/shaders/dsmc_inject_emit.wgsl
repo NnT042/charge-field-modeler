@@ -46,7 +46,7 @@ struct Params {
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, _pad14a: u32, _pad14b: u32,
     mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
-    mix_mass_scale: f32, _pad_mix0: u32, _pad_mix1: u32, _pad_mix2: u32,
+    mix_mass_scale: f32, wind_x: f32, wind_y: f32, wind_z: f32,
 };
 
 const FLAG_ALIVE: u32 = 1u;
@@ -119,6 +119,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         var pos: vec3<f32>;
         var dir: vec3<f32>;
         var inside_body = false;
+        let wind = vec3<f32>(params.wind_x, params.wind_y, params.wind_z);
+        let windy = dot(wind, wind) > 0.0;
         if ((params.mix_flags & 64u) != 0u) {
             // Doc §15.59 pre-fill (one dispatch at t = 0, engine.prefill_ball):
             // uniform in the escape sphere, isotropic, so the ball starts at
@@ -158,15 +160,30 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             if (params.pole_intake_bias > 0.0) {
                 d = normalize(d + vec3<f32>(0.0, 0.0, params.pole_intake_bias * chi));
             }
-            let t_perp = normalize(cross(d, perp_helper(d)));
-            let b_perp = cross(d, t_perp);
+            // Doc §15.61 headwind: a field drifting at W crosses the sphere
+            // along u = d + W at a rate weighted by |u| (rejection on |u| /
+            // (1 + |W|)); the line goes over the disk perpendicular to u.
+            var u_rel = d;
+            if (windy) {
+                for (var tr = 0u; tr < 32u; tr = tr + 1u) {
+                    u_rel = d + wind;
+                    if (rand01(params.seed_hi, params.seed_lo, id, 100u + 2u * tr) * (1.0 + length(wind)) < length(u_rel)) {
+                        break;
+                    }
+                    d = rand_unit_vec(params.seed_hi, params.seed_lo, id, 101u + 2u * tr);
+                }
+                u_rel = d + wind;
+            }
+            let uh = normalize(u_rel);
+            let t_perp = normalize(cross(uh, perp_helper(uh)));
+            let b_perp = cross(uh, t_perp);
             let psi = rand01(params.seed_hi, params.seed_lo, id, 3u) * TAU;
             let e = t_perp * cos(psi) + b_perp * sin(psi);
             let big_r = params.boundary_extent;
             let b = big_r * sqrt(rand01(params.seed_hi, params.seed_lo, id, 4u));
             let t_entry = big_r - sqrt(max(big_r * big_r - b * b, 0.0));
             // Nudge inside so the move kernel's escape test doesn't fire at once.
-            pos = center - d * big_r + e * b + d * (t_entry + 1e-4);
+            pos = center - uh * big_r + e * b + uh * (t_entry + 1e-4);
             dir = d;
         }
 
@@ -214,6 +231,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         if (kb > 0u) {
             // b.w = helicity of the axial (level 0) spin, as axial_helicity().
             out.b.w = dot(out.e.xyz, dir) / max(params.spin_edge0, 1e-6);
+        }
+        if (windy) {
+            // Doc §15.61: spins were set from the field-frame direction d;
+            // the photon moves at c*d + W in the sim frame.
+            let uw = dir + wind;
+            out.b = vec4<f32>(normalize(uw), out.b.w);
+            out.d.w = length(uw);
         }
         atomicAdd(&tallies[60], 1); // TALLY_INJECTED
     } else {

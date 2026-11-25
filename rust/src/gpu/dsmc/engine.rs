@@ -609,6 +609,8 @@ pub struct DsmcEngine {
     pump_rate_ema: Vec<f64>,
     /// Doc §15.59: set only during the prefill_ball dispatch (mix_flags bit 6).
     prefill_pending: bool,
+    /// Doc §15.61: field bulk velocity in the sim frame (see `set_wind`).
+    wind: glam::DVec3,
 }
 
 impl DsmcEngine {
@@ -762,6 +764,7 @@ impl DsmcEngine {
             emit_remainder,
             pump_rate_ema,
             prefill_pending: false,
+            wind: glam::DVec3::ZERO,
         }
     }
 
@@ -960,9 +963,9 @@ impl DsmcEngine {
             mix_c2: c.rough.photon_mix.pack().0[2],
             mix_flags: c.rough.photon_mix.pack().1 | if self.prefill_pending { 64 } else { 0 },
             mix_mass_scale: c.rough.photon_mix.mass_scale() as f32,
-            _pad_mix0: 0,
-            _pad_mix1: 0,
-            _pad_mix2: 0,
+            wind_x: self.wind.x as f32,
+            wind_y: self.wind.y as f32,
+            wind_z: self.wind.z as f32,
         };
         ctx.write_buffer(&self.params_buf, &[p]);
         self.upload_shells(ctx);
@@ -1370,7 +1373,27 @@ impl DsmcEngine {
             Boundary::SphereEscape { r_d } => r_d,
             Boundary::PeriodicBox { .. } => return 0.0,
         };
-        self.config.n_ambient * 1.0 * std::f64::consts::PI * r_d * r_d * self.config.dt
+        // Doc §15.61: a drifting field crosses the sphere at the mean
+        // relative speed <|d + W|> = 1 + |W|^2 / 3 (|W| < 1).
+        self.config.n_ambient * (1.0 + self.wind.length_squared() / 3.0) * std::f64::consts::PI * r_d * r_d * self.config.dt
+    }
+
+    /// Doc §15.61 headwind: the ambient field drifts at `w` (in c, |w| < 1)
+    /// through the sim frame, the rest frame of the bodies. A body moving at
+    /// V through a still field is this with w = -V. Ambient photons are born
+    /// with velocity c*d + w (d drawn from the field's own isotropic
+    /// distribution, inflow weighted by |c*d + w|, spins set from d), and
+    /// photon-photon contacts are worked in the field's frame (speeds pinned
+    /// there), so the field's own physics is unchanged. Body contacts and
+    /// emission stay in the body frame. Set before `prefill_ball`.
+    pub fn set_wind(&mut self, ctx: &GpuContext, w: glam::DVec3) {
+        assert!(w.length() < 1.0, "headwind must be below c");
+        self.wind = w;
+        self.write_params(ctx);
+    }
+
+    pub fn wind(&self) -> glam::DVec3 {
+        self.wind
     }
 
     pub fn forced_emission_rate_per_step(&self) -> f64 {

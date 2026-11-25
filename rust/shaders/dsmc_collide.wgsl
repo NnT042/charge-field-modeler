@@ -54,7 +54,7 @@ struct Params {
     body_model: u32, tau_body: f32, grain_edge: f32, body_twist_loss: u32,
     body_beta: f32, body_beta_twist: f32, _pad14a: u32, maze_mode: u32,
     mix_c0: f32, mix_c1: f32, mix_c2: f32, mix_flags: u32,
-    mix_mass_scale: f32, _pad_mix0: u32, _pad_mix1: u32, _pad_mix2: u32,
+    mix_mass_scale: f32, wind_x: f32, wind_y: f32, wind_z: f32,
 };
 
 // Doc §15.47: bit 13 of maze_mode = local (nearest-neighbour) pairing. The
@@ -163,6 +163,16 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
     let ib = kappa * mb * rb * rb;
     var va = (*pa).b.xyz * (*pa).d.w;
     var vb = (*pb).b.xyz * (*pb).d.w;
+    // Doc §15.61 headwind: work the contact in the drifting field's own
+    // frame (Galilean), so pinning keeps each photon's FIELD-frame speed.
+    let wind = vec3<f32>(params.wind_x, params.wind_y, params.wind_z);
+    let windy = dot(wind, wind) > 0.0;
+    if (windy) {
+        va = va - wind;
+        vb = vb - wind;
+    }
+    let spa_in = select((*pa).d.w, length(va), windy);
+    let spb_in = select((*pb).d.w, length(vb), windy);
     var wa = (*pa).d.xyz;
     var wb = (*pb).d.xyz;
     let wa_pre = wa;
@@ -236,8 +246,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
             va = normalize(va);
             vb = normalize(vb);
         } else {
-            va = normalize(va) * (*pa).d.w;
-            vb = normalize(vb) * (*pb).d.w;
+            va = normalize(va) * spa_in;
+            vb = normalize(vb) * spb_in;
         }
         let e_rot = 0.5 * ia * dot(wa, wa) + 0.5 * ib * dot(wb, wb);
         if (e_rot > 1e-12) {
@@ -263,6 +273,13 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
             }
         }
     }
+    // Helicity is read along the field-frame travel direction.
+    let hda = va / max(length(va), 1e-12);
+    let hdb = vb / max(length(vb), 1e-12);
+    if (windy) {
+        va = va + wind;
+        vb = vb + wind;
+    }
     let sa = length(va);
     let sb = length(vb);
     let da = va / max(sa, 1e-12);
@@ -279,8 +296,8 @@ fn rough_collide(pa: ptr<function, GpuPhoton>, pb: ptr<function, GpuPhoton>, key
         wb = restack(pb, wb, kick_b);
     }
     // Scalar spin slot = helicity of the axial level, +-1 at birth.
-    (*pa).b = vec4<f32>(da, axial_helicity(pa, wa, da));
-    (*pb).b = vec4<f32>(db, axial_helicity(pb, wb, db));
+    (*pa).b = vec4<f32>(da, axial_helicity(pa, wa, hda));
+    (*pb).b = vec4<f32>(db, axial_helicity(pb, wb, hdb));
     (*pa).d = vec4<f32>(wa, sa);
     (*pb).d = vec4<f32>(wb, sb);
 }

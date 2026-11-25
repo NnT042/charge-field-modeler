@@ -5491,6 +5491,74 @@ ISABELLE ran q60_a..f, ESTELLE reference/tc60/q60e.sh; results in reference/tc60
   mass), with nothing to turn it. Mathis's real fields are directional; the next test is whether a
   directional field (more photons from one side) turns the axis, i.e. the "righting" question.
 
+### 15.61 tc61: headwind, the lone proton moving through the field (2026-11-24)
+
+User idea (2026-11-24): instead of building an Earth-like up/down field, move the field with the body, as
+in the old linear-motion sim. New test knob `CFM_D_WIND "x,y,z"` (in c, off by default,
+`DsmcEngine::set_wind`): the ambient field drifts at W through the sim frame, the body's rest frame. A body
+moving at V through a still field is W = −V.
+
+- **Inflow:** each ambient photon draws its direction d from the field's own distribution and moves at
+  c·d + W. Inflow is weighted by |c·d + W| (rejection), and the line is placed on the disk perpendicular to
+  c·d + W. The rate is n_a πR_D² (1 + W²/3). Spins (outer and inner levels, helicity) are set from d, not
+  from the sim-frame direction.
+- **Pre-fill:** drifts too (W is set before `prefill_ball`).
+- **Photon-photon contacts:** worked in the field's frame. Subtract W, collide, pin each speed to its own
+  field-frame incoming speed (BodyFree), then add W back. The |v1 − v2| rate kernel is already
+  frame-free. Helicity is read along the field-frame direction.
+- **Body contacts, emission, the maze and electron recycling:** stay in the body frame (emission at c from
+  the emitter).
+- **The test:** the lone calibration prints force along V, torque about axis × V̂ ("turning the axis toward
+  V"), and the measured field drift at r 2–5.
+- **The drift holds:** measured within ~5% of the set value in every run (e.g. −0.0508 for −0.05).
+- **Wind off is unchanged.** 24/24 dsmc gates pass with the new binary (cfm61) on ISABELLE.
+
+Settings as §15.60 (masspath mix, R_D 6, h 0.25, pre-filled, seed 49344, lone fixed body, warm 150, average
+100). Results in `reference/tc61`. Force and torque are per unit time. "Along V" = along the direction of
+motion (negative = net force opposing the motion).
+
+| run | V (c) | axis vs motion | force along V | across | torque turning axis toward V | other torque |
+|---|---|---|---|---|---|---|
+| proton (§15.60) | 0 | — | (+280 along axis) | 96 | — | single digits |
+| proton | 0.01 | north pole first | +182 | 126 | 0 | 7 |
+| proton | 0.02 | north first | −55 | 124 | 0 | 17 |
+| proton | 0.03 | north first | −294 | 184 | 0 | 14 |
+| proton | 0.05 | north first | −641 | 65 | 0 | 26 |
+| proton | 0.02 | south first | −312 (= +312 along axis) | 73 | 0 | 3 |
+| antiproton | 0.02 | south first (its push direction) | −156 (+156 along axis; −299 at rest) | 206 | 0 | 15 |
+| proton | 0.01 | tilted 30° | +150 | 53 | **+20** | 2 |
+| proton | 0.02 | tilted 30° | −24 | 79 | **+20** | 5 |
+| proton | 0.02 | tilted 90° | −83 (along its own axis +14) | 25 | −1 | 8 |
+
+- **Top speed ≈ 0.017 c.** Moving along its own push (north pole first), the force falls through zero
+  between V 0.01 and 0.02. A straight-line fit of the five points (0 to 0.05) gives about +320 − 19,300 V,
+  zero at V ≈ 0.0165. A free lone proton in this field would therefore settle at about 0.017 c (~5,000
+  km/s), not accelerate forever.
+- **The antiproton mirrors it.** Moving along its own push (south first), its force changes by +455 at
+  0.02, against the proton's −335 at 0.02. That is a similar size, so its top speed is ~0.013 c.
+- **The response is lopsided.** Moving backwards (south first) at 0.02, the proton's force is +312 along
+  its axis against +280 at rest: barely any extra drag (+32, inside the ~100 sideways noise). Forward at
+  0.02 it loses 335.
+  - The along-V force mixes drag with a change in the self-push itself, and this test cannot tell them
+    apart.
+  - Broadside (tilted 90°) at 0.02, the push along its own axis falls from 280 to +14, and the force
+    against the motion is only 83.
+- **A tilted proton is turned toward its motion.** At 30° tilt, both speeds give a torque of +20 about
+  axis × V̂, turning the north pole toward the direction of motion. The other torque components are 2–5.
+  At 90° it is −1 (none: the broadside position is a balance point), and at rest any tilt gave single
+  digits with no fixed direction (§15.60).
+  - A body without spin would weathervane its axis into its motion.
+  - A spinning proton feels this torque as a gyroscope. A torque about axis × V̂ swings the axis around
+    V (precession) at constant tilt. The tilt changes only through the small in-plane part, which is not
+    resolved here.
+  - The 30° torque is the same at V 0.01 and 0.02, so it is not proportional to V in this range.
+- **Field frame:** "toward V" = the north pole faces the oncoming field. In a field that streams past a
+  held proton (for example an Earth-like flow from one side), the same rule points the north pole
+  upstream.
+
+Not done: separating drag from self-push change, a free (integrated) body with spin angular momentum, and
+other seeds. The across-V force (25–206) is the same unexplained sideways part as §15.60.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

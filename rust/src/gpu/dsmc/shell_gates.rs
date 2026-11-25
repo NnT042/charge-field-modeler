@@ -2507,6 +2507,14 @@ fn report_deuteron() {
             }
         }
         apply_level_speeds(&mut engine);
+        // CFM_D_WIND "x,y,z" (doc §15.61, in c): the ambient field drifts at
+        // this velocity past the bodies (a body moving at V: wind = -V).
+        // Set before the pre-fill so the starting field drifts too.
+        let w: Vec<f64> = env("CFM_D_WIND", "0,0,0").split(',').map(|q| q.trim().parse().unwrap()).collect();
+        let w = DVec3::new(w[0], w[1], w[2]);
+        if w.length() > 0.0 {
+            engine.set_wind(&ctx, w);
+        }
         // CFM_P_PREFILL=1 (doc §15.59, tc59 step 0): start from a full field.
         if env("CFM_P_PREFILL", "0") == "1" {
             engine.prefill_ball(&ctx);
@@ -2580,6 +2588,34 @@ fn report_deuteron() {
         println!("self-force {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", f.x, f.y, f.z);
         println!("self-torque {cl:<7}: ({:+.1}, {:+.1}, {:+.1}) per unit time", tq.x, tq.y, tq.z);
         println!("self-force {cl:<7} along its axis {:+.1}, across {:.1}", f.dot(lone_axis), (f - lone_axis * f.dot(lone_axis)).length());
+        // Doc §15.61 headwind: the body moves at V = -wind through a still
+        // field. Force along V (+ = pushed on, - = drag wins); torque about
+        // axis x (-wind) (+ = turns the spin axis toward the direction of
+        // motion), and the rest of the torque. Field drift = mean photon
+        // velocity at r 2-5 (plain, and weighted by birth mass 2^k).
+        let wind = engine.wind();
+        if wind.length() > 0.0 {
+            let vm = -wind.normalize();
+            let tn = lone_axis.cross(vm);
+            let tdir = if tn.length() > 1e-9 { tn.normalize() } else { DVec3::ZERO };
+            println!("headwind {cl}: body moves at V {:.4} along ({:+.3}, {:+.3}, {:+.3}), axis {:.1} deg from V: force along V {:+.1}, across V {:.1}; torque turning the axis toward V {:+.1}, other torque {:.1}", wind.length(), vm.x, vm.y, vm.z, lone_axis.dot(vm).clamp(-1.0, 1.0).acos().to_degrees(), f.dot(vm), (f - vm * f.dot(vm)).length(), tq.dot(tdir), (tq - tdir * tq.dot(tdir)).length());
+            let ph = engine.read_photons(&ctx);
+            let (mut s1, mut sm, mut n1, mut nm) = (DVec3::ZERO, DVec3::ZERO, 0.0f64, 0.0f64);
+            for p in ph.iter().filter(|p| p.is_alive()) {
+                let r = DVec3::new(p.a[0] as f64, p.a[1] as f64, p.a[2] as f64).length();
+                if !(2.0..5.0).contains(&r) {
+                    continue;
+                }
+                let v = DVec3::from(p.velocity());
+                let m = (2.0f64).powi(((p.c[0] >> 26) & 3) as i32);
+                s1 += v;
+                n1 += 1.0;
+                sm += v * m;
+                nm += m;
+            }
+            let (d1, dm) = (s1 / n1.max(1.0), sm / nm.max(1e-12));
+            println!("headwind {cl}: field drift at r 2-5 ({:+.4}, {:+.4}, {:+.4}), mass-weighted ({:+.4}, {:+.4}, {:+.4}), set ({:+.4}, {:+.4}, {:+.4}); {n1:.0} photons", d1.x, d1.y, d1.z, dm.x, dm.y, dm.z, wind.x, wind.y, wind.z);
+        }
         println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], lone_axis, cal as f64 * dt));
         println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
         if env("CFM_P_CELLS", "0") == "1" {
