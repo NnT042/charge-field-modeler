@@ -914,3 +914,37 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tc66_probe {
+    use super::*;
+    /// Doc §15.66 probe: mean outgoing direction (maze frame) per arrival
+    /// helicity for each baryon state, random arrival directions.
+    #[test]
+    #[ignore]
+    fn report_maze_axial_bias() {
+        let mut s: u64 = 0x9E3779B97F4A7C15;
+        let mut rnd = move || { s ^= s << 13; s ^= s >> 7; s ^= s << 17; (s >> 11) as f64 / (1u64 << 53) as f64 };
+        for (signs, name, _, _) in MATHIS_TABLE.iter().take(8) {
+            let sg = [signs[0], signs[1], signs[2], signs[3]];
+            for h in [-1.0f64, 1.0] {
+                let n = 20000;
+                let (mut m, mut esc, mut zesc, mut ztr) = (DVec3::ZERO, 0, 0.0, 0.0);
+                let mut d0z = 0.0;
+                for _ in 0..n {
+                    let z = 2.0 * rnd() - 1.0; let p = std::f64::consts::TAU * rnd();
+                    let r = (1.0f64 - z * z).max(0.0).sqrt();
+                    let dl = DVec3::new(r * p.cos(), r * p.sin(), z);
+                    let wl = dl * h;
+                    let mut draws: Vec<f64> = (0..2 * PATCH_TRIES).map(|_| rnd()).collect();
+                    let e = emit(&sg, dl, wl, |i| std::mem::take(&mut draws[i as usize]));
+                    m += e.out; d0z += e.spin.dot(e.out);
+                    if e.escaped { esc += 1; zesc += e.spin.z; } else { ztr += e.spin.dot(e.out); }
+                }
+                let nf = n as f64;
+                println!("{name:8} {:?} h {h:+} mean out ({:+.3},{:+.3},{:+.3}) esc {:.2} out spin z {:+.3} out helicity(trapped)  {:+.3} helicity {:+.3}",
+                    sg, m.x / nf, m.y / nf, m.z / nf, esc as f64 / nf, zesc / nf, ztr / nf, d0z / nf);
+            }
+        }
+    }
+}

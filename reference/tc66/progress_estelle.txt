@@ -1,0 +1,4 @@
+START Wed Nov 25 14:46:40 CST 2026
+q66_d_avg_phi_half done Wed Nov 25 15:23:19 CST 2026
+q66_e_avg_antiproton done Wed Nov 25 16:00:01 CST 2026
+ALL DONE Wed Nov 25 16:00:01 CST 2026

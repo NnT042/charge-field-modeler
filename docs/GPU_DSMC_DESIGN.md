@@ -5707,6 +5707,70 @@ warm 150, 300 tu in 3 blocks.
 
 Files: reference/tc65 (q65_a..e, q65e.sh), scripts/isabelle/queue65.
 
+### 15.66 tc66: maze issues — averaged maze made default; the self-push is a lopsided intake that Mathis's "keep heading" release removes (2026-11-25)
+
+User: get the maze issues ironed out. Lone proton at rest, masspath mix, R_D 6, warm 150, 300 tu in 3
+blocks unless stated.
+
+**1. Averaged maze is now the default.** `RoughParams::maze_random_phase` defaults to true (§15.65 showed the
+phase lock alone made the body-locked sideways force). `CFM_D_MAZEPHASE=lock` restores the lock. The
+GPU-vs-CPU maze gates (`twist_rough`) keep the lock, since the CPU law is phase-locked. Gates 24/24 on
+ISABELLE with the new default.
+
+**2. What the maze law does per photon** (CPU probe `maze::tc66_probe::report_maze_axial_bias`, ignored;
+20k random arrivals per state and helicity):
+- Every proton state escapes 100%, and the mean exit has **no axial component** for either helicity
+  (|z| ≤ 0.002). The maze's emission direction cannot push along the axis by itself.
+- Each helicity leaves as a **one-sided azimuth lobe** (mean exit (+0.65, +0.65, 0) for h = −1, the opposite
+  for h = +1 in the maze frame). Locked to the trace this was the sideways force; averaged it cancels.
+- The exit spin has a z part of ±0.135 whose sign is the body's z sign (handedness), the same for both
+  helicities; helicity is kept (±0.974).
+- Neutron states: all trapped, out of the pole set by helicity, as designed.
+
+**3. Mathis's picture** (rhrule.pdf, bottom.pdf, pole.pdf, magmom.pdf): photons come in at the south pole and
+antiphotons at the north; in the 2:1 field the south stream is about twice the north; photon charge is
+emitted at about 30 N and antiphoton charge at about 30 S. So each species **keeps heading** through the
+body: in at one pole, out on the far side of the equator. Our maze sends each species out symmetric about
+the equator.
+
+**4. Two test knobs** (off by default):
+- `CFM_D_MAZESPIN=rigid` (`maze_rigid_spin`, `maze_mode` bit 27): the maze picks the exit, but the spin is
+  carried rigidly from the start d0 to the exit (no maze spin imprint).
+- `CFM_D_MAZELAT=heading` (`maze_keep_heading`, bit 28): an escaped photon is mirrored across the equator
+  plane if it would leave in the hemisphere opposite to its arrival motion (v_in · axis); its spin is
+  mirrored the same way (as a polar vector, so helicity is kept). Inner stacked levels are not mirrored.
+
+| run | along axis | across | note |
+|---|---|---|---|
+| averaged (default), seed 49344 (q65_b) | +243.5 | 4.4 | blocks 259 / 256 / 216 |
+| averaged, seed 1 (q65_d) | +311.9 | 7.1 | |
+| averaged, φ 1/2 (q66_d) | −2.0 | 4.6 | no majority species, no push |
+| averaged, antiproton (q66_e) | −222.7 | 8.1 | reversed, as §15.60 |
+| rigid spin, seed 49344 (q66_b) | +224.6 | 18.7 | blocks 259 / 223 / 192 |
+| rigid spin, seed 49344, 600 tu (q66_i, ESTELLE) | +158.4 | 8.8 | 6 blocks 129–177, steady |
+| rigid spin, seed 1 (q66_c) | −3.4 | 14.2 | |
+| rigid spin, seed 2 (q66_h) | +47.7 | 8.1 | blocks 68 / 49 / 26 |
+| **keep heading, seed 49344 (q66_f)** | **+29.7** | 2.3 | blocks 37 / 40 / 13 |
+| **keep heading, seed 1 (q66_g)** | **+1.2** | 12.5 | blocks 6 / 3 / −6 |
+
+- **The averaged maze keeps the §15.60 pattern:** no push at φ 1/2, reversed for the antiproton.
+- **Rigid spin is seed-dependent:** 0 to +225, sometimes steady over 600 tu. The maze's spin imprint feeds
+  the push but is not the whole of it. (The two seed-49344 runs ran on different GPUs and do not repeat
+  each other exactly; GPU atomics make runs non-bit-reproducible across machines.)
+- **Keep heading removes it** in both seeds (+30, +1), to the size of the isotropic control (+24 / +30, §15.64).
+- **Where the push lives:** not in recoil. The recoil of what the body sends out is −1.4 (averaged) and −6.9
+  (keep heading). It is in the intake: ambient photons entering at the south pole push +845 against −639 at
+  the north (averaged), +758 against −726 (keep heading). Pole collisions (s < 1, within 45°) N / S are
+  133.6k / 110.0k (averaged) and 117.9k / 113.8k (keep heading); the selective-pole spin torque drops from
+  17.0 to 4.7. The plain maze sets up a lopsided field around its poles, and the keep-heading release, by
+  sending each species out on the side it was moving toward, balances it.
+- Two seeds per heading case only; the size of the remaining push (0–30) is at the isotropic-control level.
+
+**Open for the user:** adopt keep heading as the default maze release (it is Mathis's species route, and it
+removes the self-push of §15.60–15.62); and whether to mirror inner stacked levels too.
+
+Files: reference/tc66 (q66_a..i, q66e.sh, q66e2.sh), scripts/isabelle/queue66, rust/src/maze.rs tc66_probe.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

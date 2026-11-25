@@ -1,0 +1,42 @@
+
+running 37 tests
+test gpu::dsmc::guard::tests::extra_rules_parse ... ok
+test gpu::dsmc::guard::tests::guard_check ... ignored
+test gpu::dsmc::guard::tests::isabelle_rules_are_built_in ... ok
+test gpu::dsmc::guard::tests::process_match_is_exact_and_caseless ... ok
+test gpu::dsmc::guard::tests::school_hours_window ... ok
+test gpu::dsmc::guard::tests::time_left_before_the_window ... ok
+test gpu::dsmc::rough_gates::rs1_gpu_box_conservation ... ok
+test gpu::dsmc::rough_gates::rs2_gpu_equipartition ... ok
+test gpu::dsmc::rough_gates::rs_gpu_matches_cpu_reference ... ok
+test gpu::dsmc::rough_gates::rs_stacking_box_conservation ... ok
+test gpu::dsmc::shell_gates::ball_gpu_matches_cpu ... ok
+test gpu::dsmc::shell_gates::ball_static_conserves_energy ... ok
+test gpu::dsmc::shell_gates::dense_cells_parallel_collision_rate ... ok
+test gpu::dsmc::shell_gates::intake_tank_bookkeeping ... ok
+test gpu::dsmc::shell_gates::maze_eject_c_bounds_speed ... ok
+test gpu::dsmc::shell_gates::moving_body_follows ... ok
+test gpu::dsmc::shell_gates::permeable_body_does_not_distort_gas_collision_rate ... ok
+test gpu::dsmc::shell_gates::photon_mix_birth ... ok
+test gpu::dsmc::shell_gates::report_b_shell_single_body ... ignored
+test gpu::dsmc::shell_gates::report_ball_loop ... ignored
+test gpu::dsmc::shell_gates::report_c_ball_single_body ... ignored
+test gpu::dsmc::shell_gates::report_deuteron ... ignored
+test gpu::dsmc::shell_gates::report_flowmap ... ignored
+test gpu::dsmc::shell_gates::report_hydrogen ... ignored
+test gpu::dsmc::shell_gates::report_intake ... ignored
+test gpu::dsmc::shell_gates::report_pair_force ... ignored
+test gpu::dsmc::shell_gates::report_photon_mix ... ignored
+test gpu::dsmc::shell_gates::report_photon_mix_profile ... ignored
+test gpu::dsmc::shell_gates::report_stack ... ignored
+test gpu::dsmc::shell_gates::report_two_bodies ... ignored
+test gpu::dsmc::shell_gates::shell_bg0_transparent ... ok
+test gpu::dsmc::shell_gates::shell_bg1_static_body_conserves_photon_energy ... ok
+test gpu::dsmc::shell_gates::shell_bg2_bg3_fan ... ok
+test gpu::dsmc::shell_gates::shell_gpu_matches_cpu_contact ... ok
+test gpu::dsmc::shell_gates::through_hole_passes_polar_entries ... ok
+test gpu::dsmc::shell_gates::turned_body_emits_in_its_own_frame ... ok
+test gpu::dsmc::shell_gates::two_body_feed_bookkeeping ... ok
+
+test result: ok. 24 passed; 0 failed; 13 ignored; 0 measured; 270 filtered out; finished in 86.13s
+

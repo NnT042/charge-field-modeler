@@ -373,7 +373,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if ((params.maze_mode & 255u) == 2u) {
         th = th0 + bmeta.w * t_step;
     }
-    // Doc §15.65 test knob: bit 26 = averaged maze. Each capture turns the
+    // Doc §15.65/§15.66: bit 26 = averaged maze (default). Each capture turns the
     // maze by a random angle about the body axis, so its phase against the
     // trace is not locked (the maze is averaged around the axis).
     if (((params.maze_mode >> 26u) & 1u) != 0u) {
@@ -416,6 +416,11 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     }
     let escaped = dot(d, d0) >= 0.0;
     let upright = dot(s, s0) >= 0.0;
+    // Doc §15.66 test knob: bit 27 = rigid spin. The maze picks the exit,
+    // but the spin is carried rigidly from d0 to the exit (no imprint).
+    if (!iso && ((params.maze_mode >> 27u) & 1u) != 0u) {
+        s = arc_rot(d0, select(vec3<f32>(0.0, 0.0, h), d, escaped), s0);
+    }
     // Doc §15.48: beam-fate tally. A beam photon reaching a ball is
     // captured here; then the flag is reset for this release.
     if (((*p).c[0] & FLAG_BEAM) != 0u) {
@@ -434,6 +439,20 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
         out_l = vec3<f32>(0.0, 0.0, h);
     }
     var out_w = maze_world(oq, th, out_l);
+    // Doc §15.66 test knob: bit 28 = escapes keep heading. An escaped photon
+    // leaves in the hemisphere it was travelling toward (mirrored across the
+    // equator if not), so photons in at the south leave north of the equator
+    // (rhrule.pdf, magmom.pdf: emitted at 30 N / 30 S by species). Its spin is
+    // mirrored the same way (helicity kept).
+    var mirror_ax = vec3<f32>(0.0);
+    if (escaped && ((params.maze_mode >> 28u) & 1u) != 0u) {
+        let axw = bodies[b].axis.xyz;
+        let zo = dot(out_w, axw);
+        if (zo * dot(v_in, axw) < 0.0) {
+            out_w = out_w - 2.0 * zo * axw;
+            mirror_ax = axw;
+        }
+    }
     // Doc §15.32: bit 12 = through release. A trapped photon leaves by the
     // pole it was heading toward on entry (the neutron as a pipe: in one
     // side, out the other, in its own direction of travel).
@@ -505,7 +524,8 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if (params.speed_mode == 1u) {
         v_out = normalize(v_out);
     }
-    let w_out = maze_world(oq, th, s);
+    var w_out = maze_world(oq, th, s);
+    w_out = w_out - 2.0 * dot(w_out, mirror_ax) * mirror_ax;
     let sp = length(v_out);
     let dn = v_out / max(sp, 1e-12);
     (*p).b = vec4<f32>(dn, axial_helicity(p, w_out, dn));
