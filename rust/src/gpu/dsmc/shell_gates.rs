@@ -2616,6 +2616,68 @@ fn report_deuteron() {
             let (d1, dm) = (s1 / n1.max(1.0), sm / nm.max(1e-12));
             println!("headwind {cl}: field drift at r 2-5 ({:+.4}, {:+.4}, {:+.4}), mass-weighted ({:+.4}, {:+.4}, {:+.4}), set ({:+.4}, {:+.4}, {:+.4}); {n1:.0} photons", d1.x, d1.y, d1.z, dm.x, dm.y, dm.z, wind.x, wind.y, wind.z);
         }
+        // Doc §15.62: CFM_D_LONEFREE_T > 0 lets the lone body go free for
+        // that many time units after the calibration, in its own frame: it
+        // stays at the domain centre while the field drifts past at -V. Its
+        // velocity V (start -CFM_D_WIND) takes the whole measured impulse
+        // over CFM_D_MASS (no self-force subtracted). With CFM_D_INERTIA > 0
+        // the axis turns as in the free runs (§15.21): L = L_s a + I w_perp,
+        // the torque minus its axial part changes L, L is kept and only its
+        // axial part is reset to CFM_D_LSPIN (a gyroscope precesses). The
+        // accelerating frame's pseudo-force on the field is neglected
+        // (dV/dt ~ 1e-5 c per time unit).
+        let free_t: f64 = env("CFM_D_LONEFREE_T", "0").parse().unwrap();
+        if free_t > 0.0 {
+            let l_s: f64 = env("CFM_D_LSPIN", "0").parse().unwrap();
+            let log_every: u32 = env("CFM_D_LOG", "100").parse().unwrap();
+            let mut vb = -engine.wind();
+            let mut qb = glam::DQuat::from_rotation_arc(DVec3::Z, lone_axis);
+            let mut lb = (qb * DVec3::Z) * l_s;
+            let a0 = qb * DVec3::Z;
+            let n_free = (free_t / dt).round() as u32;
+            println!("free {cl}: mass {mass:e}, inertia {inertia:e}, L_spin {l_s:e}, start V ({:+.4}, {:+.4}, {:+.4}), axis ({:+.3}, {:+.3}, {:+.3}), {free_t} time units", vb.x, vb.y, vb.z, a0.x, a0.y, a0.z);
+            let (mut fw, mut tw) = (DVec3::ZERO, DVec3::ZERO);
+            let mut nw = 0u32;
+            for s in 1..=n_free {
+                let t = engine.step_flux(&ctx);
+                let j = DVec3::new(t.sh_dp[0][0], t.sh_dp[0][1], t.sh_dp[0][2]);
+                let tqj = DVec3::new(t.sh_torque[0][0], t.sh_torque[0][1], t.sh_torque[0][2]);
+                vb += j / mass;
+                if inertia > 0.0 {
+                    let a = qb * DVec3::Z;
+                    lb += tqj - a * tqj.dot(a);
+                    let w = (lb - a * lb.dot(a)) / inertia;
+                    let ang = w.length() * dt;
+                    if ang > 0.0 {
+                        qb = (glam::DQuat::from_axis_angle(w / w.length(), ang) * qb).normalize();
+                    }
+                    let a2 = qb * DVec3::Z;
+                    lb = lb - a2 * lb.dot(a2) + a2 * l_s;
+                }
+                engine.set_wind(&ctx, -vb);
+                engine.set_body_poses(&ctx, &[DVec3::ZERO], Some(&[qb]));
+                fw += j;
+                tw += tqj;
+                nw += 1;
+                if s % log_every == 0 || s == n_free {
+                    let a = qb * DVec3::Z;
+                    let span = nw as f64 * dt;
+                    let (f, tq) = (fw / span, tw / span);
+                    let vh = if vb.length() > 1e-9 { vb.normalize() } else { a };
+                    let tn = a.cross(vh);
+                    let td = if tn.length() > 1e-9 { tn.normalize() } else { DVec3::ZERO };
+                    println!(
+                        "free {cl} t {:7.1}: V ({:+.4}, {:+.4}, {:+.4}) |V| {:.4}, axis ({:+.3}, {:+.3}, {:+.3}), axis-V {:5.1} deg, axis moved {:5.1} deg | force along V {:+.1} across {:.1}, torque toward V {:+.1} other {:.1}",
+                        s as f64 * dt, vb.x, vb.y, vb.z, vb.length(), a.x, a.y, a.z,
+                        a.dot(vh).clamp(-1.0, 1.0).acos().to_degrees(), a.dot(a0).clamp(-1.0, 1.0).acos().to_degrees(),
+                        f.dot(vh), (f - vh * f.dot(vh)).length(), tq.dot(td), (tq - td * tq.dot(td)).length()
+                    );
+                    fw = DVec3::ZERO;
+                    tw = DVec3::ZERO;
+                    nw = 0;
+                }
+            }
+        }
         println!("alone {cl:<7}: {}", spin_line(&t.spin_in[0], &t.spin_out[0], lone_axis, cal as f64 * dt));
         println!("alone {cl:<7}: {}", far_line(&t.far, cal as f64 * dt));
         if env("CFM_P_CELLS", "0") == "1" {

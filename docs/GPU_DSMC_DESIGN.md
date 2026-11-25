@@ -5559,6 +5559,48 @@ motion (negative = net force opposing the motion).
 Not done: separating drag from self-push change, a free (integrated) body with spin angular momentum, and
 other seeds. The across-V force (25–206) is the same unexplained sideways part as §15.60.
 
+### 15.62 tc62: the free spinning proton in its own frame (2026-11-24)
+
+User pick after §15.61 ("Free spinning proton"). New test knob `CFM_D_LONEFREE_T` (time units, 0 = off) in
+`report_deuteron`, used with `CFM_D_LONEONLY=1`: after the lone calibration the proton is let go in its own
+frame. It stays at the centre of the ball and the field drifts past at W = −V (§15.61 headwind). Each step
+V += j/M, the body turns by the §15.21 rule (L = L_s·a + I·ω⊥; the torque minus its axial part changes L,
+the axial part is reset to L_s, so a spinning body precesses like a gyroscope), then `set_wind(−V)` and
+`set_body_poses` with the new axis. Mass, inertia and spin from `CFM_D_MASS`, `CFM_D_INERTIA`,
+`CFM_D_LSPIN`; one log line every `CFM_D_LOG` steps (30 tu). Masspath mix, seed 49344, R_D 6, warm 150,
+calibration 100, then 1200 tu free. Real values M 7e6, I 2.8e6, L_s 8.75e5 (§15.21).
+
+| run | start | after 1200 tu | axis moved |
+|---|---|---|---|
+| b spin | V 0.017 along z, axis 30° off (toward +x) | V (−0.0047, −0.0037, +0.0058), |V| 0.0083; axis-V 72° | 0.8° |
+| c no spin (L_s 0) | same | V (−0.0038, −0.0021, +0.0027), |V| 0.0051; axis-V 33° | 64° (followed V) |
+| d spin, M I L all ÷10 | same | |V| 0.0008 (wandering, near rest); axis-V 30° | ≤ 2° |
+| e spin, from rest | V 0, axis +z | V (−0.0086, +0.0018, +0.0059), |V| 0.0106; axis-V 56° | ~1° |
+
+Run e, from rest: the push along the axis is +347 at first and falls as the body speeds up (+257 at t 120,
++78 at 360, +21 at 600). |V| peaks at 0.0136 at t 840, but V has turned 45° off the axis by then (toward −x,
++y), and |V| then falls (0.0119 at t 1050). At t 1200 it is 0.0106, 56° off the axis.
+
+- **Spin holds the axis.** With the real spin the axis moved under 1° in 1200 tu (torque toward V averages
+  ~+5 to +20 and keeps changing sign); without spin the same torque swung it 64°. The expected precession
+  (~3°) is within that. The ÷10 body also held its axis to 2°.
+- **The motion does not stay on the axis.** In every run V turns away from the axis, always the same way
+  (toward −x and a little ±y), at a steady rate. The spinning body keeps its axis, so the tilt grows (30° to
+  72°), the push along the motion falls (push × cos tilt), drag wins, and the body slows: 0.017 to 0.008 c
+  (b), to near rest for the ÷10 body (d). Without spin the axis follows V and keeps ~32° behind it, but V
+  still slows to 0.005 c (c).
+- **What turns it is a sideways force that is there at rest.** The at-rest calibration gives the lone
+  proton a force across its axis of 70–180 in every run since tc60, mostly (−x, +y): axis up (−96, +68),
+  axis down (+87, +61), this run (−93, +55); the phi 1/2 run, with no self-push, has only 28. Across the
+  free runs the same push acts on the body for the whole run (e: V_x falls by ~0.0011 per 100 tu, about
+  70 force units at M 7e6). It is roughly a third of the axial push, so the self-propelled top speed of
+  ~0.017 c (§15.61) is never reached along a straight line.
+- **Open:** all runs use one seed (49344). The sideways force could be a property of the spinning body
+  (it vanishes with the self-push at phi 1/2, and its x part flips with the axis) or a seed / grid effect.
+  Other seeds, and the body turned about its own axis, would tell them apart.
+
+Files: reference/tc62 (q62_a gates 24/24 on ISABELLE, q62_b..e outputs, q62e.sh), scripts/isabelle/queue62.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

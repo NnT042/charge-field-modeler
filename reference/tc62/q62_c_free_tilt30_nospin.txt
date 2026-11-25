@@ -1,0 +1,66 @@
+
+running 1 test
+=== deuteron: p axial, sep0 3, mass 7e6, damp 0, fixed centre true, lambda 0.3, n_a 8000, h 0.25, dt 0.06, phi 0.667, r_d 6 ===
+intake Ball, neutron intake None, through hole 0, maze speed EjectSurface, pipe '' within 20 deg, mouth 0.2222222222, lane 0, swirl 0 deg, channel spin rule 0 eta 0 quantum 0 edge 0, held helix level 0 (radius 0.0000)
+photon mix norm MassPath: mean birth mass 3.750, hit-box factor 17.656, mass scale 0.2667, sigma scale 0.0566
+lone proton axis (+0.500, +0.000, +0.866)
+test gpu::dsmc::shell_gates::report_deuteron has been running for over 60 seconds
+self-force proton : (-30.5, +34.5, +55.0) per unit time
+self-torque proton : (-3.5, -16.0, -7.0) per unit time
+self-force proton  along its axis +32.4, across 64.0
+headwind proton: body moves at V 0.0170 along (-0.000, -0.000, +1.000), axis 30.0 deg from V: force along V +55.0, across V 46.1; torque turning the axis toward V +16.0, other torque 7.8
+headwind proton: field drift at r 2-5 (-0.0013, -0.0001, -0.0173), mass-weighted (-0.0017, +0.0001, -0.0175), set (+0.0000, +0.0000, -0.0170); 3914437 photons
+free proton: mass 7e6, inertia 2.8e6, L_spin 0e0, start V (-0.0000, -0.0000, +0.0170), axis (+0.500, +0.000, +0.866), 1200 time units
+free proton t    30.0: V (-0.0004, +0.0001, +0.0169) |V| 0.0169, axis (+0.499, +0.001, +0.867), axis-V  31.3 deg, axis moved   0.1 deg | force along V -25.1 across 104.8, torque toward V +12.7 other 10.0
+free proton t    60.0: V (-0.0008, +0.0001, +0.0168) |V| 0.0168, axis (+0.492, +0.001, +0.871), axis-V  32.2 deg, axis moved   0.5 deg | force along V -18.5 across 90.6, torque toward V +23.7 other 17.2
+free proton t    90.0: V (-0.0011, +0.0002, +0.0166) |V| 0.0166, axis (+0.481, +0.001, +0.877), axis-V  32.4 deg, axis moved   1.3 deg | force along V -46.3 across 63.8, torque toward V +8.9 other 1.1
+free proton t   120.0: V (-0.0014, +0.0002, +0.0163) |V| 0.0164, axis (+0.468, +0.002, +0.884), axis-V  32.7 deg, axis moved   2.1 deg | force along V -49.9 across 75.6, torque toward V +2.8 other 7.5
+free proton t   150.0: V (-0.0016, -0.0001, +0.0160) |V| 0.0161, axis (+0.455, +0.006, +0.891), axis-V  32.8 deg, axis moved   3.0 deg | force along V -73.9 across 92.4, torque toward V +3.2 other 4.7
+free proton t   180.0: V (-0.0019, -0.0002, +0.0154) |V| 0.0156, axis (+0.438, +0.009, +0.899), axis-V  33.0 deg, axis moved   4.1 deg | force along V -118.7 across 86.4, torque toward V +5.6 other 9.6
+free proton t   210.0: V (-0.0020, -0.0004, +0.0149) |V| 0.0151, axis (+0.421, +0.011, +0.907), axis-V  32.6 deg, axis moved   5.1 deg | force along V -108.3 across 67.7, torque toward V +1.0 other 5.0
+free proton t   240.0: V (-0.0021, -0.0006, +0.0145) |V| 0.0146, axis (+0.404, +0.014, +0.915), axis-V  32.0 deg, axis moved   6.2 deg | force along V -101.9 across 51.0, torque toward V +6.5 other 22.0
+free proton t   270.0: V (-0.0023, -0.0008, +0.0140) |V| 0.0142, axis (+0.385, +0.018, +0.923), axis-V  32.3 deg, axis moved   7.4 deg | force along V -93.8 across 93.2, torque toward V -6.7 other 12.3
+free proton t   300.0: V (-0.0026, -0.0009, +0.0136) |V| 0.0139, axis (+0.367, +0.021, +0.930), axis-V  32.6 deg, axis moved   8.6 deg | force along V -79.5 across 79.4, torque toward V +6.0 other 5.9
+free proton t   330.0: V (-0.0028, -0.0009, +0.0131) |V| 0.0135, axis (+0.347, +0.023, +0.938), axis-V  32.6 deg, axis moved   9.8 deg | force along V -98.4 across 71.7, torque toward V +5.3 other 1.6
+free proton t   360.0: V (-0.0031, -0.0010, +0.0128) |V| 0.0132, axis (+0.323, +0.025, +0.946), axis-V  33.0 deg, axis moved  11.2 deg | force along V -63.7 across 100.7, torque toward V +14.2 other 12.5
+free proton t   390.0: V (-0.0032, -0.0010, +0.0124) |V| 0.0128, axis (+0.296, +0.028, +0.955), axis-V  32.4 deg, axis moved  12.9 deg | force along V -86.0 across 51.8, torque toward V +6.0 other 9.5
+free proton t   420.0: V (-0.0034, -0.0012, +0.0118) |V| 0.0123, axis (+0.268, +0.029, +0.963), axis-V  32.3 deg, axis moved  14.5 deg | force along V -112.2 across 94.7, torque toward V +2.4 other 5.0
+free proton t   450.0: V (-0.0035, -0.0015, +0.0112) |V| 0.0118, axis (+0.241, +0.031, +0.970), axis-V  32.4 deg, axis moved  16.2 deg | force along V -111.8 across 100.3, torque toward V -7.8 other 17.5
+free proton t   480.0: V (-0.0037, -0.0016, +0.0107) |V| 0.0115, axis (+0.213, +0.032, +0.977), axis-V  32.5 deg, axis moved  17.8 deg | force along V -88.3 across 83.0, torque toward V +2.1 other 12.3
+free proton t   510.0: V (-0.0037, -0.0017, +0.0103) |V| 0.0111, axis (+0.182, +0.033, +0.983), axis-V  32.0 deg, axis moved  19.6 deg | force along V -91.6 across 61.1, torque toward V +16.7 other 11.0
+free proton t   540.0: V (-0.0037, -0.0018, +0.0098) |V| 0.0106, axis (+0.148, +0.034, +0.988), axis-V  31.5 deg, axis moved  21.6 deg | force along V -102.6 across 65.3, torque toward V +9.2 other 7.7
+free proton t   570.0: V (-0.0038, -0.0020, +0.0093) |V| 0.0102, axis (+0.113, +0.037, +0.993), axis-V  31.5 deg, axis moved  23.6 deg | force along V -97.4 across 81.2, torque toward V -12.7 other 4.1
+free proton t   600.0: V (-0.0037, -0.0019, +0.0088) |V| 0.0098, axis (+0.081, +0.042, +0.996), axis-V  30.5 deg, axis moved  25.5 deg | force along V -103.4 across 24.2, torque toward V -6.6 other 23.5
+free proton t   630.0: V (-0.0036, -0.0020, +0.0084) |V| 0.0094, axis (+0.051, +0.050, +0.997), axis-V  30.0 deg, axis moved  27.2 deg | force along V -94.0 across 33.9, torque toward V -13.8 other 8.1
+free proton t   660.0: V (-0.0038, -0.0021, +0.0081) |V| 0.0092, axis (+0.022, +0.058, +0.998), axis-V  31.2 deg, axis moved  28.9 deg | force along V -38.8 across 90.4, torque toward V +1.5 other 7.3
+free proton t   690.0: V (-0.0038, -0.0022, +0.0076) |V| 0.0088, axis (-0.006, +0.064, +0.998), axis-V  31.9 deg, axis moved  30.5 deg | force along V -90.8 across 71.2, torque toward V +5.0 other 16.2
+free proton t   720.0: V (-0.0038, -0.0024, +0.0073) |V| 0.0085, axis (-0.035, +0.069, +0.997), axis-V  32.2 deg, axis moved  32.3 deg | force along V -62.4 across 57.5, torque toward V +0.8 other 12.5
+free proton t   750.0: V (-0.0037, -0.0023, +0.0069) |V| 0.0082, axis (-0.067, +0.075, +0.995), axis-V  31.9 deg, axis moved  34.1 deg | force along V -67.9 across 30.2, torque toward V +0.5 other 10.9
+free proton t   780.0: V (-0.0036, -0.0025, +0.0066) |V| 0.0079, axis (-0.100, +0.084, +0.991), axis-V  32.6 deg, axis moved  36.1 deg | force along V -72.3 across 67.7, torque toward V +6.3 other 8.1
+free proton t   810.0: V (-0.0037, -0.0026, +0.0062) |V| 0.0077, axis (-0.136, +0.089, +0.987), axis-V  33.5 deg, axis moved  38.2 deg | force along V -54.0 across 68.2, torque toward V +19.2 other 11.1
+free proton t   840.0: V (-0.0037, -0.0026, +0.0059) |V| 0.0074, axis (-0.174, +0.092, +0.980), axis-V  33.8 deg, axis moved  40.4 deg | force along V -51.4 across 54.8, torque toward V -7.3 other 11.8
+free proton t   870.0: V (-0.0036, -0.0026, +0.0056) |V| 0.0071, axis (-0.210, +0.095, +0.973), axis-V  33.3 deg, axis moved  42.5 deg | force along V -75.0 across 21.9, torque toward V +9.9 other 17.8
+free proton t   900.0: V (-0.0035, -0.0025, +0.0055) |V| 0.0070, axis (-0.249, +0.096, +0.964), axis-V  32.0 deg, axis moved  44.8 deg | force along V -37.2 across 16.0, torque toward V +5.2 other 11.5
+free proton t   930.0: V (-0.0034, -0.0025, +0.0050) |V| 0.0065, axis (-0.285, +0.098, +0.954), axis-V  32.8 deg, axis moved  46.9 deg | force along V -97.0 across 62.5, torque toward V -11.2 other 15.7
+free proton t   960.0: V (-0.0035, -0.0025, +0.0048) |V| 0.0065, axis (-0.318, +0.096, +0.943), axis-V  32.9 deg, axis moved  48.9 deg | force along V -20.4 across 38.7, torque toward V +15.2 other 1.3
+free proton t   990.0: V (-0.0035, -0.0024, +0.0045) |V| 0.0062, axis (-0.355, +0.093, +0.930), axis-V  32.4 deg, axis moved  51.1 deg | force along V -68.8 across 38.1, torque toward V +2.0 other 5.8
+free proton t  1020.0: V (-0.0035, -0.0023, +0.0043) |V| 0.0060, axis (-0.389, +0.090, +0.917), axis-V  31.8 deg, axis moved  53.1 deg | force along V -42.8 across 31.8, torque toward V -3.3 other 7.6
+free proton t  1050.0: V (-0.0033, -0.0021, +0.0042) |V| 0.0057, axis (-0.420, +0.086, +0.903), axis-V  29.6 deg, axis moved  55.1 deg | force along V -53.4 across 27.7, torque toward V -3.4 other 13.4
+free proton t  1080.0: V (-0.0033, -0.0021, +0.0038) |V| 0.0055, axis (-0.449, +0.082, +0.890), axis-V  30.6 deg, axis moved  56.9 deg | force along V -64.3 across 72.0, torque toward V +3.9 other 4.6
+free proton t  1110.0: V (-0.0033, -0.0021, +0.0035) |V| 0.0053, axis (-0.478, +0.075, +0.875), axis-V  31.5 deg, axis moved  58.7 deg | force along V -43.4 across 50.1, torque toward V +2.7 other 17.1
+free proton t  1140.0: V (-0.0035, -0.0021, +0.0033) |V| 0.0053, axis (-0.504, +0.067, +0.861), axis-V  31.9 deg, axis moved  60.4 deg | force along V +1.5 across 61.9, torque toward V +3.7 other 14.3
+free proton t  1170.0: V (-0.0036, -0.0021, +0.0030) |V| 0.0051, axis (-0.530, +0.054, +0.846), axis-V  32.8 deg, axis moved  62.1 deg | force along V -38.0 across 73.6, torque toward V +14.2 other 6.6
+free proton t  1200.0: V (-0.0038, -0.0021, +0.0027) |V| 0.0051, axis (-0.556, +0.036, +0.831), axis-V  32.8 deg, axis moved  63.8 deg | force along V +9.8 across 80.4, torque toward V +11.8 other 21.5
+alone proton : photon spin torque: net along axis -7.39, across 28.57 | in along axis: S- +6.27 S+ +12.97 N- +0.93 N+ +1.93 | out along axis +29.49 | selective in (S+ and N-) +13.90
+alone proton : collisions near body 0's poles (s<1, within 45 deg; per unit time, s<0.5 in brackets): | N total 127248 a-a 90754 (28556) a-o 33300 (12947) a-x 0 (0) o-o 3194 (1494) o-x 0 (0) x-x 0 (0) | S total 115390 a-a 69586 (21262) a-o 39972 (14565) a-x 0 (0) o-o 5831 (2486) o-x 0 (0) x-x 0 (0)
+push by source, body 0 proton (pole facing the centre: north); per unit time: photons | force toward the centre, pair / alone / difference | torque across the axis (size), pair / alone / difference
+  ambient (never captured) N entry:    2688 /       0 |    -743.6 /      +0.0 /   -743.6 |     +6.3 /     +0.0 /     +6.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  ambient (never captured) S entry:    2651 /       0 |    +721.7 /      +0.0 /   +721.7 |     +9.9 /     +0.0 /     +9.9 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             N entry:    1239 /       0 |    -259.1 /      +0.0 /   -259.1 |     +2.3 /     +0.0 /     +2.3 | crossed part:      0 photons, force +0.0, torque +0.0
+  own emission             S entry:    1315 /       0 |    +313.0 /      +0.0 /   +313.0 |     +2.4 /     +0.0 /     +2.4 | crossed part:      0 photons, force +0.0, torque +0.0
+  recoil of what it sends out      :                   |      +0.4 /      +0.0 /     +0.4 |     +0.0 /     +0.0 /     +0.0
+  total                            :                   |     +32.4 /      +0.0 /    +32.4 |    +16.0 /     +0.0 /    +16.0
+test gpu::dsmc::shell_gates::report_deuteron ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 303 filtered out; finished in 6882.55s
+
