@@ -373,6 +373,12 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
     if ((params.maze_mode & 255u) == 2u) {
         th = th0 + bmeta.w * t_step;
     }
+    // Doc §15.65 test knob: bit 26 = averaged maze. Each capture turns the
+    // maze by a random angle about the body axis, so its phase against the
+    // trace is not locked (the maze is averaged around the axis).
+    if (((params.maze_mode >> 26u) & 1u) != 0u) {
+        th = th + TAU * rand01(params.seed_hi, params.seed_lo, key, 250u);
+    }
     let dir = (*p).b.xyz;
     let v_in = dir * (*p).d.w;
     let dl = maze_local(oq, th, dir);

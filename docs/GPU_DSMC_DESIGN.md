@@ -5678,6 +5678,35 @@ binary as tc63. Emergence runs: no warm-up, 300 tu printed in 30 blocks of 10 (`
 
 Files: reference/tc64 (q64_j..p, q64e.sh, q64e2.sh), scripts/isabelle/queue64.
 
+### 15.65 tc65: averaged maze — sideways force gone, push along the axis stays (2026-11-25)
+
+User: test the averaged maze. New test knob `CFM_D_MAZEPHASE=random` (`RoughParams::maze_random_phase`,
+off by default; `maze_mode` bit 26): each maze capture adds a random turn (0..2π, draw 250) about the body
+axis to the swept maze angle, so the maze is averaged round the axis instead of phase-locked to the trace.
+The maze rule itself (start patch, tries, exit speed) is unchanged. Lone proton at rest, masspath mix, R_D 6,
+warm 150, 300 tu in 3 blocks.
+
+| run | sideways (lab x, y) | size | along axis |
+|---|---|---|---|
+| b averaged, seed 49344 | (+2.7, −3.5) | 4.4 | +243.5 |
+| c averaged, seed 49344, roll 180° | (+7.1, −6.8) | 9.9 | +237.9 |
+| d averaged, seed 1 | (+6.4, −3.3) | 7.1 | +311.9 |
+| e averaged, seed 1, axis down | (+10.4, −3.8) | 11.0 | +225.2 (force −225 in z) |
+| for comparison: locked maze (tc63/64) | | 48–131, turns with roll | +200 to +260 |
+| for comparison: isotropic (tc64 o, p) | (−28, −40) | ~48 | +24 / +30 |
+
+- **The sideways force is gone.** 4–11 over 300 tu (block to block 6–26), no turn with the roll (b vs c).
+  It was entirely the maze's fixed phase relative to the trace (§15.64). It is also below the ~48 lab
+  residual of the isotropic runs, so that residual belongs to the isotropic rule, not to the field.
+- **The push along the axis stays.** +238 to +312, about the locked value (~+260), ten times the isotropic
+  value. It follows the body: flipped axis down (e) the force flips to −225. So the self-push of
+  §15.60–15.62 is a property of the maze rule itself (where it releases captured photons relative to the
+  poles), not of its phase lock. Whether that rule is right is the open question, not the averaging.
+- Seed 1 gives +312 up and +225 down; seed 49344 +244 / +238 (roll). Seed spread ~±40.
+- Gates 24/24 on ISABELLE with the knob in the build (default off).
+
+Files: reference/tc65 (q65_a..e, q65e.sh), scripts/isabelle/queue65.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

@@ -955,6 +955,8 @@ impl DsmcEngine {
             } | if c.rough.polar_release_normal { 2048 } else { 0 }
                 | if c.rough.polar_release_through { 4096 } else { 0 }
                 | if c.rough.local_pairing { 8192 } else { 0 }
+                // Doc §15.65: bit 26 = averaged maze (random azimuth per capture).
+                | if c.rough.maze_random_phase { 1 << 26 } else { 0 }
                 // Doc §15.53: bit 14 = channel spin rule, bits 16..23 = eta*255.
                 // Doc §15.54 bit 15 = quantum; §15.55 bits 24..25 = edge mode.
                 | if c.rough.pipe_spin && !c.rough.pipe_lane { 16384 | (if c.rough.pipe_quantum { 32768 } else { 0 }) | (((c.rough.pipe_spin_eta.clamp(0.0, 1.0) * 255.0).round() as u32) << 16) | ((c.rough.pipe_edge.min(3)) << 24) } else { 0 },

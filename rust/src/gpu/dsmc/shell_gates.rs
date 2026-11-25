@@ -2453,6 +2453,9 @@ fn report_deuteron() {
         if d_maze_iso {
             config.rough.maze = MazeMode::Isotropic;
         }
+        // CFM_D_MAZEPHASE=random (doc §15.65): averaged maze, a random azimuth
+        // per capture instead of the level-9 phase lock.
+        config.rough.maze_random_phase = env("CFM_D_MAZEPHASE", "lock") == "random";
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
         // CFM_D_COPIES (doc §15.45): trace copies per body (1 = real ball only).
