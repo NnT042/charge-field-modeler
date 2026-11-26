@@ -5831,12 +5831,66 @@ the axis):
 | q68_d new default, seed 49344 | −2480 | −94 | +37 |
 | q68_e new default, seed 1 | −2454 | −75 | +6 |
 
-- The p–n attraction survives the maze change. It is about 22% weaker on the proton (−2480 / −2454 vs −3149)
-  and agrees between seeds to 1%. The neutron's share is −94 / −75.
+- **Correction (§15.69):** negative here means pushed apart (the §15.59 convention), so this is a
+  repulsion, not an attraction as first written; the free pair in q69_a/e flies apart. The p–n repulsion
+  survives the maze change. It is about 22% weaker on the proton (−2480 / −2454 vs −3149) and agrees
+  between seeds to 1%. The neutron's share is −94 / −75.
 - The proton's alone value no longer carries a ~+280 self-push, so the pair difference is now almost all
   pair force.
 
 Files: reference/tc68 (q68_a..e), scripts/isabelle/queue68.
+
+### 15.69 tc69: free p–n pair and the lane pairs/triples under the new default maze (2026-11-26)
+
+User: queue the free pair, then the lane runs, on both machines. Binary = cfm68 (00e02c7 code: averaged
+maze + keep heading). Masspath mix as §15.59–15.68, seed 49344 unless noted. ISABELLE ran q69_a–d,
+ESTELLE q69_e–h. Lane = CFM_D_PIPE=pn, PIPE_DEG 90, PIPE_LANE 1. Free runs: M 7e6, I 2.8e6, L_s 8.75e5.
+
+**Sign correction.** "Force toward the partner/centre" is negative when pushed apart (§15.59). §15.68
+called the frozen p–n −2480 an attraction; it is a repulsion (fixed there). The free pair below confirms it.
+
+**Free p–n pair, no lane, started at contact (gap 2.05)** (q69_a seed 49344, q69_e seed 1):
+
+| t | gap a | proton force a | gap e | proton force e |
+|---|---|---|---|---|
+| 10 | 2.07 | −2444 | 2.07 | −2367 |
+| 50 | 2.50 | −2270 | 2.48 | −2195 |
+| 100 | 3.72 | −1451 | 3.67 | −1335 |
+| 150 | 5.39 | −511 | 5.29 | −440 |
+| 200 | 7.25 | −226 | 7.08 | −171 |
+| 260 | 9.59 | −276 | 9.32 | −201 |
+
+- Both seeds fly apart at the same rate (they agree to 3%), and the run stops once the gap passes ~9.5. The push is
+  almost all on the proton; the neutron feels −80 to +110. Axes stay within 1° and lateral drift is < 0.07.
+- The proton is still pushed at −150 to −280 at gap 7–9.6, so the repulsion has a long tail.
+
+**Frozen, with the lane, at contact (pair minus alone, + = toward the centre):**
+
+| run | body forces | old (pre-masspath, old maze) |
+|---|---|---|
+| p–n, q69_b s49344 | p −150, n +36 | p +61, n +36 |
+| p–n, q69_h s1 | p −36, n +66 | — |
+| n–p–n, q69_c | n +631, p −66, n +613 | n +411 / +394 |
+| p–n–p, q69_f | p −60, n +3, p +107 | p +41 / +57 |
+
+- The lane still removes almost all of the −2480 p–n repulsion, but its sign on the proton is now negative in
+  both seeds (−150 / −36), where the old maze gave +61. The neutron is pulled in (+36 / +66).
+- n–p–n is the strong case: both outer neutrons are pulled in at +613 to +631, half again stronger than the
+  old +400. The middle proton is pushed −66.
+- p–n–p is lopsided: lower proton −60, upper +107, neutron ~0.
+
+**Free triples with the lane** (q69_d n–p–n, q69_g p–n–p):
+
+- n–p–n holds axially for ~220 tu: gaps stay 2.01–2.07 while the outer neutrons are pulled in at +400 to
+  +650. But the middle proton drifts sideways (lateral 0.04 at t 130, 0.28 at 220, 1.0 at 310). Once it is
+  off the axis a sideways force of up to +770 pushes it out, and it leaves (lateral 3.8 at t 591). The two
+  neutrons stay together at 3.9–4.4 apart along the axis, with nothing between them.
+- p–n–p comes apart from t ~100: the lower proton is pushed out first (−450 to −1200, gap 2.05 → 5.3),
+  then the upper one (+265 to +885, gap → 3.9 by t 331), the same order as §15.57.
+- As in §15.57, nothing pushes a body back onto the axis. The new maze makes the axial n–p–n bond stronger,
+  but the triple still fails sideways.
+
+Files: reference/tc69 (q69_a..h), scripts/isabelle/queue69.
 
 ## 12. Out of scope for this step
 
