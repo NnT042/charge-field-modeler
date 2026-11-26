@@ -439,7 +439,7 @@ fn maze_contact(p: ptr<function, GpuPhoton>, b: u32, xh: vec3<f32>, ch: vec3<f32
         out_l = vec3<f32>(0.0, 0.0, h);
     }
     var out_w = maze_world(oq, th, out_l);
-    // Doc §15.66 test knob: bit 28 = escapes keep heading. An escaped photon
+    // Doc §15.66/§15.67: bit 28 = escapes keep heading (default). An escaped photon
     // leaves in the hemisphere it was travelling toward (mirrored across the
     // equator if not), so photons in at the south leave north of the equator
     // (rhrule.pdf, magmom.pdf: emitted at 30 N / 30 S by species). Its spin is

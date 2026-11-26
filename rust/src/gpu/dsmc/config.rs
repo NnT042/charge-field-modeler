@@ -197,9 +197,11 @@ pub struct RoughParams {
     /// direction but the photon's spin is carried rigidly from its start d0
     /// to the exit (no maze spin imprint).
     pub maze_rigid_spin: bool,
-    /// Doc §15.66 test knob (off by default): an escaped photon leaves in the
-    /// hemisphere it was travelling toward (mirrored across the equator if
-    /// not), after rhrule.pdf / magmom.pdf (photons in south, out 30 N).
+    /// Doc §15.66/§15.67: keep heading (default on since §15.67). An escaped
+    /// photon leaves in the hemisphere it was travelling toward (mirrored
+    /// across the equator if not), after rhrule.pdf / magmom.pdf (photons in
+    /// south, out 30 N). false = the §15.9 latitude-symmetric maze exit (the
+    /// GPU-vs-CPU maze gates use it).
     pub maze_keep_heading: bool,
     pub maze_speed: MazeSpeed,
     /// Doc §15.11: intake rule and holding tank. Captured photons are held
@@ -424,7 +426,7 @@ impl PhotonMix {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_random_phase: true, maze_rigid_spin: false, maze_keep_heading: false, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off } }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_random_phase: true, maze_rigid_spin: false, maze_keep_heading: true, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off } }
     }
 }
 

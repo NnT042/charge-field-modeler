@@ -5771,6 +5771,29 @@ removes the self-push of §15.60–15.62); and whether to mirror inner stacked l
 
 Files: reference/tc66 (q66_a..i, q66e.sh, q66e2.sh), scripts/isabelle/queue66, rust/src/maze.rs tc66_probe.
 
+### 15.67 tc67: keep heading adopted as the default maze release (2026-11-26)
+
+User adopted §15.66's keep-heading release. `RoughParams::maze_keep_heading` now defaults to true
+(`maze_mode` bit 28); `CFM_D_MAZELAT=maze` restores the §15.9 latitude-symmetric exit. With §15.66's averaged
+maze, the default maze is now: random azimuth per capture, and each escape leaves in the hemisphere it was
+moving toward (photons in at the south, out north of the equator; rhrule.pdf, magmom.pdf). The GPU-vs-CPU maze
+gates (`twist_rough`) keep both off, since the CPU law has neither.
+
+Check with no maze knobs set (lone proton at rest, masspath mix, R_D 6, warm 150, 300 tu in 3 blocks):
+
+| run | along axis | across |
+|---|---|---|
+| q67_b default, seed 49344 (ISABELLE) | +29.7 | 2.3 (bit-identical to q66_f, so the default is wired as the knob) |
+| q67_c default, seed 1 (ESTELLE) | −11.2 | 19.4 |
+
+Gates 24/24 on ISABELLE (q67_a).
+
+- Everything in §15.60–15.62 (self-push, top speed, free-body drift) was measured under the old maze and does
+  not carry over; the pair and free-body results need re-running under the new default.
+- Still open: inner stacked levels are not mirrored with the escape under keep heading.
+
+Files: reference/tc67 (q67_a..c, q67e.sh), scripts/isabelle/queue67.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

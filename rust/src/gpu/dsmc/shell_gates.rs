@@ -74,8 +74,10 @@ fn twist_rough(stacking: bool, mode: SpeedMode) -> RoughParams {
         speed_mode: mode,
         g_max: if mode == SpeedMode::Free { 6.0 } else { 2.0 },
         stacking,
-        // The GPU-vs-CPU maze gates compare against the phase-locked CPU law.
+        // The GPU-vs-CPU maze gates compare against the phase-locked,
+        // latitude-symmetric CPU law.
         maze_random_phase: false,
+        maze_keep_heading: false,
         ..RoughParams::default()
     }
 }
@@ -2461,9 +2463,10 @@ fn report_deuteron() {
         // CFM_D_MAZESPIN=rigid (doc §15.66 test knob): maze exit direction,
         // spin carried rigidly (no maze spin imprint).
         config.rough.maze_rigid_spin = env("CFM_D_MAZESPIN", "maze") == "rigid";
-        // CFM_D_MAZELAT=heading (doc §15.66 test knob): escapes leave in the
-        // hemisphere they were travelling toward.
-        config.rough.maze_keep_heading = env("CFM_D_MAZELAT", "maze") == "heading";
+        // CFM_D_MAZELAT (doc §15.66/§15.67): heading (default) = escapes leave
+        // in the hemisphere they were travelling toward; maze = the §15.9
+        // latitude-symmetric exit.
+        config.rough.maze_keep_heading = env("CFM_D_MAZELAT", "heading") != "maze";
         // CFM_D_POLAR=normal (doc §15.30): trapped releases leave along the
         // surface normal over the polar opening.
         // CFM_D_COPIES (doc §15.45): trace copies per body (1 = real ball only).
