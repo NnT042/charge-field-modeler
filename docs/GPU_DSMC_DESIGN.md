@@ -5794,6 +5794,50 @@ Gates 24/24 on ISABELLE (q67_a).
 
 Files: reference/tc67 (q67_a..c, q67e.sh), scripts/isabelle/queue67.
 
+### 15.68 tc68: free proton and p–n pair under the new default maze (2026-11-26)
+
+User: re-run the free proton, then the pairs, ISABELLE only. Binary = 00fd5e0 (averaged maze + keep heading,
+§15.66–15.67). Same settings as tc62 (free body: M 7e6, I 2.8e6, L_s 8.75e5, 1200 tu) and q59_i (frozen p–n,
+sep 2.05). Gates 24/24 (q68_a).
+
+**Free proton from rest** (q68_b; old maze q62_e sped up to 0.0136 c by t 840, then fell to 0.0106 c at 56° off
+the axis):
+
+- |V| stays at 0.0005–0.0009 c for the whole 1200 tu, with no growth and no direction it keeps. The axis
+  moved 0.7°.
+- The self-propulsion is gone. What is left is a random walk at the noise level; the at-rest push is +37 ± ~20.
+
+**Free proton moving at 0.017 c, tilted 30°** (q68_c vs old q62_b):
+
+| t | new \|V\| | new axis–V | old \|V\| | old axis–V |
+|---|---|---|---|---|
+| 30 | 0.0164 | 30° | 0.0171 | 31° |
+| 330 | 0.0106 | 33° | 0.0136 | 41° |
+| 630 | 0.0068 | 39° | 0.0108 | 53° |
+| 930 | 0.0044 | 43° | 0.0092 | 64° |
+| 1200 | 0.0032 | 46° | 0.0083 | 72° |
+
+- It now just slows down: drag of −25 to −60 along V. The decay is roughly exponential (τ ≈ 700 tu) and the
+  speed is still falling at the end. The old maze's self-push held it near 0.008 c.
+- V still turns slowly off the axis (30° → 46°), much less than before (→ 72°), because the sideways push
+  that steered it (§15.62–15.64) is gone.
+- The real spin holds the axis within 2° over 1200 tu (old: < 1°).
+
+**Frozen p–n pair, sep 2.05** (force toward the partner, pair minus alone):
+
+| run | proton | neutron | proton alone |
+|---|---|---|---|
+| q59_i old maze, seed 49344 | −3149 | −115 | +280 |
+| q68_d new default, seed 49344 | −2480 | −94 | +37 |
+| q68_e new default, seed 1 | −2454 | −75 | +6 |
+
+- The p–n attraction survives the maze change. It is about 22% weaker on the proton (−2480 / −2454 vs −3149)
+  and agrees between seeds to 1%. The neutron's share is −94 / −75.
+- The proton's alone value no longer carries a ~+280 self-push, so the pair difference is now almost all
+  pair force.
+
+Files: reference/tc68 (q68_a..e), scripts/isabelle/queue68.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
