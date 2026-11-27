@@ -5942,6 +5942,54 @@ funnel let the proton out from t ~220, lateral 3.8 by t 591):
 
 Files: reference/tc70 (q70_a..j), scripts/isabelle/queue70.
 
+### 15.71 tc71: tilt, aiming the funnel upstream of the centre (2026-11-27, ISABELLE only)
+
+User: work on tilt. No code change: CFM_D_PIPE_FOCUS (§15.70) already takes negative values, which aim
+the piped photons at an axis point between the entry pole and the centre. Binary cfm70; same settings as
+§15.70 (masspath mix, default maze, lane, seed 49344).
+
+**Why a negative focus should help.** The torque on the body is minus the change in the photons' angular
+momentum about its centre. The partner's beam arrives on a line close to the centre, so it brings little
+angular momentum in, and the turn torque is set by the line the photon leaves on. Parallel (the plain
+lane) or aimed past the centre (f > 0), the line misses the centre on the tilting side and the torque
+adds to the tilt. Aimed at the centre (f = 0) there is no turn torque. Aimed before the centre (f < 0)
+the photons cross the axis inside the body and leave on the other side, and the turn torque turns the
+axis back.
+
+**Frozen p–n, proton tilted 5°** (proton; time means; torque + = back into line, push − = apart):
+
+| focus | torque on the proton | from the neutron's beam (N entry) | sideways | push apart |
+|---|---|---|---|---|
+| none (q70_h) | −206 | −231 | +259 | −596 |
+| +1 (q70_g) | −147 | — | +211 | −563 |
+| 0 (q71_a) | −76 | −100 | +162 | −595 |
+| −0.25 (q71_f) | −20 | −49 | +100 | −706 |
+| −0.5 (q71_b) | **+50** | **+40** | **+19** | **−1308** |
+
+- The torque moves in the predicted order and changes sign between −0.25 and −0.5. Almost all of the
+  change is in the neutron's beam entering the proton's north pole.
+- The price is the push apart. At −0.5 the photons fan out of the proton's far (south) pole. That fan
+  blocks ambient arriving from the south (its push toward the neutron +263 → +81), and more of the
+  neutron's photons are caught at the south pole (−383).
+
+**Frozen n–p–n, focus −0.5:** proton 0.1 off the line, relative sideways −81 (restoring, weaker than
+−116/−136 at f 0/1), neutron pull +313 / +327; on the line, pull +434 / +422 (f 0/1 gave +580..+690).
+
+**Free n–p–n** (as §15.70, 600 tu):
+
+- **−0.5 (q71_e):** the proton's axis now stays within ~3.5° the whole run, but the proton slides out
+  sideways (diagonally in x and y) from t ~250, leaves by t ~400, and the chain is apart by t 591 (gaps
+  ~5). The weaker sideways hold and weaker neutron pull lose before the tilt does.
+- **−0.25 (q71_g):** holds to t ~450 (gaps 2.01–2.27). The proton tilts to ~6° by t 450 and is then
+  pushed out along the axis and sideways (gaps 3.3 / 2.6 at t 591).
+- Neither beats focus 1 (q70_i, held 600 tu, tilting at the end).
+
+**Result.** A single fixed focus trades tilt against lateral hold and pull. Aiming upstream fixes the
+tilt torque but weakens the sideways hold and pushes the pair apart, so the free chain fails sideways
+instead. The funnel stays a test knob, off by default.
+
+Files: reference/tc71 (q71_a..g), scripts/isabelle/queue71.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
