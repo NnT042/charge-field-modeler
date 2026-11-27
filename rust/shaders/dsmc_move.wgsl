@@ -1296,6 +1296,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         if (pk.w != 0.0 && pl > 1e-4) {
                             nd = nd * cos(pk.w) + cross(ax, perp / pl) * sin(pk.w);
                         }
+                        // Doc §15.70 funnel test: aim at the axis point
+                        // [50].z radii past the centre (the vortex cone).
+                        let fk = ballkeys[b * BALLKEY_STRIDE + 50u];
+                        if (pk.w == 0.0 && fk.y > 0.5) {
+                            let dv = ce + ax * sign(ca) * fk.z * rr - pos;
+                            if (dot(dv, dv) > 1e-8) { nd = normalize(dv); }
+                        }
                         let dpp = (ph.b.xyz - nd) * ph.d.w * m;
                         let tqp = cross(rel, dpp);
                         tally_src_in(b, src_cat(b, pos, &ph), dpp, tqp);

@@ -5892,6 +5892,56 @@ called the frozen p–n −2480 an attraction; it is a repulsion (fixed there). 
 
 Files: reference/tc69 (q69_a..h), scripts/isabelle/queue69.
 
+### 15.70 tc70: the funnel, a sideways restoring force from the polar mouth (2026-11-26)
+
+User: work on the restoring force, starting from the user's cone-wall idea (an off-centre beam spends its
+momentum on the vortex wall, and the lopsided push brings the body back). Mathis gives the polar vortex
+qualitatively: it reaches out into the field and bodies come in "on the same line" (ammon.pdf, stark.pdf).
+He gives no cone angle.
+
+**New test knob, off by default:** CFM_D_PIPE_FOCUS=f (`RoughParams::pipe_focus`, ballkey [50].y/.z, the
+pipe turn in dsmc_move.wgsl). A piped photon is aimed at the axis point f body radii past the centre on its
+way out, instead of running parallel to the axis. 0 = the centre (cone half-angle ≈ atan 0.222 ≈ 12.5°),
+1 = the far pole (≈ 6.3°). Swirl runs are unaffected. The body takes the turn, as at the plain mouth. With
+the bodies on the line the turns cancel. A beam arriving off-centre is turned inward on one side only, so
+the body is pushed toward the beam. Gates 24/24. Binary cfm70; masspath mix, new default maze, lane on
+(CFM_D_PIPE=pn, PIPE_DEG 90, PIPE_LANE 1), seed 49344.
+
+**Frozen n–p–n, middle proton moved 0.1 along +x** (time-mean pair-minus-alone forces; sideways = x,
+relative = proton minus the mean of the neutrons; + relative = outward):
+
+| run | neutron x | proton x | neutron x | relative sideways on the proton | pull on the neutrons |
+|---|---|---|---|---|---|
+| q70_a no funnel | −63 | +262 | −43 | **+315 (outward)** | +541 / +499 |
+| q70_b focus 0 | +51 | −75 | +30 | **−116 (restoring)** | +433 / +473 |
+| q70_c focus 1 | +159 | +18 | +149 | **−136 (restoring)** | +458 / +486 |
+
+**On the line (dx 0):** no funnel +631 / +613 (§15.69), focus 0 +597 / +580 (q70_f), focus 1 +662 / +693
+(q70_d). The proton's force along the axis stays small (−25 to −66).
+
+- **The funnel turns the sideways force from outward to restoring.** It goes from +315 to −116/−136. The
+  pull on the neutrons stays (−10 to −20% when displaced; on the line it is unchanged within noise).
+- They act differently: focus 0 pushes the proton back (−75); focus 1 leaves it in place and pulls both
+  neutrons toward it (+150). The relative force is the same either way.
+- The old maze at dx 0.1 (§15.58) gave +200 outward. The new maze without the funnel gives +315.
+
+**Frozen p–n, proton tilted 5° (q70_g focus 1 vs q70_h no funnel):** sideways +211 vs +259, push apart
+−563 vs −596, torque across the axis −147 vs −206 (same sign). **The funnel barely touches the tilt
+problem.** The tilted proton is still pushed apart, and the torque is only about 30% smaller.
+
+**Free n–p–n with the lane** (M 7e6, I 2.8e6, L_s 8.75e5, 10000 steps = 600 tu; tc69 q69_d without a
+funnel let the proton out from t ~220, lateral 3.8 by t 591):
+
+- **focus 1 (q70_i): holds for the whole 600 tu.** The gaps stay 2.01–2.18 and the proton is 0.36 off the
+  line at the end. But the chain slowly bends, and the proton's axis starts to tilt from t ~400 (about 5°
+  at t 500, 20° at t 591). That tilt is still growing at the end.
+- **focus 0 (q70_j): holds to t ~360,** then the upper neutron leaves (gap 2.0 → 5.9 by t 591). The proton
+  tilts about 13° and follows the lower neutron.
+- The sideways failure of §15.57/§15.69 is fixed by the funnel. What is left is the tilt: an untilted
+  axis is not restoring, as §15.58 found, and the funnel only weakens that torque.
+
+Files: reference/tc70 (q70_a..j), scripts/isabelle/queue70.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

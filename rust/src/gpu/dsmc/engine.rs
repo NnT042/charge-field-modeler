@@ -1094,7 +1094,9 @@ impl DsmcEngine {
             let fan = if body.signs[3] * body.speeds[3] < 0.0 { -1.0 } else { 1.0 };
             let on = if !pipe { 0.0 } else if r.pipe_lane { 2.0 } else { 1.0 };
             data[b * BALLKEY_STRIDE + 49] = [on, r.pipe_cos as f32, r.pipe_mouth as f32, (fan * r.pipe_swirl) as f32];
-            data[b * BALLKEY_STRIDE + 50] = [if pipe { r.pipe_helix_r as f32 } else { 0.0 }, 0.0, 0.0, 0.0];
+            // [50].y/.z (doc §15.70): funnel on, aim point past the centre (radii).
+            let focus = if pipe { r.pipe_focus } else { None };
+            data[b * BALLKEY_STRIDE + 50] = [if pipe { r.pipe_helix_r as f32 } else { 0.0 }, if focus.is_some() { 1.0 } else { 0.0 }, focus.unwrap_or(0.0) as f32, 0.0];
             for (i, (axis, rate)) in lv.iter().enumerate() {
                 data[b * BALLKEY_STRIDE + 37 + i] = [axis.x as f32, axis.y as f32, axis.z as f32, *rate as f32];
             }

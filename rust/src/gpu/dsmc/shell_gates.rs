@@ -2491,6 +2491,10 @@ fn report_deuteron() {
         // same with the gear reading of which spin pairing spins up.
         config.rough.pipe_edge = env("CFM_D_PIPE_EDGE", "0").parse().unwrap();
         config.rough.pipe_helix_r = helix_radius_of(env("CFM_D_PIPE_HELIX", "0").parse().unwrap());
+        // Doc §15.70 funnel test: CFM_D_PIPE_FOCUS=f aims piped photons at the
+        // axis point f radii past the centre (unset = parallel lane).
+        config.rough.pipe_focus = match env("CFM_D_PIPE_FOCUS", "").as_str() { "" => None, v => Some(v.parse().unwrap()) };
+        println!("pipe focus {:?}", config.rough.pipe_focus);
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };
