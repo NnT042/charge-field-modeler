@@ -1300,7 +1300,12 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
                         // [50].z radii past the centre (the vortex cone).
                         let fk = ballkeys[b * BALLKEY_STRIDE + 50u];
                         if (pk.w == 0.0 && fk.y > 0.5) {
-                            let dv = ce + ax * sign(ca) * fk.z * rr - pos;
+                            // Doc §15.72: with [50].y = 2 the aim moves
+                            // linearly with the entry offset, from [50].z on
+                            // the axis to [50].w at the mouth's edge.
+                            var fo = fk.z;
+                            if (fk.y > 1.5) { fo = fk.z + (fk.w - fk.z) * min(pl / (pk.z * rr), 1.0); }
+                            let dv = ce + ax * sign(ca) * fo * rr - pos;
                             if (dot(dv, dv) > 1e-8) { nd = normalize(dv); }
                         }
                         let dpp = (ph.b.xyz - nd) * ph.d.w * m;

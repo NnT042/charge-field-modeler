@@ -299,6 +299,12 @@ pub struct RoughParams {
     /// arriving off-centre pushes the body back toward it. None = off
     /// (bit-identical).
     pub pipe_focus: Option<f64>,
+    /// Doc §15.72 offset-set aim TEST (tilt work): with `pipe_focus` set, the
+    /// aim point moves linearly with the photon's entry offset from the axis,
+    /// from `pipe_focus` on the axis to this value at the mouth's edge. Edge
+    /// photons carry the tilt torque (long lever arm); the core carries most of
+    /// the fan and the pull. None = a single focus (bit-identical).
+    pub pipe_focus_edge: Option<f64>,
     /// Doc §14.8: a separate law for photon-body contacts, as (beta,
     /// beta_twist, twist_loss_to_normal). None = the photon-photon law above.
     pub body_law: Option<(f64, f64, bool)>,
@@ -434,7 +440,7 @@ impl PhotonMix {
 
 impl Default for RoughParams {
     fn default() -> Self {
-        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_random_phase: true, maze_rigid_spin: false, maze_keep_heading: true, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, pipe_focus: None, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off } }
+        RoughParams { beta: 1.0, beta_twist: -1.0, twist_loss_to_normal: false, kappa: 0.4, speed_mode: SpeedMode::PinnedC, g_max: 2.0, spin_edge0: 1.0, glancing_bias: false, stacking: false, stack_max_level: 3, unstack_edge: 0.01, grain_edge: 0.0, grain_mode: GrainMode::EdgeC, maze: MazeMode::Off, maze_random_phase: true, maze_rigid_spin: false, maze_keep_heading: true, maze_speed: MazeSpeed::Relative, intake: Intake::Ball, intake_neutron: None, hold_time: 0.0, hold_time_neutron: 1.0, hold_cap: 0, through_hole: 0.0, polar_release_normal: false, polar_release_through: false, ball_copies: 1, polar_beam: 1.0 / 3.0, local_pairing: false, pipe_classes: 0, pipe_cos: 0.939_692_620_785_908_4, pipe_mouth: 1.0 / 3.0 - 1.0 / 8.0, pipe_lane: false, pipe_swirl: 0.0, pipe_spin: false, pipe_spin_eta: 0.0, pipe_quantum: false, pipe_edge: 0, pipe_helix_r: 0.0, pipe_focus: None, pipe_focus_edge: None, body_law: None, photon_mix: PhotonMix { weights: [1.0, 0.0, 0.0, 0.0], inner: InnerAxes::Match, mass_doubling: false, size_xsec: false, size_ceiling: 0, norm: MixNorm::Off } }
     }
 }
 

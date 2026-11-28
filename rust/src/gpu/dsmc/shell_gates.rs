@@ -2494,7 +2494,8 @@ fn report_deuteron() {
         // Doc §15.70 funnel test: CFM_D_PIPE_FOCUS=f aims piped photons at the
         // axis point f radii past the centre (unset = parallel lane).
         config.rough.pipe_focus = match env("CFM_D_PIPE_FOCUS", "").as_str() { "" => None, v => Some(v.parse().unwrap()) };
-        println!("pipe focus {:?}", config.rough.pipe_focus);
+        config.rough.pipe_focus_edge = match env("CFM_D_PIPE_FOCUS_EDGE", "").as_str() { "" => None, v => Some(v.parse().unwrap()) };
+        println!("pipe focus {:?} edge {:?}", config.rough.pipe_focus, config.rough.pipe_focus_edge);
         config.h = h;
         config.photon_fraction = phi;
         config.boundary = Boundary::SphereEscape { r_d };

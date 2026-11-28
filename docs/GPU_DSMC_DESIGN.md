@@ -5990,6 +5990,57 @@ instead. The funnel stays a test knob, off by default.
 
 Files: reference/tc71 (q71_a..g), scripts/isabelle/queue71.
 
+### 15.72 tc72: aim set by entry offset (2026-11-27, both machines)
+
+User: try the offset-set aim (one of the two follow-ups of §15.71). **New test knob, off by default:**
+CFM_D_PIPE_FOCUS_EDGE=e (`RoughParams::pipe_focus_edge`, ballkey [50].y = 2 and [50].w, the pipe turn
+in dsmc_move.wgsl). With CFM_D_PIPE_FOCUS=c also set, the aim point moves linearly with the photon's
+entry offset from the axis: focus c on the axis, e at the mouth's edge (offset 0.222 r). The edge photons
+carry the tilt torque (long lever arm); the core carries most of the far-pole fan and of the pull. Unset =
+a single focus (bit-identical). Gates 24/24. Binary cfm72; settings as §15.70/§15.71. ISABELLE ran
+c 1 → e −0.5, ESTELLE c 1 → e −1.
+
+**Frozen p–n, proton tilted 5°** (torque + = back into line; push − = apart):
+
+| aim | torque on the proton | from the neutron's beam (N entry) | sideways | push apart |
+|---|---|---|---|---|
+| focus 1 (q70_g) | −147 | — | +211 | −563 |
+| focus −0.5 (q71_b) | +50 | +40 | +19 | −1308 |
+| 1 → edge −0.5 (q72_a) | −4 | −35 | +89 | −770 |
+| 1 → edge −1 (q72_d) | **+167** | **+161** | −42 | −1392 |
+
+**Frozen n–p–n** (relative sideways on the proton at dx 0.1, − = restoring; pull on the neutrons):
+
+| aim | relative sideways | pull, dx 0.1 | pull, on the line |
+|---|---|---|---|
+| focus 1 (q70_c/d) | −136 | +458 / +486 | +662 / +693 |
+| focus −0.5 (q71_c/d) | −81 | +313 / +327 | +434 / +422 |
+| 1 → edge −0.5 (q72_b/g) | −249 | +405 / +432 | +556 / +554 |
+| 1 → edge −1 (q72_e) | **−495** | +200 / +196 | — |
+
+- The edge aim gives a much stronger sideways hold than any single focus (−249, −495). A displaced
+  proton's partner beams enter near the mouth's edge, and turning them upstream turns them hard.
+- The tilt torque scales with the edge value: ~0 at −0.5, +167 at −1. The push apart of a tilted pair
+  grows with it (−770, −1392), and the n–p–n pull drops (+200 at −1).
+
+**Free n–p–n** (as §15.70, 600 tu):
+
+- **1 → edge −1 (q72_f): holds the whole run, with the proton on the line.** Gaps 2.00–2.11, the proton
+  within 0.09 of the centre (focus 1, q70_i: 0.36 off at the end). The proton's axis still tilts, and the
+  tilt relative to the line between the neutrons grows 0.03 → 0.15 (~9°) from t 300 to 571. At the same
+  time its azimuth turns 80° → 176°. The axis precesses about the line while the tilt grows, as a
+  spinning body does under a restoring torque: the torque turns the spin axis around the line rather than
+  back onto it. The chain as a whole also turns slowly (neutrons ±0.3 off the z axis by t 591).
+- **1 → edge −0.5 (q72_c):** holds to t ~480, the proton tilting ~6°, then the proton is pushed out
+  sideways (0.69 off at t 591).
+
+**Result.** The edge aim fixes the sideways problem outright and, at −1, gives a righting torque. The
+free chain now holds at least 600 tu. What is left is the spin: a restoring torque alone gives precession,
+not alignment. Holding the axis needs something that damps the precession. None of the present rules
+does this. The funnel and the edge aim stay test knobs, off by default.
+
+Files: reference/tc72 (q72_a..g, q72e.sh), scripts/isabelle/queue72.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,
