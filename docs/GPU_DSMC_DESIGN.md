@@ -6041,6 +6041,88 @@ does this. The funnel and the edge aim stay test knobs, off by default.
 
 Files: reference/tc72 (q72_a..g, q72e.sh), scripts/isabelle/queue72.
 
+### 15.73 tc73: long runs, second seed, and where the tilt growth comes from (2026-11-28, both machines)
+
+User: run longer and a second seed of the 1 → edge −1 aim (§15.72), and research Mathis for a mechanism
+that damps the precession. **New, log only:** the free-run log line gains `tilt split deg R A` per body
+(shell_gates.rs, report_deuteron). The window torque on each body, with its axial part and its alone
+self-torque removed, is split against the chain line l (n0 → n2): R = torque along a × l (+ turns the
+axis toward the line), A = −torque along the tilt direction (+ pulls the spin back toward the line,
+damping the tilt of a spinning body; − grows it). No change to the physics; gates 24/24 (cfm73). The GPU
+runs are not bit-identical between runs (q73_c vs q72_f, same seed), only statistically the same.
+Settings as §15.72: free n–p–n, M 7e6, INERTIA 2.8e6, LSPIN 8.75e5, aim 1 → edge −1.
+
+**Long runs, 1200 tu (cfm72).** Neither seed holds.
+
+| t | seed 49344 (q73_b, ESTELLE): tilt to line / proton off the line | seed 1 (q73_a, ISABELLE) |
+|---|---|---|
+| 300 | 1.7° / 0.00 | 0.6° / 0.02 |
+| 400 | 3.6° / 0.03 | 1.9° / 0.01 |
+| 500 | 5.0° / 0.04 | 4.2° / 0.03 |
+| 600 | 11.1° / 0.16 | 7.7° / 0.07 |
+| 700 | 15.8° / 0.77 | 13.7° / 0.30 |
+| 800 | apart (off 2.4) | apart (off 1.3) |
+
+The tilt grows roughly exponentially (e-fold ~120–160 tu) in both seeds and the lab azimuth turns the
+same way in both: a systematic instability, not noise. The proton stays on the line until the tilt
+passes ~8–10°, then slides out.
+
+**Tilt split (cfm73, 600 tu; q73_c seed 49344 on ISABELLE, q73_d seed 1 on ESTELLE)**, proton, binned
+by tilt to the line:
+
+| tilt | R (49344) | A (49344) | R (1) | A (1) |
+|---|---|---|---|---|
+| ~0.4° | +41 | −94 | +47 | −112 |
+| ~1.8° | +32 | −398 | +77 | −443 |
+| ~3.9° | +111 | −707 | +56 | −590 |
+| 7–9° | +22 | −1112 | +56 | −291 (breaking up) |
+
+The tilt-growing part A is −150 to −300 per degree and dominates; the righting part R is small. A ≈ −700
+at 4° gives a tilt rate |A|/L_s ≈ 0.05°/tu, the observed order (0.02–0.05°/tu).
+
+**Frozen n–p–n, proton tilted 5° (q73_e, seed 49344):** the torque on the proton is (+17, −307, −2):
+R = +307 (righting), A = −17. The neutrons get 150 / 143, turning their axes away from the proton's
+tilt. So in a still body the torque is almost all righting; in the free chain the same-sized torque has
+turned ~70° toward growing the tilt.
+
+**Why: the line chases the proton.** In the free run the neutrons' axes stay on the lab z axis (within
+~0.02 throughout), but the line between them turns, following the proton's axis with a lag of 40–60°
+in azimuth (q73_c: t 300 proton az 153° line 119°; t 501 −142° vs 180°; t 591 −101° vs −159°). The
+proton's beams push the neutrons along the proton's axis, so the neutrons move sideways and the line
+swings toward where the proton points. The proton is turned toward the line, the line toward the proton;
+each follows the other with a lag, and the pair circles while the tilt grows. Measured against the
+neutrons' axes instead of the line, the same torque is −300 (turning away from the beam direction) at
+3–7°. The beam forces are follower forces: they act along the emitter's axis, not along the line of
+centres. A system held by follower forces is not conservative and can flutter (Beck's column); damping
+added to such a system need not stabilise it.
+
+**Mathis research (search_mathis).**
+- nmr.pdf: the nucleus does not precess; the pole is held by the stream channelled through it. Real
+  wobbles come from a "lateral imbalance" of the particles, not from a field torque.
+- nuc2.pdf: the nuclear pole is a very tight channel; photons there take edge hits with the proton they
+  pass through, "like friction, or a pull" (Velcro). The nucleus is held by charge, all disks at right
+  angles, protons stacked pole to pole.
+- super.html, strong.html: a gyroscope precesses because its centre is fixed relative to the force;
+  stacked spins are kept orthogonal so as not to interfere gyroscopically.
+- pauli.pdf: atoms turn to take charge in at the south pole when they can.
+
+Estimates: channel friction against the axis motion, and the spin carried in by beam photons, are both
+100–1000× too small to damp the precession against L_s 8.75e5. Neither addresses the finding above:
+the problem is not missing damping but a positive feedback in which the neutrons follow the proton's
+beam. In Mathis's picture the stacked nucleus shares one channel; a neutron sitting in the proton's
+beam would turn its own axis to the beam (his neutrons channel pole to pole along the stream), so the
+beams would stay on the line. Here the neutrons' axes do not turn with the line.
+
+**Result.** The 1 → edge −1 chain lives ~600–750 tu in both seeds. The tilt grows because the chain
+line follows the proton's axis (follower force from its beams), not because a damping term is missing.
+Candidates (user's call): (a) a frozen test with the neutrons displaced sideways (line tilted) and the
+proton on the lab axis, to measure the follower push directly; (b) let the neutrons' axes turn toward
+the stream through them (a neutron alignment rule, Mathis's pole-to-pole channel), so the beams follow
+the line; (c) the scaffold CFM_D_RDAMP as a test of whether damping alone helps (flutter theory says
+it may not). Funnel and edge aim stay test knobs, off by default.
+
+Files: reference/tc73 (q73_a..f, q73e*.sh, progress files), scripts/isabelle/queue73.
+
 ## 12. Out of scope for this step
 
 Moving or rotating bodies (atom-mode coupling), the Godot live view, >44M photons,

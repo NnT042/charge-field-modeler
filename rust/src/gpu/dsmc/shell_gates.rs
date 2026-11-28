@@ -3000,6 +3000,23 @@ fn report_deuteron() {
                 for b in 0..n {
                     line += &format!(" {:.0}", twin[b].length() / tw);
                 }
+                // Doc §15.73 tilt split (log only): each body's tilt from the
+                // chain line l (first body to last), and its torque split into
+                // R = the part that turns the axis toward l (a non-spinning
+                // body rights itself) and A = the part along -tilt, which for
+                // a gyroscope moves L back toward l (+ damps the tilt, - grows
+                // it; R alone only precesses it).
+                if n >= 2 {
+                    let l = (x[n - 1] - x[0]).normalize_or_zero();
+                    line += " | tilt split deg R A";
+                    for b in 0..n {
+                        let a = q[b] * DVec3::Z;
+                        let tl = a - l * a.dot(l);
+                        let u = a.cross(l);
+                        let (rr, aa) = if tl.length() > 1e-9 && u.length() > 1e-9 { (twin[b].dot(u / u.length()) / tw, -twin[b].dot(tl / tl.length()) / tw) } else { (0.0, 0.0) };
+                        line += &format!(" {:.1} {:+.0} {:+.0}", tl.length().clamp(0.0, 1.0).asin().to_degrees(), rr, aa);
+                    }
+                }
                 twin = vec![DVec3::ZERO; n];
             }
             // Each electron: distance to and latitude on its nearest baryon
