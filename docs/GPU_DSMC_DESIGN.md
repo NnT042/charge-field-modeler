@@ -6083,7 +6083,12 @@ at 4° gives a tilt rate |A|/L_s ≈ 0.05°/tu, the observed order (0.02–0.05�
 **Frozen n–p–n, proton tilted 5° (q73_e, seed 49344):** the torque on the proton is (+17, −307, −2):
 R = +307 (righting), A = −17. The neutrons get 150 / 143, turning their axes away from the proton's
 tilt. So in a still body the torque is almost all righting; in the free chain the same-sized torque has
-turned ~70° toward growing the tilt.
+turned ~70° toward growing the tilt. Seed 1 (q73_f, ESTELLE): R +297, A +1, the same.
+
+**The follower push is visible in the same frozen runs.** With the proton tilted toward +x, the lower
+neutron is pushed −x (−135 / −104) and the upper +x (+129 / +211), seeds 49344 / 1: each neutron is
+pushed sideways the way the proton's axis points at its end. That is the force that swings the line
+after the proton's axis in the free run.
 
 **Why: the line chases the proton.** In the free run the neutrons' axes stay on the lab z axis (within
 ~0.02 throughout), but the line between them turns, following the proton's axis with a lag of 40–60°
@@ -6115,8 +6120,8 @@ beams would stay on the line. Here the neutrons' axes do not turn with the line.
 
 **Result.** The 1 → edge −1 chain lives ~600–750 tu in both seeds. The tilt grows because the chain
 line follows the proton's axis (follower force from its beams), not because a damping term is missing.
-Candidates (user's call): (a) a frozen test with the neutrons displaced sideways (line tilted) and the
-proton on the lab axis, to measure the follower push directly; (b) let the neutrons' axes turn toward
+Candidates (user's call): (a) measure the follower push against tilt (frozen, a few tilts) to size it;
+(b) let the neutrons' axes turn toward
 the stream through them (a neutron alignment rule, Mathis's pole-to-pole channel), so the beams follow
 the line; (c) the scaffold CFM_D_RDAMP as a test of whether damping alone helps (flutter theory says
 it may not). Funnel and edge aim stay test knobs, off by default.
